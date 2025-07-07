@@ -11,6 +11,7 @@ Please choose a data input option:
 2. LASA benchmark data
 3. Damm demo data
 4. DEMO
+5. Custom diagonal (Demo Stitch testing)
 Enter the corresponding option number: '''
 input_opt  = input(input_message)
 # input_opt = 4

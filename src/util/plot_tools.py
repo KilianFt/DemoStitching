@@ -6,7 +6,7 @@ import random
 
 
 plt.rcParams.update({
-    "text.usetex": True,
+    "text.usetex": False,
     "font.family": "Times New Roman",
     "font.size": 30
 })

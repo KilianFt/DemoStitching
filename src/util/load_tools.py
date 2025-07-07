@@ -131,6 +131,22 @@ def load_data(input_opt):
         x, x_dot    = _process_bag(input_path)
 
 
+    elif input_opt == 5:
+        # make x shape data where each trajectory is diagonal, but with more samples along the same paths
+        n_samples = 101  # number of points per trajectory
+        t = np.linspace(0, 1, n_samples)
+
+        # Trajectory 1: from (0, 2) to (2, 0) (anti-diagonal)
+        traj1 = np.vstack((2 * t, 2 - 2 * t)).T
+
+        # Trajectory 2: from (2, 2) to (0, 0) (main diagonal)
+        traj2 = np.vstack((2 - 2 * t, 2 - 2 * t)).T
+
+        x = [traj1, traj2]
+        # Compute velocities as finite differences between successive points
+        # x_dot = [np.gradient(traj1, axis=0), np.gradient(traj2, axis=0)]
+        x_dot = [np.repeat(np.array([[0.5, -0.5]]), n_samples, axis=0), np.repeat(np.array([[-0.5, -0.5]]), n_samples, axis=0)]
+
 
     return _pre_process(x, x_dot)
 
