@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.lines as mlines
 from matplotlib.ticker import MaxNLocator
+from matplotlib.patches import Ellipse
+from scipy.stats import multivariate_normal
 import random
 
 
@@ -12,8 +14,153 @@ plt.rcParams.update({
 })
 
 
+def plot_2d_gaussian(mu, sigma, ax=None, n_ellipses=3, n_points=100, force_plot=False, print_matrix_info=False):
+    """
+    Plot a 2D Gaussian distribution with confidence ellipses
+    
+    Parameters:
+    mu: array-like, shape (2,) - mean vector
+    sigma: array-like, shape (2,2) - covariance matrix
+    n_ellipses: int - number of confidence ellipses to plot
+    n_points: int - resolution of the contour plot
+    force_plot: bool - if True, attempt to plot even invalid covariance matrices
+    print_matrix_info: bool - if True, print matrix properties
+    """
+    
+    # Convert to numpy arrays
+    mu = np.array(mu)
+    sigma = np.array(sigma)
+    
+    # Check matrix properties
+    eigenvals, eigenvecs = np.linalg.eigh(sigma)
+    det = np.linalg.det(sigma)
+    is_singular = np.abs(det) < 1e-10
+    is_positive_definite = np.all(eigenvals > 1e-10)
+    is_negative_definite = np.all(eigenvals < -1e-10)
+    
+    if print_matrix_info:
+        print(f"Matrix properties:")
+        print(f"  Determinant: {det:.2e}")
+        print(f"  Eigenvalues: {eigenvals}")
+        print(f"  Positive definite: {is_positive_definite}")
+        print(f"  Negative definite: {is_negative_definite}")
+        print(f"  Singular: {is_singular}")
+    
+    # Handle different cases
+    if is_negative_definite:
+        print("Warning: Matrix is negative definite - not a valid covariance matrix!")
+        if not force_plot:
+            print("This cannot represent a probability distribution.")
+            print("Possible fixes:")
+            print("  1. Take absolute value: sigma_fixed = np.abs(sigma)")
+            print("  2. Flip signs: sigma_fixed = -sigma")
+            print("  3. Use force_plot=True to plot anyway (will use abs(eigenvalues))")
+            return None, None
+        else:
+            print("Using absolute values of eigenvalues for plotting...")
+            eigenvals = np.abs(eigenvals)
+            sigma_reg = eigenvecs @ np.diag(eigenvals) @ eigenvecs.T
+    elif is_singular:
+        print("Warning: Covariance matrix is singular (determinant ≈ 0)")
+        print("This represents a degenerate distribution along a line")
+        # Add small regularization
+        sigma_reg = sigma + np.eye(2) * 1e-6
+        print(f"Adding regularization: {1e-6} to diagonal elements")
+    elif not is_positive_definite:
+        print("Warning: Matrix is not positive definite (has negative eigenvalues)")
+        print("Adding regularization to make it positive definite...")
+        # Make all eigenvalues positive
+        eigenvals_fixed = np.maximum(eigenvals, 1e-6)
+        sigma_reg = eigenvecs @ np.diag(eigenvals_fixed) @ eigenvecs.T
+    else:
+        sigma_reg = sigma
+    
+    # Create a grid for plotting the contours
+    x_range = 4 * np.sqrt(np.abs(sigma[0, 0]))
+    y_range = 4 * np.sqrt(np.abs(sigma[1, 1]))
+    
+    x = np.linspace(mu[0] - x_range, mu[0] + x_range, n_points)
+    y = np.linspace(mu[1] - y_range, mu[1] + y_range, n_points)
+    X, Y = np.meshgrid(x, y)
+    
+    # Calculate the probability density
+    pos = np.dstack((X, Y))
+    try:
+        rv = multivariate_normal(mu, sigma_reg)
+        pdf_values = rv.pdf(pos)
+    except Exception as e:
+        print(f"Error computing PDF: {e}")
+        return None, None
+    
+    # Create the plot
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Plot the contours
+    try:
+        contours = ax.contour(X, Y, pdf_values, levels=10, colors='blue', alpha=0.6)
+        ax.contourf(X, Y, pdf_values, levels=50, cmap='Blues', alpha=0.3)
+    except Exception as e:
+        print(f"Error plotting contours: {e}")
+        # Plot a simple scatter or other visualization
+        ax.scatter(mu[0], mu[1], c='black', s=100, alpha=0.7)
+    
+    # Plot the mean point
+    ax.plot(mu[0], mu[1], 'o', markersize=5, color='black', label='Mean')
+    
+    # Add confidence ellipses using corrected eigenvalues
+    eigenvals_corrected, eigenvecs_corrected = np.linalg.eigh(sigma_reg)
+    
+    # Sort eigenvalues and eigenvectors
+    idx = np.argsort(eigenvals_corrected)[::-1]
+    eigenvals_corrected = eigenvals_corrected[idx]
+    eigenvecs_corrected = eigenvecs_corrected[:, idx]
+    
+    # Calculate angle of rotation
+    angle = np.degrees(np.arctan2(eigenvecs_corrected[1, 0], eigenvecs_corrected[0, 0]))
+    
+    # Plot ellipses for different confidence levels
+    colors = ['red', 'orange', 'yellow']
+    confidence_levels = [1, 2, 3]  # 1σ, 2σ, 3σ
+    
+    for i, (conf_level, color) in enumerate(zip(confidence_levels[:n_ellipses], colors[:n_ellipses])):
+        # Calculate ellipse parameters
+        width = 2 * conf_level * np.sqrt(np.abs(eigenvals_corrected[0]))
+        height = 2 * conf_level * np.sqrt(np.abs(eigenvals_corrected[1]))
+        
+        ellipse = Ellipse(xy=mu, width=width, height=height, 
+                         angle=angle, facecolor='none', 
+                         edgecolor=color, linewidth=2,
+                         label=f'{conf_level}σ ellipse')
+        ax.add_patch(ellipse)
+    
+    # Add information about the distribution
+    # info_text = f'det(Σ) = {det:.2e}\nλ₁ = {eigenvals[0]:.2e}\nλ₂ = {eigenvals[1]:.2e}'
+    # if is_negative_definite:
+    #     info_text += '\nNegative definite!'
+    # elif is_singular:
+    #     info_text += '\nSingular matrix!'
+    # elif not is_positive_definite:
+    #     info_text += '\nNot pos. definite!'
+    
+    # ax.text(0.02, 0.98, info_text, 
+    #         transform=ax.transAxes, verticalalignment='top',
+    #         bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
+    
+    # Set labels and title
+    ax.set_xlabel('$x_1$')
+    ax.set_ylabel('$x_2$')
+    # ax.set_title('2D Gaussian Distribution with Confidence Ellipses')
+    # ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_aspect('equal')
+    
+    if ax is None:
+        plt.tight_layout()
+        plt.show()
+        return fig, ax
 
-def plot_gmm(x_train, label, damm):
+def plot_gmm(x_train, label, damm, ax = None):
     """ passing damm object to plot the ellipsoids of clustering results"""
     N = x_train.shape[1]
 
@@ -22,13 +169,16 @@ def plot_gmm(x_train, label, damm):
     color_mapping = np.take(colors, label)
 
 
-    fig = plt.figure(figsize=(12, 10))
+    if ax is None:
+        fig = plt.figure(figsize=(12, 10))
     if N == 2:
-        ax = fig.add_subplot()
+        if ax is None:
+            ax = fig.add_subplot()
         ax.scatter(x_train[:, 0], x_train[:, 1], color=color_mapping[:], alpha=0.4, label="Demonstration")
 
     elif N == 3:
-        ax = fig.add_subplot(projection='3d')
+        if ax is None:
+            ax = fig.add_subplot(projection='3d')
         ax.scatter(x_train[:, 0], x_train[:, 1], x_train[:, 2], 'o', color=color_mapping[:], s=3, alpha=0.4, label="Demonstration")
 
         K = damm.K

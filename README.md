@@ -6,7 +6,14 @@ Boiler plate code of LPV-DS framework, compatible with any customizing clusterin
 <!-- ![Picture1](https://github.com/SunannnSun/damm_lpvds/assets/97807687/5a72467b-c771-4e8a-a0e0-7828efa59952) -->
 
 
-
+## Stitching
+For stitching run
+```
+python main_stitch.py
+```
+There are two datasets for now:
+1. Diagonal
+2. Three separate trajectories that have crossings and lead to different goals
 
 ## Usage Example
 
