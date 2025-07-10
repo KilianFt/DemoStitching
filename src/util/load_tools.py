@@ -136,22 +136,20 @@ def load_data(input_opt):
         n_samples = 101  # number of points per trajectory
         t = np.linspace(0, 1, n_samples)
 
-        # Trajectory 1: from (0, 2) to (2, 0) (anti-diagonal)
-        traj1 = np.vstack((2 * t, 2 - 2 * t)).T
+        # Trajectory 1: from (2, 2) to (0, 0) (main diagonal)
+        traj_target = np.vstack((2 - 2 * t, 2 - 2 * t)).T
+        # Trajectory 2: from (0, 2) to (2, 0) (anti-diagonal)
+        traj_other = np.vstack((2 * t, 2 - 2 * t)).T
 
-        # Trajectory 2: from (2, 2) to (0, 0) (main diagonal)
-        traj2 = np.vstack((2 - 2 * t, 2 - 2 * t)).T
-
-        x = [traj1, traj2]
+        x_sets = [[traj_target], [traj_other]]
         # Compute velocities as finite differences between successive points
         # x_dot = [np.gradient(traj1, axis=0), np.gradient(traj2, axis=0)]
-        x_dot = [np.repeat(np.array([[0.5, -0.5]]), n_samples, axis=0), np.repeat(np.array([[-0.5, -0.5]]), n_samples, axis=0)]
-
+        x_dot_target = [np.repeat(np.array([[-0.5, -0.5]]), n_samples, axis=0)]
+        x_dot_other = [np.repeat(np.array([[0.5, -0.5]]), n_samples, axis=0)]
+        x_dot_sets = [x_dot_target, x_dot_other]
+        return _pre_process_stitch(x_sets, x_dot_sets)
 
     return _pre_process(x, x_dot)
-
-
-
 
 
 def _pre_process(x, x_dot):
@@ -192,6 +190,75 @@ def _pre_process(x, x_dot):
     return  x_rollout, x_dot_rollout, x_att_mean, x_init
 
 
+def _pre_process_stitch(x_sets, x_dot_sets):
+    """Apply the same normalization as `_pre_process`, but for multiple sets.
+
+    The first element of `x_sets` is the *target* set that reaches the goal.
+    We compute the mean attractor (goal) from the last sample of every
+    trajectory in this first set.  For **every** trajectory in **every** set,
+    we apply an individual shift so that that trajectory's endpoint coincides
+    with this mean attractor:
+
+        shift = x_att_mean - traj[-1]
+
+    This keeps relative shapes intact while aligning all endpoints to the
+    shared goal.  Velocities remain unchanged.
+
+    Parameters
+    ----------
+    x_sets : list[list[np.ndarray]]
+        Nested list of position trajectories.
+    x_dot_sets : list[list[np.ndarray]]
+        Nested list of corresponding velocity trajectories.
+
+    Returns
+    -------
+    x_rollout : np.ndarray
+        Stacked, shifted position samples.
+    x_dot_rollout : np.ndarray
+        Stacked velocity samples (unshifted).
+    x_att_mean : np.ndarray
+        The mean attractor used for alignment (shape 1×N).
+    x_init : list[np.ndarray]
+        Initial point of every original trajectory (unshifted).
+    """
+
+    # ----------------------------
+    # 1. Compute mean attractor
+    # ----------------------------
+    target_set = x_sets[0]
+    if len(target_set) == 0:
+        raise ValueError("x_sets[0] must contain at least one trajectory")
+
+    x_att = [traj[-1] for traj in target_set]
+    x_att_mean = np.mean(np.array(x_att), axis=0, keepdims=True)  # [1, N]
+
+    # ----------------------------
+    # 2. Shift & roll out
+    # ----------------------------
+    x_rollout = None
+    x_dot_rollout = None
+    x_init = []
+
+    for x_set, xdot_set in zip(x_sets, x_dot_sets):
+        if len(x_set) != len(xdot_set):
+            raise ValueError("Mismatch between x_sets and x_dot_sets lengths")
+
+        for traj, vel in zip(x_set, xdot_set):
+            # store initial (unshifted)
+            x_init.append(traj[0:1])
+
+            # individual shift bringing endpoint to mean attractor
+            traj_shifted = traj + x_att_mean #- traj[-1])
+
+            if x_rollout is None:
+                x_rollout = traj_shifted
+                x_dot_rollout = vel
+            else:
+                x_rollout = np.vstack((x_rollout, traj_shifted))
+                x_dot_rollout = np.vstack((x_dot_rollout, vel))
+
+    return x_rollout, x_dot_rollout, x_att_mean, x_init
 
 
 def _process_bag(path):
