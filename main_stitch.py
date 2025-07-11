@@ -1,6 +1,7 @@
 import os
 import json
 
+import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 from src.util import load_tools, plot_tools
@@ -89,12 +90,15 @@ def main():
     plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction)
 
     # 2) build graph
-    gaussian_graph = gu.create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction,
-                                              reverse_gaussians=False, param_dist=2, param_cos=2)
-    gu.plot_gaussian_graph(gaussian_graph)
+    initial = np.array([3,15])
+    attractor = np.array([17,2])
+    gg = gu.GaussianGraph(gaussian_mu, gaussian_sigma, gaussian_direction,
+                          attractor=attractor, initial=initial,
+                          reverse_gaussians=True, param_dist=3, param_cos=2)
+    gg.compute_shortest_path()
+    print(gg.shortest_path)
 
-    print(gaussian_mu)
-    print(gaussian_direction)
+    gg.plot()
 
 
 if __name__ == "__main__":

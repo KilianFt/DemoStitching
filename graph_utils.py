@@ -4,93 +4,185 @@ import matplotlib.pyplot as plt
 from numpy.f2py.symbolic import normalize
 
 
-def create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction, reverse_gaussians=False, param_dist=1, param_cos=1):
-    """ Converts a set of gaussians (with direction) into a networkx graph.
+class GaussianGraph:
 
-    Args:
-        gaussian_mu: N x 2 ndarray of gaussian means
-        gaussian_sigma: N x 2 x 2 ndarray of gaussian covariance matrices
-        gaussian_direction: N x 2 ndarray of gaussian directions
-        reverse_gaussians: True to duplicate the gaussians and reverse the directions
-        param_dist: distance exponent
+    def __init__(self, gaussian_mu, gaussian_sigma, gaussian_direction, attractor=None, initial=None, reverse_gaussians=False, param_dist=1, param_cos=1):
+
+        self.param_dist = param_dist
+        self.param_cos = param_cos
+
+        self.graph = self.create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction,
+                                                reverse_gaussians=reverse_gaussians)
+        self.gaussian_ids = list(self.graph.nodes.keys())
+
+        self.attractor_id = None
+        self.initial_id = None
+        if attractor is not None:
+            self.set_attractor(attractor)
+        if initial is not None:
+            self.set_initial(initial)
+
+        self.shortest_path = None
+
+    def create_gaussian_graph(self, gaussian_mu, gaussian_sigma, gaussian_direction, reverse_gaussians=False):
+        """ Converts a set of gaussians (with direction) into a networkx graph and saves it to the graph.
+
+        Args:
+            gaussian_mu: n x 2 ndarray of gaussian means
+            gaussian_sigma: n x 2 x 2 ndarray of gaussian covariance matrices
+            gaussian_direction: n x 2 ndarray of gaussian directions
+            reverse_gaussians: True to duplicate the gaussians and reverse the directions
 
         Returns:
-            gaussian_graph: networkx digraph representing the gaussian.
-
+            gaussian_graph: networkx Digraph
         """
 
-    gaussian_graph = nx.DiGraph()
-    N = gaussian_mu.shape[0]
+        gaussian_graph = nx.DiGraph()
+        N = gaussian_mu.shape[0]
 
-    # Convert gaussians to nodes
-    for i in range(N):
-        gaussian_graph.add_node(i, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=gaussian_direction[i])
+        # Convert gaussians to nodes
+        for i in range(N):
+            gaussian_graph.add_node(i, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=gaussian_direction[i])
 
-        if reverse_gaussians:
-            gaussian_graph.add_node(i+N, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
+            if reverse_gaussians:
+                gaussian_graph.add_node(i+N, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
 
 
-    # Connect nodes by weighted edges
-    for id1 in gaussian_graph.nodes:
-        for id2 in gaussian_graph.nodes:
-            mean1 = gaussian_graph.nodes[id1]['mean']
-            direction1 = gaussian_graph.nodes[id1]['direction']
-            mean2 = gaussian_graph.nodes[id2]['mean']
+        # Connect nodes by weighted edges
+        for id1 in gaussian_graph.nodes:
+            for id2 in gaussian_graph.nodes:
+                edge_weight = self.compute_edge_weight(gaussian_graph.nodes[id1]['mean'],
+                                                       gaussian_graph.nodes[id1]['direction'],
+                                                       gaussian_graph.nodes[id2]['mean'])
 
-            # skip nodes with the same mean (same or reverse-pairs)
-            if np.array_equal(mean1, mean2):
-                continue
+                # add edge to graph
+                if edge_weight is not None:
+                    gaussian_graph.add_edge(id1, id2, weight=edge_weight)
 
-            # distance
-            d = np.linalg.norm(mean1 - mean2)
+        return gaussian_graph
 
-            # directionality score
-            direction_to = mean2 - mean1
-            dir_score = np.dot(direction1, direction_to) / (np.linalg.norm(direction1) * np.linalg.norm(direction_to))
-            if dir_score < 0: # skip if node2 is behind node1 (based on node1 direction)
-                continue
+    def set_attractor(self, attractor):
+        """ Updates/creates an attractor node and adds it to the graph.
 
-            # edge weight (less weight = stronger connection)
-            edge_weight = d**param_dist / dir_score**param_cos
+        Args:
+            attractor position: R^N ndarray
+        """
 
-            # add edge to graph
-            gaussian_graph.add_edge(id1, id2, weight=edge_weight)
+        # remove current attractor if it exists
+        if self.attractor_id is not None:
+            self.graph.remove_node(self.attractor_id)
 
-    return gaussian_graph
+        # add attractor
+        self.attractor_id = 'attractor'
+        self.graph.add_node(self.attractor_id, pos=attractor)
+        for gaussian_id in self.gaussian_ids:
+            edge_weight = self.compute_edge_weight(self.graph.nodes[gaussian_id]['mean'],
+                                                   self.graph.nodes[gaussian_id]['direction'],
+                                                   attractor)
+            if edge_weight is not None:
+                self.graph.add_edge(gaussian_id, self.attractor_id, weight=edge_weight)
 
-def plot_gaussian_graph(gaussian_graph):
-    """Plot the gaussian graph with nodes at their mean positions and edges with alpha based on edge weight.
-    Higher weight means more transparent (lower alpha)."""
+    def set_initial(self, initial):
+        """ Updates/creates an initial node and adds it to the graph.
 
-    plt.figure(figsize=(10, 8))
-    ax = plt.gca()
+        Args:
+            initial position: R^N ndarray
+        """
 
-    # Draw nodes
-    pos = {node: gaussian_graph.nodes[node]['mean'] for node in gaussian_graph.nodes()}
-    nx.draw_networkx_nodes(gaussian_graph, pos, node_color='lightblue', node_size=300, ax=ax)
-    nx.draw_networkx_labels(gaussian_graph, pos, font_size=12, font_weight='bold', ax=ax)
+        # remove current attractor if it exists
+        if self.initial_id is not None:
+            self.graph.remove_node(self.initial_id)
 
-    # Extract edge weights
-    edges = gaussian_graph.edges(data=True)
-    weights = [edata['weight'] for _, _, edata in edges]
+        # add attractor
+        self.initial_id = 'initial'
+        self.graph.add_node(self.initial_id, pos=initial)
+        for gaussian_id in self.gaussian_ids:
+            edge_weight = self.compute_edge_weight(initial,
+                                                   self.graph.nodes[gaussian_id]['direction'],
+                                                   self.graph.nodes[gaussian_id]['mean'])
+            if edge_weight is not None:
+                self.graph.add_edge(self.initial_id, gaussian_id, weight=edge_weight)
 
-    # Normalize weights for alpha values (higher weight = lower alpha)
-    norm_param = 1.3
-    normalize_weights = weights / min(weights)
-    normalize_weights = normalize_weights - 1
-    normalize_weights = normalize_weights * norm_param / np.median(normalize_weights)
-    normalize_weights = normalize_weights + 1
-    alphas = [np.exp(1-w) for w in normalize_weights]
+    def compute_edge_weight(self, pos1, direction1, pos2):
 
-    # Draw edges
-    for (u, v, edata), alpha in zip(edges, alphas):
-        nx.draw_networkx_edges(gaussian_graph, pos, edgelist=[(u, v)],
-                               alpha=alpha, edge_color='black',
-                               arrows=True, arrowsize=20, ax=ax)
+        # skip nodes with the same mean (same or reverse-pairs)
+        if np.array_equal(pos1, pos2):
+            return None
 
-    plt.title('Gaussian Graph with Edge Transparency by Weight')
-    plt.xlabel('X Position')
-    plt.ylabel('Y Position')
-    plt.axis('equal')
-    plt.grid(True, alpha=0.3)
-    plt.show()
+        # distance
+        d = np.linalg.norm(pos1 - pos2)
+
+        # directionality score
+        direction_to = pos2 - pos1
+        dir_score = np.dot(direction1, direction_to) / (np.linalg.norm(direction1) * np.linalg.norm(direction_to))
+        if dir_score < 0:  # if node2 is behind node1 (by direction) then there is no edge
+            return None
+
+        # edge weight (less weight = stronger connection)
+        return d ** self.param_dist / dir_score ** self.param_cos
+
+    def compute_shortest_path(self):
+        """ Computes the shortest path from the initial to the attractor.
+        """
+        if self.initial_id is not None and self.attractor_id is not None:
+            self.shortest_path = nx.shortest_path(self.graph, source='initial', target='attractor', weight='weight')
+
+    def plot(self):
+        """Plots a GaussianGraph.
+
+        Args:
+            gaussian_graph: a GaussianGraph
+        """
+
+        plt.figure(figsize=(10, 8))
+        ax = plt.gca()
+
+        gg = self.graph
+
+        # Draw nodes (gaussians, attractor, initial)
+        pos = {node: gg.nodes[node]['mean'] for node in self.gaussian_ids}
+        if self.attractor_id:
+            pos[self.attractor_id] = gg.nodes[self.attractor_id]['pos']
+        if self.initial_id:
+            pos[self.initial_id] = gg.nodes[self.initial_id]['pos']
+
+        colormap = []
+        for node in gg.nodes:
+            if node is self.attractor_id:
+                colormap.append('red')
+            elif node is self.initial_id:
+                colormap.append('green')
+            else:
+                colormap.append('blue')
+
+        nx.draw_networkx_nodes(gg, pos, node_color=colormap, node_size=300, ax=ax)
+        nx.draw_networkx_labels(gg, pos, font_size=12, font_weight='bold', ax=ax)
+
+        # Extract edge weights
+        edges = gg.edges(data=True)
+        weights = [edata['weight'] for _, _, edata in edges]
+
+        # Normalize weights for alpha values (higher weight = lower alpha)
+        norm_param = 5
+        normalize_weights = weights / min(weights)
+        normalize_weights = normalize_weights - 1
+        normalize_weights = normalize_weights * norm_param / np.median(normalize_weights)
+        normalize_weights = normalize_weights + 1
+        alphas = [np.exp(1-w) for w in normalize_weights]
+
+        # Draw edges
+        for (u, v, edata), alpha in zip(edges, alphas):
+            nx.draw_networkx_edges(gg, pos, edgelist=[(u, v)],
+                                   alpha=alpha, edge_color='black',
+                                   arrows=True, arrowsize=20, ax=ax)
+
+        # Draw shortest path
+        if self.shortest_path is not None:
+
+            path_edges = [(self.shortest_path[i], self.shortest_path[i+1]) for i in range(len(self.shortest_path) - 1)]
+            nx.draw_networkx_edges(gg, pos, edgelist=path_edges, alpha=0.25, edge_color='magenta',
+                                   arrows=True, width=10, arrowsize=30, ax=ax)
+        plt.axis('equal')
+        plt.tight_layout()
+        plt.grid(True, alpha=0.5)
+        plt.show()
