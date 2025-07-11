@@ -6,8 +6,10 @@ import matplotlib.pyplot as plt
 from src.util import load_tools, plot_tools
 from src.lpvds_class import lpvds_class
 
+import graph_utils as gu
 
-def calculate_nodes(input_opt):
+
+def calculate_gaussians(input_opt):
     # data list with each entry containing x, x_dot, x_att, x_init
     data = load_tools.load_data_stitch(int(input_opt))
     node_centers = []
@@ -34,30 +36,30 @@ def calculate_nodes(input_opt):
     return np.array(node_centers), np.array(node_directions), np.array(node_sigmas)
 
 
-def plot_nodes(node_centers, node_directions, node_sigmas):
+def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction):
     fig, ax = plt.subplots(1, 1, figsize=(8, 5))
 
-    for k in range(len(node_centers)):
-        mu = node_centers[k]
-        sigma = node_sigmas[k]
+    for k in range(len(gaussian_mu)):
+        mu = gaussian_mu[k]
+        sigma = gaussian_sigma[k]
         plot_tools.plot_2d_gaussian(mu, sigma, ax = ax)    
 
-        ax.arrow(node_centers[k, 0],
-                node_centers[k, 1],
-                node_directions[k, 0],
-                node_directions[k, 1],
-                head_width=0.5,
-                head_length=0.5,
-                fc='r',
-                ec='r',
-                zorder=10
-                )
+        ax.arrow(gaussian_mu[k, 0],
+                 gaussian_mu[k, 1],
+                 gaussian_direction[k, 0],
+                 gaussian_direction[k, 1],
+                 head_width=0.5,
+                 head_length=0.5,
+                 fc='r',
+                 ec='r',
+                 zorder=10
+                 )
 
     plt.tight_layout()
     plt.show()  
 
 
-def maybe_calculate_nodes(input_opt):
+def load_gaussians_from_file(input_opt):
     filename = "./dataset/stitching/nodes_{}.json".format(input_opt)
     if os.path.exists(filename):
         print("Using cached nodes")
@@ -68,10 +70,11 @@ def maybe_calculate_nodes(input_opt):
             node_sigmas = np.array(node_sigmas)
     else:
         print("Calculating nodes")
-        node_centers, node_directions, node_sigmas = calculate_nodes(input_opt)
+        node_centers, node_directions, node_sigmas = calculate_gaussians(input_opt)
         with open(filename, 'w') as f:
             json.dump([node_centers.tolist(), node_directions.tolist(), node_sigmas.tolist()], f)
-    return node_centers, node_directions, node_sigmas
+    return node_centers, node_sigmas, node_directions
+
 
 def main():
     input_message = '''
@@ -82,12 +85,16 @@ def main():
     input_opt  = input(input_message)
 
     # 1) get GMM centers and directionality
-    node_centers, node_directions, node_sigmas = maybe_calculate_nodes(input_opt)
-    plot_nodes(node_centers, node_directions, node_sigmas)
+    gaussian_mu, gaussian_sigma, gaussian_direction = load_gaussians_from_file(input_opt)
+    plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction)
 
     # 2) build graph
-    print(node_centers)
-    print(node_directions)
+    gaussian_graph = gu.create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction,
+                                              reverse_gaussians=False, param_dist=2, param_cos=2)
+    gu.plot_gaussian_graph(gaussian_graph)
+
+    print(gaussian_mu)
+    print(gaussian_direction)
 
 
 if __name__ == "__main__":
