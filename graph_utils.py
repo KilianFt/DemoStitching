@@ -127,6 +127,23 @@ class GaussianGraph:
         if self.initial_id is not None and self.attractor_id is not None:
             self.shortest_path = nx.shortest_path(self.graph, source='initial', target='attractor', weight='weight')
 
+    def get_gaussian(self, node_id):
+        """ Gets the gaussian parameters of a node.
+
+        Args:
+            node_id: id of the node
+
+        Returns:
+            mu: Gaussian mean
+            sigma: Gaussian covariance
+            direction: Gaussian direction
+        """
+        mu = self.graph.nodes[node_id]['mean']
+        sigma = self.graph.nodes[node_id]['covariance']
+        direction = self.graph.nodes[node_id]['direction']
+
+        return mu, sigma, direction
+
     def plot(self):
         """Plots a GaussianGraph.
 

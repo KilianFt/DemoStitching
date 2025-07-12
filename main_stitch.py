@@ -98,6 +98,10 @@ def main():
     gg.compute_shortest_path()
     print(gg.shortest_path)
 
+    # example: get the gaussian params for the first node (expluding the initial) from the shortest path
+    node_id = gg.shortest_path[1]
+    mu, sigma, direction = gg.get_gaussian(node_id)
+
     gg.plot()
 
 
