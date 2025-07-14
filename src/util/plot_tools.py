@@ -14,6 +14,29 @@ plt.rcParams.update({
 })
 
 
+def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction):
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+
+    for k in range(len(gaussian_mu)):
+        mu = gaussian_mu[k]
+        sigma = gaussian_sigma[k]
+        plot_2d_gaussian(mu, sigma, ax = ax)    
+
+        ax.arrow(gaussian_mu[k, 0],
+                 gaussian_mu[k, 1],
+                 gaussian_direction[k, 0],
+                 gaussian_direction[k, 1],
+                 head_width=0.5,
+                 head_length=0.5,
+                 fc='r',
+                 ec='r',
+                 zorder=10
+                 )
+
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_2d_gaussian(mu, sigma, ax=None, n_ellipses=3, n_points=100, force_plot=False, print_matrix_info=False):
     """
     Plot a 2D Gaussian distribution with confidence ellipses
@@ -236,6 +259,7 @@ def plot_ds_2d(x_train, x_test_list, lpvds, *args):
     v = dx[1,:].reshape((plot_sample,plot_sample))
 
     plt.streamplot(x_mesh,y_mesh,u,v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
+    plt.scatter(att[:,0], att[:,1], color='g', s=100, alpha=0.7)
     plt.gca().set_aspect('equal')
 
     if len(args) !=0:

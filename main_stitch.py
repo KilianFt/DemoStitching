@@ -1,80 +1,25 @@
 import os
-import json
-
-import networkx as nx
+import pickle
 import numpy as np
 import matplotlib.pyplot as plt
-from src.util import load_tools, plot_tools
-from src.lpvds_class import lpvds_class
 
+from src.util import plot_tools
 import graph_utils as gu
-
-
-def calculate_gaussians(input_opt):
-    # data list with each entry containing x, x_dot, x_att, x_init
-    data = load_tools.load_data_stitch(int(input_opt))
-    node_centers = []
-    node_sigmas = []
-    node_directions = []
-    for i in range(len(data)):
-        x, x_dot, x_att, x_init = data[i]
-        lpvds = lpvds_class(x, x_dot, x_att)
-        lpvds._cluster()
-
-        # get directionality
-        centers = lpvds.damm.Mu
-        assignment_arr = lpvds.assignment_arr
-        # get mean xdot per cluster
-        # NOTE could be modified to have weighted average
-        mean_xdot = np.zeros((lpvds.damm.K, x.shape[1]))
-        for k in range(lpvds.damm.K):
-            mean_xdot[k] = np.mean(x_dot[assignment_arr==k], axis=0)
-
-        node_centers.extend(centers.tolist())
-        node_directions.extend(mean_xdot.tolist())
-        node_sigmas.extend(lpvds.damm.Sigma.tolist())
-
-    return np.array(node_centers), np.array(node_directions), np.array(node_sigmas)
-
-
-def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction):
-    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
-
-    for k in range(len(gaussian_mu)):
-        mu = gaussian_mu[k]
-        sigma = gaussian_sigma[k]
-        plot_tools.plot_2d_gaussian(mu, sigma, ax = ax)    
-
-        ax.arrow(gaussian_mu[k, 0],
-                 gaussian_mu[k, 1],
-                 gaussian_direction[k, 0],
-                 gaussian_direction[k, 1],
-                 head_width=0.5,
-                 head_length=0.5,
-                 fc='r',
-                 ec='r',
-                 zorder=10
-                 )
-
-    plt.tight_layout()
-    plt.show()  
+import src.stitching as st
 
 
 def load_gaussians_from_file(input_opt):
-    filename = "./dataset/stitching/nodes_{}.json".format(input_opt)
+    filename = "./dataset/stitching/nodes_{}.pkl".format(input_opt)
     if os.path.exists(filename):
         print("Using cached nodes")
-        with open(filename, 'r') as f:
-            node_centers, node_directions, node_sigmas = json.load(f)
-            node_centers = np.array(node_centers)
-            node_directions = np.array(node_directions)
-            node_sigmas = np.array(node_sigmas)
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
     else:
         print("Calculating nodes")
-        node_centers, node_directions, node_sigmas = calculate_gaussians(input_opt)
-        with open(filename, 'w') as f:
-            json.dump([node_centers.tolist(), node_directions.tolist(), node_sigmas.tolist()], f)
-    return node_centers, node_sigmas, node_directions
+        data = st.calculate_gaussians(input_opt)
+        with open(filename, 'wb') as f:
+            pickle.dump(data, f)
+    return data
 
 
 def main():
@@ -85,24 +30,56 @@ def main():
     Enter the corresponding option number: '''
     input_opt  = input(input_message)
 
+    # --------- config ---------
+    # problem setup
+    initial = np.array([4,15]) # np.array([3,15])
+    attractor = np.array([14,2]) # np.array([17,2])
+    # initial = np.array([0,0])
+    # attractor = np.array([14,2])
+
+    # LPVDS parameters
+    # gmm_variabt = "PC-GMM" TODO
+    ds_method = "recompute" # options: ["recompute", "reuse", "switch"]
+    reverse_gaussians = True # if True, duplicate gaussians and reverse directions
+    rebuild_lpvds = False # if True, recompute clustering from scratch instead of using existing gaussians
+    
+    # graph parameters
+    param_dist = 3 # parameter for distance
+    param_cos = 2 # parameter for directionality
+
+
+
+    # --------- main ---------
     # 1) get GMM centers and directionality
-    gaussian_mu, gaussian_sigma, gaussian_direction = load_gaussians_from_file(input_opt)
-    plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction)
+    data = load_gaussians_from_file(input_opt)
+    # plot_tools.plot_gaussians(data["centers"], data["sigmas"], data["directions"])
+
 
     # 2) build graph
-    initial = np.array([3,15])
-    attractor = np.array([17,2])
-    gg = gu.GaussianGraph(gaussian_mu, gaussian_sigma, gaussian_direction,
+    gg = gu.GaussianGraph(data["centers"], data["sigmas"], data["directions"],
                           attractor=attractor, initial=initial,
-                          reverse_gaussians=True, param_dist=3, param_cos=2)
+                          reverse_gaussians=reverse_gaussians, param_dist=param_dist, param_cos=param_cos)
     gg.compute_shortest_path()
-    print(gg.shortest_path)
-
-    # example: get the gaussian params for the first node (expluding the initial) from the shortest path
-    node_id = gg.shortest_path[1]
-    mu, sigma, direction = gg.get_gaussian(node_id)
-
     gg.plot()
+    # gg.plot_shortest_path_gaussians()
+
+
+    # 3) build DS
+    # Options:
+    # - ["recompute"] Recompute using shortest path
+    # - ["reuse"] Calculate A's in step 1 and reuse them. Check GAS in this case.
+    # - ["switch"] Fit DS to each node and switch between attractors to reach goal
+    lpvds = st.build_ds(gg, data, attractor, ds_method, reverse_gaussians, rebuild_lpvds=rebuild_lpvds)
+
+
+    # 4) simulate
+    x_inits = [initial+np.random.normal(0, 0.5, initial.shape[0]) for _ in range(3)]
+    x_test_list = []
+    for x_0 in x_inits:
+        x_test_list.append(lpvds.sim(x_0[None,:], dt=0.01))
+
+    plot_tools.plot_ds_2d(lpvds.x, x_test_list, lpvds)
+    plt.show()
 
 
 if __name__ == "__main__":

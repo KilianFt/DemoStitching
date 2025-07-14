@@ -1,8 +1,8 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-from numpy.f2py.symbolic import normalize
-
+# from numpy.f2py.symbolic import normalize
+from src.util import plot_tools
 
 class GaussianGraph:
 
@@ -10,7 +10,7 @@ class GaussianGraph:
 
         self.param_dist = param_dist
         self.param_cos = param_cos
-
+        self.N = gaussian_mu.shape[0]
         self.graph = self.create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction,
                                                 reverse_gaussians=reverse_gaussians)
         self.gaussian_ids = list(self.graph.nodes.keys())
@@ -38,14 +38,13 @@ class GaussianGraph:
         """
 
         gaussian_graph = nx.DiGraph()
-        N = gaussian_mu.shape[0]
 
         # Convert gaussians to nodes
-        for i in range(N):
+        for i in range(self.N):
             gaussian_graph.add_node(i, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=gaussian_direction[i])
 
             if reverse_gaussians:
-                gaussian_graph.add_node(i+N, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
+                gaussian_graph.add_node(i+self.N, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
 
 
         # Connect nodes by weighted edges
@@ -202,4 +201,19 @@ class GaussianGraph:
         plt.axis('equal')
         plt.tight_layout()
         plt.grid(True, alpha=0.5)
-        plt.show()
+        # plt.show()
+
+    def plot_shortest_path_gaussians(self):
+        shortest_path_mus = []
+        shortest_path_sigmas = []
+        shortest_path_directions = []
+        for node_id in self.shortest_path[1:-1]:
+            mu, sigma, direction = self.get_gaussian(node_id)
+            shortest_path_mus.append(mu)
+            shortest_path_sigmas.append(sigma)
+            shortest_path_directions.append(direction)
+        shortest_path_mus = np.array(shortest_path_mus)
+        shortest_path_sigmas = np.array(shortest_path_sigmas)
+        shortest_path_directions = np.array(shortest_path_directions)
+        
+        plot_tools.plot_gaussians(shortest_path_mus, shortest_path_sigmas, shortest_path_directions)
