@@ -143,15 +143,16 @@ class GaussianGraph:
 
         return mu, sigma, direction
 
-    def plot(self):
+    def plot(self, ax=None):
         """Plots a GaussianGraph.
 
         Args:
             gaussian_graph: a GaussianGraph
         """
 
-        plt.figure(figsize=(10, 8))
-        ax = plt.gca()
+        if ax is None:
+            plt.figure(figsize=(10, 8))
+            ax = plt.gca()
 
         gg = self.graph
 
@@ -198,9 +199,9 @@ class GaussianGraph:
             path_edges = [(self.shortest_path[i], self.shortest_path[i+1]) for i in range(len(self.shortest_path) - 1)]
             nx.draw_networkx_edges(gg, pos, edgelist=path_edges, alpha=0.25, edge_color='magenta',
                                    arrows=True, width=10, arrowsize=30, ax=ax)
-        plt.axis('equal')
-        plt.tight_layout()
-        plt.grid(True, alpha=0.5)
+        ax.axis('equal')
+        # ax.tight_layout()
+        ax.grid(True, alpha=0.5)
         # plt.show()
 
     def plot_shortest_path_gaussians(self):

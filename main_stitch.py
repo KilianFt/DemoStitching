@@ -39,7 +39,7 @@ def main():
 
     # LPVDS parameters
     # gmm_variabt = "PC-GMM" TODO
-    ds_method = "recompute" # options: ["recompute", "reuse", "switch"]
+    ds_method = "reuse" # options: ["recompute", "reuse", "switch"]
     reverse_gaussians = True # if True, duplicate gaussians and reverse directions
     rebuild_lpvds = False # if True, recompute clustering from scratch instead of using existing gaussians
     
@@ -60,7 +60,6 @@ def main():
                           attractor=attractor, initial=initial,
                           reverse_gaussians=reverse_gaussians, param_dist=param_dist, param_cos=param_cos)
     gg.compute_shortest_path()
-    gg.plot()
     # gg.plot_shortest_path_gaussians()
 
 
@@ -78,7 +77,11 @@ def main():
     for x_0 in x_inits:
         x_test_list.append(lpvds.sim(x_0[None,:], dt=0.01))
 
-    plot_tools.plot_ds_2d(lpvds.x, x_test_list, lpvds)
+    fig, axs = plt.subplots(1, 2, figsize=(12,5))
+    gg.plot(ax=axs[0])
+    plot_tools.plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs[1])
+    # axs[1].set_xlim(0, 20)
+    # axs[1].set_ylim(0, 20)
     plt.show()
 
 

@@ -232,13 +232,14 @@ def plot_gmm(x_train, label, damm, ax = None):
 
 
 
-def plot_ds_2d(x_train, x_test_list, lpvds, *args):
+def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
     att = lpvds.x_att
 
-    fig = plt.figure(figsize=(16, 10))
-    ax = fig.add_subplot()
+    if ax is None:
+        fig = plt.figure(figsize=(16, 10))
+        ax = fig.add_subplot()
 
     ax.scatter(x_train[:, 0], x_train[:, 1], color='k', s=5, label='original data')
     for idx, x_test in enumerate(x_test_list):
@@ -246,6 +247,7 @@ def plot_ds_2d(x_train, x_test_list, lpvds, *args):
 
     x_min, x_max = ax.get_xlim()
     y_min, y_max = ax.get_ylim()
+
     plot_sample = 50
     x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))
     X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
@@ -258,12 +260,12 @@ def plot_ds_2d(x_train, x_test_list, lpvds, *args):
     u = dx[0,:].reshape((plot_sample,plot_sample))
     v = dx[1,:].reshape((plot_sample,plot_sample))
 
-    plt.streamplot(x_mesh,y_mesh,u,v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
-    plt.scatter(att[:,0], att[:,1], color='g', s=100, alpha=0.7)
-    plt.gca().set_aspect('equal')
+    ax.streamplot(x_mesh,y_mesh,u,v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
+    ax.scatter(att[:,0], att[:,1], color='g', s=100, alpha=0.7)
+    ax.set_aspect('equal')
 
-    if len(args) !=0:
-        ax.set_title(args[0])
+    if title is not None:
+        ax.set_title(title)
 
 
 

@@ -13,12 +13,16 @@ def calculate_gaussians(input_opt):
     node_directions = []
     xs = []
     x_dots = []
+    x_atts = []
     assignment_arrs = []
     n_centers = 0
+    As = []
+    Ps = []
     for i in range(n_demos):
         x, x_dot, x_att, x_init = data[i]
         lpvds = lpvds_class(x, x_dot, x_att)
-        lpvds._cluster()
+        # lpvds._cluster()
+        lpvds.begin()
 
         # get directionality
         centers = lpvds.damm.Mu
@@ -33,6 +37,9 @@ def calculate_gaussians(input_opt):
         node_sigmas.extend(lpvds.damm.Sigma.tolist())
         xs.append(x)
         x_dots.append(x_dot)
+        x_atts.append(x_att)
+        As.append(lpvds.A)
+        Ps.append(lpvds.ds_opt.P)
 
         # ensures that the assignment array is unique
         assignment_arrs.append(assignment_arr+n_centers)
@@ -44,5 +51,8 @@ def calculate_gaussians(input_opt):
         "sigmas": np.array(node_sigmas),
         "xs": xs,
         "x_dots": x_dots,
+        "x_atts": x_atts,
         "assignment_arrs": assignment_arrs,
+        "As": np.vstack(As),
+        "Ps": Ps,
     }
