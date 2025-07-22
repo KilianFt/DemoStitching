@@ -13,7 +13,7 @@ from src.util.load_tools import load_data_from_file
 
 
 # TODO
-# - implement reuse of A_k
+# - implement recalculating P?
 # - calculate metrics for all methods
 # - method where all gaussians point towards goal
 
@@ -21,16 +21,16 @@ from src.util.load_tools import load_data_from_file
 # ds_method options:
 # - ["recompute_all"] Recompute using shortest path
 # - ["recompute_ds"] Recompute only DS
-# - ["reuse"] Calculate A's in step 1 and reuse them. Check GAS in this case.
+# - ["reuse"] Reuse A's from step 1 and only recompute them if they are invalid wrt P
 # - ["chain"] Fit DS to each node and switch between attractors to reach goal
 
 @dataclass
 class Config:
-    input_opt: Optional[int] = None
+    input_opt: Optional[int] = 2
     data_file: Optional[str] = "test_1" # this only matters for option 3
-    initial: Optional[np.ndarray] = None # np.array([4,15]) # np.array([3,15])
-    attractor: Optional[np.ndarray] = None # np.array([14,2]) # np.array([17,2])
-    ds_method: str = "recompute_all" # ["recompute_all", "recompute_ds", "reuse", "chain"]
+    initial: Optional[np.ndarray] = None #np.array([4,15]) # np.array([3,15])
+    attractor: Optional[np.ndarray] = None #np.array([14,2]) # np.array([17,2])
+    ds_method: str = "recompute_ds" # ["recompute_all", "recompute_ds", "reuse", "chain"]
     reverse_gaussians: bool = True
     param_dist: int = 3
     param_cos: int = 3

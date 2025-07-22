@@ -4,6 +4,7 @@ import numpy as np
 from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
 from src.stitching.utils import is_negative_definite
+from src.stitching.optimization import compute_valid_A
 
 
 def build_ds(gg, data, attractor, ds_method, reverse_gaussians):
@@ -27,6 +28,7 @@ def reuse_ds(gg, data, attractor, reverse_gaussians):
     x_att = attractor[None,:]
     all_x = np.vstack(data["xs"])
     all_x_dot = np.vstack(data["x_dots"])
+    all_assignment_arr = np.hstack(data["assignment_arrs"])
 
     # select P
     P = None
@@ -39,6 +41,9 @@ def reuse_ds(gg, data, attractor, reverse_gaussians):
 
     As = []
     gaussian_list = []
+    filtered_xs = []
+    filtered_x_dots = []
+
     for node_id in gg.shortest_path[1:-1]:
         mu, sigma, direction = gg.get_gaussian(node_id)
         if reverse_gaussians and node_id >= gg.N:
@@ -49,18 +54,20 @@ def reuse_ds(gg, data, attractor, reverse_gaussians):
             x_dot_direction = 1
 
         node_A = x_dot_direction * data["As"][assign_id]
+        node_x = all_x[all_assignment_arr==assign_id]
+        node_x_dot = x_dot_direction * all_x_dot[all_assignment_arr==assign_id]
 
         # check if they are valid with respect to P
-        valid_a = is_negative_definite(node_A + np.transpose(node_A))
+        valid_A = is_negative_definite(node_A + np.transpose(node_A))
         valid_wrt_p = is_negative_definite(np.transpose(node_A) @ P + P @ node_A)
-        print(valid_a, valid_wrt_p)
+        if not valid_A or not valid_wrt_p:
+            updated_A = compute_valid_A(node_A, P, node_x, x_att, node_x_dot)
+            node_A = updated_A
 
-        # objective = loglikelihood...
+            valid_A = is_negative_definite(updated_A + np.transpose(updated_A))
+            valid_wrt_p = is_negative_definite(np.transpose(updated_A) @ P + P @ updated_A)
+            assert valid_A and valid_wrt_p, "Updated A is not valid"
 
-        # TODO optimize each A that is not valid
-        # obj = f(x) - x_dot
-
-        # if not, recompute only the invalid A's
         gaussian_list.append({   
             "prior" : 1 / path_len,
             "mu"    : mu,
@@ -69,7 +76,12 @@ def reuse_ds(gg, data, attractor, reverse_gaussians):
         })
         As.append(node_A)
 
-    lpvds = lpvds_class(all_x, all_x_dot, x_att)
+        filtered_xs.append(node_x)
+        filtered_x_dots.append(node_x_dot)
+
+    filtered_xs = np.vstack(filtered_xs)
+    filtered_x_dots = np.vstack(filtered_x_dots)
+    lpvds = lpvds_class(filtered_xs, filtered_x_dots, x_att)
     lpvds.init_cluster(gaussian_list)
     lpvds.A = np.array(As)
     lpvds.ds_opt = dsopt_class(lpvds.x, lpvds.x_dot, lpvds.x_att, lpvds.gamma, lpvds.assignment_arr)
