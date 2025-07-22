@@ -204,7 +204,7 @@ class GaussianGraph:
         ax.grid(True, alpha=0.5)
         # plt.show()
 
-    def plot_shortest_path_gaussians(self):
+    def plot_shortest_path_gaussians(self, ax=None):
         shortest_path_mus = []
         shortest_path_sigmas = []
         shortest_path_directions = []
@@ -217,4 +217,7 @@ class GaussianGraph:
         shortest_path_sigmas = np.array(shortest_path_sigmas)
         shortest_path_directions = np.array(shortest_path_directions)
         
-        plot_tools.plot_gaussians(shortest_path_mus, shortest_path_sigmas, shortest_path_directions)
+        plot_tools.plot_gaussians(shortest_path_mus,
+                                  shortest_path_sigmas,
+                                  shortest_path_directions,
+                                  ax=ax)

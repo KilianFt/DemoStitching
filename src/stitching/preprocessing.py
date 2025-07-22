@@ -4,9 +4,9 @@ from src.util import load_tools
 from src.lpvds_class import lpvds_class
 
 
-def calculate_gaussians(input_opt):
+def calculate_demo_lpvds(input_opt, data_file=None):
     # data list with each entry containing x, x_dot, x_att, x_init
-    data = load_tools.load_data_stitch(int(input_opt))
+    data, data_hash = load_tools.load_data_stitch(int(input_opt), data_file=data_file)
     n_demos = len(data)
     node_centers = []
     node_sigmas = []
@@ -14,6 +14,7 @@ def calculate_gaussians(input_opt):
     xs = []
     x_dots = []
     x_atts = []
+    x_inits = []
     assignment_arrs = []
     n_centers = 0
     As = []
@@ -37,7 +38,8 @@ def calculate_gaussians(input_opt):
         node_sigmas.extend(lpvds.damm.Sigma.tolist())
         xs.append(x)
         x_dots.append(x_dot)
-        x_atts.append(x_att)
+        x_atts.append(np.squeeze(x_att))
+        x_inits.append(np.squeeze(x_init).mean(axis=0))
         As.append(lpvds.A)
         Ps.append(lpvds.ds_opt.P)
 
@@ -52,7 +54,8 @@ def calculate_gaussians(input_opt):
         "xs": xs,
         "x_dots": x_dots,
         "x_atts": x_atts,
+        "x_inits": x_inits,
         "assignment_arrs": assignment_arrs,
         "As": np.vstack(As),
         "Ps": Ps,
-    }
+    }, data_hash

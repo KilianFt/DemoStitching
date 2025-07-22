@@ -14,8 +14,9 @@ plt.rcParams.update({
 })
 
 
-def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction):
-    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 5))
 
     for k in range(len(gaussian_mu)):
         mu = gaussian_mu[k]
@@ -33,8 +34,8 @@ def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction):
                  zorder=10
                  )
 
-    plt.tight_layout()
-    plt.show()
+    # plt.tight_layout()
+    # plt.show()
 
 
 def plot_2d_gaussian(mu, sigma, ax=None, n_ellipses=3, n_points=100, force_plot=False, print_matrix_info=False):
@@ -232,7 +233,7 @@ def plot_gmm(x_train, label, damm, ax = None):
 
 
 
-def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None):
+def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
     att = lpvds.x_att
@@ -245,8 +246,9 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None):
     for idx, x_test in enumerate(x_test_list):
         ax.plot(x_test[:, 0], x_test[:, 1], color= 'r', linewidth=2)
 
-    x_min, x_max = ax.get_xlim()
-    y_min, y_max = ax.get_ylim()
+    if x_min is None or x_max is None or y_min is None or y_max is None:
+        x_min, x_max = ax.get_xlim()
+        y_min, y_max = ax.get_ylim()
 
     plot_sample = 50
     x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))

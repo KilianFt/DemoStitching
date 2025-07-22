@@ -3,17 +3,23 @@ import numpy as np
 
 from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
+from src.stitching.utils import is_negative_definite
 
 
-def build_ds(gg, data, attractor, ds_method, reverse_gaussians, rebuild_lpvds=False):
-    if ds_method == "recompute":
-        lpvds = recompute_ds(gg, data, attractor, reverse_gaussians, rebuild_lpvds)
+def build_ds(gg, data, attractor, ds_method, reverse_gaussians):
+    if ds_method == "recompute_all":
+        lpvds = recompute_ds(gg, data, attractor, reverse_gaussians, rebuild_lpvds=True)
+    elif ds_method == "recompute_ds":
+        lpvds = recompute_ds(gg, data, attractor, reverse_gaussians, rebuild_lpvds=False)
     elif ds_method == "reuse":
         lpvds = reuse_ds(gg, data, attractor, reverse_gaussians)
+    elif ds_method == "chain":
+        raise NotImplementedError(f"Invalid ds_method: {ds_method}")
     else:
         raise NotImplementedError(f"Invalid ds_method: {ds_method}")
 
     return lpvds
+
 
 def reuse_ds(gg, data, attractor, reverse_gaussians):
     # get A's that are in shortest path
@@ -45,8 +51,14 @@ def reuse_ds(gg, data, attractor, reverse_gaussians):
         node_A = x_dot_direction * data["As"][assign_id]
 
         # check if they are valid with respect to P
-        is_valid = np.transpose(node_A) @ P + P @ node_A < 0
-        print(is_valid)
+        valid_a = is_negative_definite(node_A + np.transpose(node_A))
+        valid_wrt_p = is_negative_definite(np.transpose(node_A) @ P + P @ node_A)
+        print(valid_a, valid_wrt_p)
+
+        # objective = loglikelihood...
+
+        # TODO optimize each A that is not valid
+        # obj = f(x) - x_dot
 
         # if not, recompute only the invalid A's
         gaussian_list.append({   

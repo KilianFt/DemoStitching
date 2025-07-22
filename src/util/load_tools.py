@@ -1,8 +1,37 @@
 import os, sys
+import pickle
 import numpy as np
 import pyLasaDataset as lasa
 from scipy.io import loadmat
 from scipy.spatial.transform import Rotation as R
+from src.stitching.trajectory_drawer import TrajectoryDrawer, plot_trajectories
+
+from src.stitching.preprocessing import calculate_demo_lpvds
+
+def load_data_from_file(input_opt, data_file=None):
+
+    if input_opt < 3:
+        data_file = f"nodes_{input_opt}"
+    elif data_file is not None:
+        data_file = data_file
+    else:
+        raise ValueError("Invalid input option")
+
+    filename = "./dataset/stitching/{}.pkl".format(data_file)
+    if os.path.exists(filename):
+        print("Using cached nodes")
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
+    else:
+        print("Calculating nodes")
+        data, used_data_file = calculate_demo_lpvds(input_opt, data_file)
+        if used_data_file != data_file:
+            print(f"Using data file: {used_data_file}")
+            filename = "./dataset/stitching/{}.pkl".format(used_data_file)
+        with open(filename, 'wb') as f:
+            pickle.dump(data, f)
+
+    return data, data_file
 
 
 def load_data(input_opt):
@@ -131,28 +160,10 @@ def load_data(input_opt):
         x, x_dot    = _process_bag(input_path)
 
 
-    # elif input_opt == 5:
-    #     # make x shape data where each trajectory is diagonal, but with more samples along the same paths
-    #     n_samples = 101  # number of points per trajectory
-    #     t = np.linspace(0, 1, n_samples)
-
-    #     # Trajectory 1: from (2, 2) to (0, 0) (main diagonal)
-    #     traj_target = np.vstack((2 - 2 * t, 2 - 2 * t)).T
-    #     # Trajectory 2: from (0, 2) to (2, 0) (anti-diagonal)
-    #     traj_other = np.vstack((2 * t, 2 - 2 * t)).T
-
-    #     x_sets = [[traj_target], [traj_other]]
-    #     # Compute velocities as finite differences between successive points
-    #     # x_dot = [np.gradient(traj1, axis=0), np.gradient(traj2, axis=0)]
-    #     x_dot_target = [np.repeat(np.array([[-0.5, -0.5]]), n_samples, axis=0)]
-    #     x_dot_other = [np.repeat(np.array([[0.5, -0.5]]), n_samples, axis=0)]
-    #     x_dot_sets = [x_dot_target, x_dot_other]
-    #     return _pre_process_stitch(x_sets, x_dot_sets)
-
     return _pre_process(x, x_dot)
 
 
-def load_data_stitch(input_opt):
+def load_data_stitch(input_opt, data_file=None):
     """
     Return:
     -------
@@ -191,6 +202,7 @@ def load_data_stitch(input_opt):
         for trajs in x_sets:
             x_dot_trajs = [np.gradient(traj, axis=0) for traj in trajs]
             x_dot_sets.append(x_dot_trajs)
+        data_hash = "nodes_1"
 
     elif input_opt == 2:
         n_points = 40
@@ -231,8 +243,22 @@ def load_data_stitch(input_opt):
             x_dot_trajs = [np.gradient(traj, axis=0) for traj in trajs]
             x_dot_sets.append(x_dot_trajs)
 
+        data_hash = "nodes_2"
+
+    elif input_opt == 3:
+        x_sets, x_dot_sets, used_file = load_drawn_trajectories(data_file)
+        data_hash = used_file
+
+    # Flatten demo sets for processing
+    plot_trajs = []
+    for demo_set in x_sets:
+        plot_trajs.extend(demo_set)
+    
+    # Plot the loaded/generated trajectories
+    plot_trajectories(plot_trajs, "Loaded Trajectories")
+
     # return _pre_process_stitch(x_sets, x_dot_sets)
-    return [_pre_process(x, x_dot) for x, x_dot in zip(x_sets, x_dot_sets)]
+    return [_pre_process(x, x_dot) for x, x_dot in zip(x_sets, x_dot_sets)], data_hash
 
 
 def _pre_process(x, x_dot):
@@ -273,76 +299,6 @@ def _pre_process(x, x_dot):
     return  x_rollout, x_dot_rollout, x_att_mean, x_init
 
 
-def _pre_process_stitch(x_sets, x_dot_sets):
-    """Apply the same normalization as `_pre_process`, but for multiple sets.
-
-    The first element of `x_sets` is the *target* set that reaches the goal.
-    We compute the mean attractor (goal) from the last sample of every
-    trajectory in this first set.  For **every** trajectory in **every** set,
-    we apply an individual shift so that that trajectory's endpoint coincides
-    with this mean attractor:
-
-        shift = x_att_mean - traj[-1]
-
-    This keeps relative shapes intact while aligning all endpoints to the
-    shared goal.  Velocities remain unchanged.
-
-    Parameters
-    ----------
-    x_sets : list[list[np.ndarray]]
-        Nested list of position trajectories.
-    x_dot_sets : list[list[np.ndarray]]
-        Nested list of corresponding velocity trajectories.
-
-    Returns
-    -------
-    x_rollout : np.ndarray
-        Stacked, shifted position samples.
-    x_dot_rollout : np.ndarray
-        Stacked velocity samples (unshifted).
-    x_att_mean : np.ndarray
-        The mean attractor used for alignment (shape 1×N).
-    x_init : list[np.ndarray]
-        Initial point of every original trajectory (unshifted).
-    """
-
-    # ----------------------------
-    # 1. Compute mean attractor
-    # ----------------------------
-    target_set = x_sets[0]
-    if len(target_set) == 0:
-        raise ValueError("x_sets[0] must contain at least one trajectory")
-
-    x_att = [traj[-1] for traj in target_set]
-    x_att_mean = np.mean(np.array(x_att), axis=0, keepdims=True)  # [1, N]
-
-    # ----------------------------
-    # 2. Shift & roll out
-    # ----------------------------
-    x_rollout = None
-    x_dot_rollout = None
-    x_init = []
-
-    for x_set, xdot_set in zip(x_sets, x_dot_sets):
-        if len(x_set) != len(xdot_set):
-            raise ValueError("Mismatch between x_sets and x_dot_sets lengths")
-
-        for traj, vel in zip(x_set, xdot_set):
-            # store initial (unshifted)
-            x_init.append(traj[0:1])
-
-            # individual shift bringing endpoint to mean attractor
-            traj_shifted = traj + x_att_mean #- traj[-1])
-
-            if x_rollout is None:
-                x_rollout = traj_shifted
-                x_dot_rollout = vel
-            else:
-                x_rollout = np.vstack((x_rollout, traj_shifted))
-                x_dot_rollout = np.vstack((x_dot_rollout, vel))
-
-    return x_rollout, x_dot_rollout, x_att_mean, x_init
-
 
 def _process_bag(path):
     """ Process .mat files that is converted from .bag files """
@@ -380,3 +336,86 @@ def _process_bag(path):
         x_dot.append(vel_traj.T)
 
     return x, x_dot
+
+
+def load_drawn_trajectories(data_file=None):
+    """Load trajectories from trajectory drawer files."""
+    print("\n=== Load Drawn Trajectories ===")
+    print("Options:")
+    print("1. Load existing trajectory file")
+    print("2. Draw new trajectories interactively")
+    
+    data_path = "./dataset/stitching/"
+
+    if data_file is not None:
+        file_path = data_path + data_file + "_traj.pkl"
+        if not os.path.exists(file_path):
+            print(f"File {file_path} not found!")
+            choice = "2"
+        else:
+            choice = "1"
+    else:
+        choice = input("Choose option (1 or 2): ").strip()
+    
+    drawer = TrajectoryDrawer()
+    if choice == "1":
+        # Load existing file
+        if data_file is not None:
+            filename = data_file
+        else:
+            filename = input("Enter trajectory filename (without .pkl extension): ").strip()
+        if not filename:
+            print("No filename provided. Using default: sample_trajectories.pkl")
+            filename = "sample_trajectories"
+            
+        file_path = data_path + filename + "_traj.pkl"
+
+        if not os.path.exists(file_path):
+            print(f"File {file_path} not found!")
+            return None
+            
+        trajectories, velocities = drawer.load_trajectories(file_path)
+        if not trajectories:
+            return None
+        
+        
+    elif choice == "2":
+        # Draw new trajectories
+        print("Starting interactive drawing session...")
+        drawer.start_interactive_drawing()
+        
+        if not drawer.trajectories:
+            print("No trajectories were drawn.")
+            return None
+            
+        trajectories = drawer.trajectories
+        
+        # Ask to save
+        save_choice = input("Save drawn trajectories? (y/n): ").strip().lower()
+        if save_choice == 'y':
+            if data_file is not None:
+                filename = data_file
+            else:
+                filename = input("Enter filename (without .pkl extension): ").strip()
+            if filename:
+                drawer.save_trajectories(data_path + f"{filename}_traj.pkl")
+        else:
+            return None
+
+        trajectories, velocities = drawer.load_trajectories(data_path + f"{filename}_traj.pkl")
+                
+    else:
+        print("Invalid choice.")
+        return None
+
+
+    # Ask if user wants to generate more demonstrations
+    # generate_demos = input("Generate multiple demonstrations with noise? (y/n): ").strip().lower()
+    # if generate_demos == 'y':
+    n_demos = 3 #int(input("Number of demonstrations per trajectory (default 5): ") or 5)
+    noise_std = 0.05#float(input("Noise standard deviation (default 0.2): ") or 0.2)
+        
+    noisy_trajectories, noisy_velocities = drawer.generate_multiple_demos(trajectories, velocities, n_demos, noise_std)
+    # drawer.plot_trajectory_set(noisy_trajectories, "Generated Demonstrations")
+        
+    return noisy_trajectories, noisy_velocities, filename
