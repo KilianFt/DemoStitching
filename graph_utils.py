@@ -1,6 +1,10 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
+from casadi.tools.structure3 import isIterable
+from scipy.signal.windows import gaussian
+from collections.abc import Iterable
+
 # from numpy.f2py.symbolic import normalize
 from src.util import plot_tools
 
@@ -10,7 +14,7 @@ class GaussianGraph:
 
         self.param_dist = param_dist
         self.param_cos = param_cos
-        self.N = gaussian_mu.shape[0]
+        self.n_gaussians = gaussian_mu.shape[0]
         self.graph = self.create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction,
                                                 reverse_gaussians=reverse_gaussians)
         self.gaussian_ids = list(self.graph.nodes.keys())
@@ -40,11 +44,11 @@ class GaussianGraph:
         gaussian_graph = nx.DiGraph()
 
         # Convert gaussians to nodes
-        for i in range(self.N):
+        for i in range(self.n_gaussians):
             gaussian_graph.add_node(i, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=gaussian_direction[i])
 
             if reverse_gaussians:
-                gaussian_graph.add_node(i+self.N, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
+                gaussian_graph.add_node(i + self.n_gaussians, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
 
 
         # Connect nodes by weighted edges
@@ -126,22 +130,40 @@ class GaussianGraph:
         if self.initial_id is not None and self.attractor_id is not None:
             self.shortest_path = nx.shortest_path(self.graph, source='initial', target='attractor', weight='weight')
 
-    def get_gaussian(self, node_id):
-        """ Gets the gaussian parameters of a node.
+    def get_gaussians(self, node_id):
+        """Gets the Gaussian parameters of one or more nodes.
 
         Args:
-            node_id: id of the node
+            node_id (int or iterable): Node ID or iterable of node IDs.
 
         Returns:
-            mu: Gaussian mean
-            sigma: Gaussian covariance
-            direction: Gaussian direction
-        """
-        mu = self.graph.nodes[node_id]['mean']
-        sigma = self.graph.nodes[node_id]['covariance']
-        direction = self.graph.nodes[node_id]['direction']
+            tuple or tuple of ndarrays:
+                If node_id is a single ID, returns tuple of (mu, sigma, direction).
+                If node_id is an iterable, returns tuple of three ndarrays
+                (mus, sigmas, directions), each containing the respective values for all nodes.
 
-        return mu, sigma, direction
+                Where:
+                    mu: Gaussian mean
+                    sigma: Gaussian covariance
+                    direction: Gaussian direction
+        """
+        if isinstance(node_id, Iterable) and not isinstance(node_id, (str, bytes)):
+            mus = []
+            sigmas = []
+            directions = []
+            for id in node_id:
+                mu = self.graph.nodes[id]['mean']
+                sigma = self.graph.nodes[id]['covariance']
+                direction = self.graph.nodes[id]['direction']
+                mus.append(mu)
+                sigmas.append(sigma)
+                directions.append(direction)
+            return np.array(mus), np.array(sigmas), np.array(directions)
+        else:
+            mu = self.graph.nodes[node_id]['mean']
+            sigma = self.graph.nodes[node_id]['covariance']
+            direction = self.graph.nodes[node_id]['direction']
+            return mu, sigma, direction
 
     def plot(self, ax=None):
         """Plots a GaussianGraph.
@@ -209,7 +231,7 @@ class GaussianGraph:
         shortest_path_sigmas = []
         shortest_path_directions = []
         for node_id in self.shortest_path[1:-1]:
-            mu, sigma, direction = self.get_gaussian(node_id)
+            mu, sigma, direction = self.get_gaussians(node_id)
             shortest_path_mus.append(mu)
             shortest_path_sigmas.append(sigma)
             shortest_path_directions.append(direction)
