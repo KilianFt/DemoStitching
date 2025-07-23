@@ -14,6 +14,30 @@ plt.rcParams.update({
 })
 
 
+def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+
+    for k in range(len(gaussian_mu)):
+        mu = gaussian_mu[k]
+        sigma = gaussian_sigma[k]
+        plot_2d_gaussian(mu, sigma, ax = ax)    
+
+        ax.arrow(gaussian_mu[k, 0],
+                 gaussian_mu[k, 1],
+                 gaussian_direction[k, 0],
+                 gaussian_direction[k, 1],
+                 head_width=0.5,
+                 head_length=0.5,
+                 fc='r',
+                 ec='r',
+                 zorder=10
+                 )
+
+    # plt.tight_layout()
+    # plt.show()
+
+
 def plot_2d_gaussian(mu, sigma, ax=None, n_ellipses=3, n_points=100, force_plot=False, print_matrix_info=False):
     """
     Plot a 2D Gaussian distribution with confidence ellipses
@@ -209,20 +233,23 @@ def plot_gmm(x_train, label, damm, ax = None):
 
 
 
-def plot_ds_2d(x_train, x_test_list, lpvds, *args):
+def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
     att = lpvds.x_att
 
-    fig = plt.figure(figsize=(16, 10))
-    ax = fig.add_subplot()
+    if ax is None:
+        fig = plt.figure(figsize=(16, 10))
+        ax = fig.add_subplot()
 
     ax.scatter(x_train[:, 0], x_train[:, 1], color='k', s=5, label='original data')
     for idx, x_test in enumerate(x_test_list):
         ax.plot(x_test[:, 0], x_test[:, 1], color= 'r', linewidth=2)
 
-    x_min, x_max = ax.get_xlim()
-    y_min, y_max = ax.get_ylim()
+    if x_min is None or x_max is None or y_min is None or y_max is None:
+        x_min, x_max = ax.get_xlim()
+        y_min, y_max = ax.get_ylim()
+
     plot_sample = 50
     x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))
     X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
@@ -235,11 +262,12 @@ def plot_ds_2d(x_train, x_test_list, lpvds, *args):
     u = dx[0,:].reshape((plot_sample,plot_sample))
     v = dx[1,:].reshape((plot_sample,plot_sample))
 
-    plt.streamplot(x_mesh,y_mesh,u,v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
-    plt.gca().set_aspect('equal')
+    ax.streamplot(x_mesh,y_mesh,u,v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
+    ax.scatter(att[:,0], att[:,1], color='g', s=100, alpha=0.7)
+    ax.set_aspect('equal')
 
-    if len(args) !=0:
-        ax.set_title(args[0])
+    if title is not None:
+        ax.set_title(title)
 
 
 

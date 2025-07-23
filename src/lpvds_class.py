@@ -23,7 +23,7 @@ class lpvds_class():
 
         # simulation parameters
         self.tol = 10E-3
-        self.max_iter = 10000
+        self.max_iter = 30000
 
         # define output path
         file_path           = os.path.dirname(os.path.realpath(__file__))  
@@ -50,6 +50,24 @@ class lpvds_class():
     def _optimize(self):
         self.ds_opt = dsopt_class(self.x, self.x_dot, self.x_att, self.gamma, self.assignment_arr)
         self.A = self.ds_opt.begin()
+
+
+    def init_cluster(self, gaussian_list):
+        self.param ={
+            "mu_0":           np.zeros((self.dim, )), 
+            "sigma_0":        0.1 * np.eye(self.dim),
+            "nu_0":           self.dim,
+            "kappa_0":        0.1,
+            "sigma_dir_0":    0.1,
+            "min_thold":      10
+        }
+        
+        self.damm  = damm_class(self.x, self.x_dot, self.param)
+        self.damm.K = len(gaussian_list)
+        self.damm.gaussian_list = gaussian_list
+        self.gamma = self.damm.logProb(self.x)
+        self.assignment_arr = np.argmax(self.gamma, axis=0)
+        self.K     = self.damm.K
 
 
     def begin(self):
