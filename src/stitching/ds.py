@@ -46,9 +46,9 @@ def reuse_ds(gg, data, attractor, reverse_gaussians):
     filtered_x_dots = []
 
     for node_id in gg.shortest_path[1:-1]:
-        mu, sigma, direction = gg.get_gaussian(node_id)
-        if reverse_gaussians and node_id >= gg.N:
-            assign_id = node_id - gg.N
+        mu, sigma, direction = gg.get_gaussians(node_id)
+        if reverse_gaussians and node_id >= gg.n_gaussians:
+            assign_id = node_id - gg.n_gaussians
             x_dot_direction = -1
         else:
             assign_id = node_id
@@ -100,11 +100,11 @@ def recompute_ds(gg, data, attractor, reverse_gaussians, rebuild_lpvds):
     all_x_dot = data["x_dot_sets"]
     all_assignment_arr = data["assignment_arrs"]
 
+    # Extract demonstration points and gaussians for only the points in the shortest path
     filtered_xs = []
     filtered_x_dots = []
-
     for node_id in gg.shortest_path[1:-1]:
-        mu, sigma, direction = gg.get_gaussian(node_id)
+        mu, sigma, direction = gg.get_gaussians(node_id)
 
         gaussian_list.append({   
             "prior" : 1 / path_len,
@@ -113,8 +113,8 @@ def recompute_ds(gg, data, attractor, reverse_gaussians, rebuild_lpvds):
             "rv"    : multivariate_normal(mu, sigma, allow_singular=True)
         })
 
-        if reverse_gaussians and node_id >= gg.N:
-            assign_id = node_id - gg.N
+        if reverse_gaussians and node_id >= gg.n_gaussians:
+            assign_id = node_id - gg.n_gaussians
             x_dot_direction = -1
         else:
             assign_id = node_id
@@ -133,9 +133,9 @@ def recompute_ds(gg, data, attractor, reverse_gaussians, rebuild_lpvds):
 
     # compute DS
     lpvds = lpvds_class(filtered_xs, filtered_x_dots, x_att)
-    if rebuild_lpvds:
+    if rebuild_lpvds:  # compute new guassians and linear systems (As)
         lpvds.begin()
-    else:
+    else:              # compute only linear systems (As)
         lpvds.init_cluster(gaussian_list)
         lpvds._optimize()
 

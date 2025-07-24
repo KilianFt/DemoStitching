@@ -24,9 +24,9 @@ from src.util.stitching import initialize_iter_strategy, get_nan_results
 
 @dataclass
 class Config:
-    data_file: Optional[str] = "nodes_1" # this only matters for option 3
+    data_file: Optional[str] = "asdf" # this only matters for option 3
     # dataset_path: str = "./dataset/stitching/data_1"
-    force_preprocess: bool = False
+    force_preprocess: bool = True
     initial: Optional[np.ndarray] = None #np.array([4,15]) # np.array([3,15])
     attractor: Optional[np.ndarray] = None #np.array([14,2]) # np.array([17,2])
     ds_method: str = "recompute_all" # ["recompute_all", "recompute_ds", "reuse", "chain"]
@@ -119,14 +119,6 @@ def main():
         save_results_dataframe(all_results, results_path)
     else:
         print("No results to save.")
-
-    # if hasattr(lpvds.damm, "Mu"):
-    #     centers = lpvds.damm.Mu
-    #     assignment_arr = lpvds.assignment_arr
-    #     mean_xdot = np.zeros((lpvds.damm.K, lpvds.x.shape[1]))
-    #     for k in range(lpvds.damm.K):
-    #         mean_xdot[k] = np.mean(lpvds.x_dot[assignment_arr==k], axis=0)
-    #     plot_tools.plot_gaussians(centers, lpvds.damm.Sigma, mean_xdot, ax=axs[0,1])
 
 
 if __name__ == "__main__":

@@ -13,10 +13,21 @@ plt.rcParams.update({
     "font.size": 30
 })
 
+# Plot updates gaussians from lpvds:
+# if hasattr(lpvds.damm, "Mu"):
+#     centers = lpvds.damm.Mu
+#     assignment_arr = lpvds.assignment_arr
+#     mean_xdot = np.zeros((lpvds.damm.K, lpvds.x.shape[1]))
+#     for k in range(lpvds.damm.K):
+#         mean_xdot[k] = np.mean(lpvds.x_dot[assignment_arr==k], axis=0)
+#     plot_tools.plot_gaussians(centers, lpvds.damm.Sigma, mean_xdot, ax=axs[0,1])
+
 
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config): 
     fig, axs = plt.subplots(1, 2, figsize=(12,6), sharex=True, sharey=True)
-    gg.plot_shortest_path_gaussians(ax=axs[0])
+    mus, sigmas, directions = gg.get_gaussians(gg.shortest_path[1:-1])
+    plot_gaussians(mus, sigmas, directions, ax=axs[0], extent=((config.x_min, config.x_max), (config.y_min, config.y_max)))
+    # gg.plot_shortest_path_gaussians(ax=axs[0])
     plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs[1], x_min=config.x_min, x_max=config.x_max, y_min=config.y_min, y_max=config.y_max)
     axs[1].set_xlim(config.x_min, config.x_max)
     axs[1].set_ylim(config.y_min, config.y_max)
@@ -39,175 +50,118 @@ def save_initial_plots(gg, data, save_folder):
     plt.close()
 
 
-def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction, ax=None):
-    if ax is None:
-        fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+def plot_gaussians(mus, sigmas, directions=None, resolution=100, extent=None,
+                   scaling='sqrt', ax=None):
+    """Plot heatmap of summed 2D Gaussian evaluations on a grid with 2-sigma ellipses and direction arrows.
 
-    for k in range(len(gaussian_mu)):
-        mu = gaussian_mu[k]
-        sigma = gaussian_sigma[k]
-        plot_2d_gaussian(mu, sigma, ax = ax)    
+    Args:
+        mus: Array of Gaussian means (N x 2)
+        sigmas: Array of covariance matrices (N x 2 x 2)
+        directions: Array of direction vectors (N x 2) - optional for arrows
+        resolution: Grid resolution, int or tuple (width, height). Default 100.
+        extent: Optional ((xmin, xmax), (ymin, ymax)) for plot bounds. If None, inferred from means.
+        scaling: Scaling method for visualization. Options: 'linear', 'log', 'exponential', 'sqrt'
+        ax: Optional matplotlib axis
 
-        ax.arrow(gaussian_mu[k, 0],
-                 gaussian_mu[k, 1],
-                 gaussian_direction[k, 0],
-                 gaussian_direction[k, 1],
-                 head_width=0.5,
-                 head_length=0.5,
-                 fc='r',
-                 ec='r',
-                 zorder=10
-                 )
-
-    # plt.tight_layout()
-    # plt.show()
-
-
-def plot_2d_gaussian(mu, sigma, ax=None, n_ellipses=3, n_points=100, force_plot=False, print_matrix_info=False):
+    Returns:
+        matplotlib axis object with heatmap
     """
-    Plot a 2D Gaussian distribution with confidence ellipses
-    
-    Parameters:
-    mu: array-like, shape (2,) - mean vector
-    sigma: array-like, shape (2,2) - covariance matrix
-    n_ellipses: int - number of confidence ellipses to plot
-    n_points: int - resolution of the contour plot
-    force_plot: bool - if True, attempt to plot even invalid covariance matrices
-    print_matrix_info: bool - if True, print matrix properties
-    """
-    
-    # Convert to numpy arrays
-    mu = np.array(mu)
-    sigma = np.array(sigma)
-    
-    # Check matrix properties
-    eigenvals, eigenvecs = np.linalg.eigh(sigma)
-    det = np.linalg.det(sigma)
-    is_singular = np.abs(det) < 1e-10
-    is_positive_definite = np.all(eigenvals > 1e-10)
-    is_negative_definite = np.all(eigenvals < -1e-10)
-    
-    if print_matrix_info:
-        print(f"Matrix properties:")
-        print(f"  Determinant: {det:.2e}")
-        print(f"  Eigenvalues: {eigenvals}")
-        print(f"  Positive definite: {is_positive_definite}")
-        print(f"  Negative definite: {is_negative_definite}")
-        print(f"  Singular: {is_singular}")
-    
-    # Handle different cases
-    if is_negative_definite:
-        print("Warning: Matrix is negative definite - not a valid covariance matrix!")
-        if not force_plot:
-            print("This cannot represent a probability distribution.")
-            print("Possible fixes:")
-            print("  1. Take absolute value: sigma_fixed = np.abs(sigma)")
-            print("  2. Flip signs: sigma_fixed = -sigma")
-            print("  3. Use force_plot=True to plot anyway (will use abs(eigenvalues))")
-            return None, None
-        else:
-            print("Using absolute values of eigenvalues for plotting...")
-            eigenvals = np.abs(eigenvals)
-            sigma_reg = eigenvecs @ np.diag(eigenvals) @ eigenvecs.T
-    elif is_singular:
-        print("Warning: Covariance matrix is singular (determinant ≈ 0)")
-        print("This represents a degenerate distribution along a line")
-        # Add small regularization
-        sigma_reg = sigma + np.eye(2) * 1e-6
-        print(f"Adding regularization: {1e-6} to diagonal elements")
-    elif not is_positive_definite:
-        print("Warning: Matrix is not positive definite (has negative eigenvalues)")
-        print("Adding regularization to make it positive definite...")
-        # Make all eigenvalues positive
-        eigenvals_fixed = np.maximum(eigenvals, 1e-6)
-        sigma_reg = eigenvecs @ np.diag(eigenvals_fixed) @ eigenvecs.T
+    # Ensure inputs are numpy arrays
+    mus = np.array(mus)
+    sigmas = np.array(sigmas)
+
+    # Handle single gaussian case
+    if mus.ndim == 1:
+        mus = mus.reshape(1, -1)
+        sigmas = sigmas.reshape(1, 2, 2)
+
+    # Determine plot extent
+    if extent is None:
+        buffer = 3 * np.sqrt(np.max([np.trace(sigma) for sigma in sigmas]))
+        xmin, ymin = mus.min(axis=0) - buffer
+        xmax, ymax = mus.max(axis=0) + buffer
     else:
-        sigma_reg = sigma
-    
-    # Create a grid for plotting the contours
-    x_range = 4 * np.sqrt(np.abs(sigma[0, 0]))
-    y_range = 4 * np.sqrt(np.abs(sigma[1, 1]))
-    
-    x = np.linspace(mu[0] - x_range, mu[0] + x_range, n_points)
-    y = np.linspace(mu[1] - y_range, mu[1] + y_range, n_points)
+        (xmin, xmax), (ymin, ymax) = extent
+
+    # Handle resolution parameter
+    if isinstance(resolution, int):
+        resolution = (resolution, resolution)
+
+    # Create coordinate grid
+    x = np.linspace(xmin, xmax, resolution[0])
+    y = np.linspace(ymin, ymax, resolution[1])
     X, Y = np.meshgrid(x, y)
-    
-    # Calculate the probability density
-    pos = np.dstack((X, Y))
-    try:
-        rv = multivariate_normal(mu, sigma_reg)
-        pdf_values = rv.pdf(pos)
-    except Exception as e:
-        print(f"Error computing PDF: {e}")
-        return None, None
-    
-    # Create the plot
+    grid_points = np.column_stack([X.ravel(), Y.ravel()])
+
+    # Evaluate and sum all Gaussians at each grid point
+    total_values = np.zeros(len(grid_points))
+
+    for mu, sigma in zip(mus, sigmas):
+        diff = grid_points - mu
+        inv_sigma = np.linalg.inv(sigma)
+        mahalanobis_sq = np.sum(diff @ inv_sigma * diff, axis=1)
+        norm_const = 1 / (2 * np.pi * np.sqrt(np.linalg.det(sigma)))
+        gaussian_values = norm_const * np.exp(-0.5 * mahalanobis_sq)
+        total_values += gaussian_values
+
+    # Reshape back to grid
+    heatmap = total_values.reshape(resolution[1], resolution[0])
+
+    # Apply scaling transformation
+    if scaling == 'exponential':
+        scaled_heatmap = np.exp(heatmap) - 1
+    elif scaling == 'log':
+        epsilon = np.max(heatmap) * 1e-10
+        scaled_heatmap = np.log(heatmap + epsilon)
+    elif scaling == 'sqrt':
+        scaled_heatmap = np.sqrt(heatmap)
+    else:  # linear
+        scaled_heatmap = heatmap
+
+    # Create plot
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # Plot the contours
-    try:
-        contours = ax.contour(X, Y, pdf_values, levels=10, colors='blue', alpha=0.6)
-        ax.contourf(X, Y, pdf_values, levels=50, cmap='Blues', alpha=0.3)
-    except Exception as e:
-        print(f"Error plotting contours: {e}")
-        # Plot a simple scatter or other visualization
-        ax.scatter(mu[0], mu[1], c='black', s=100, alpha=0.7)
-    
-    # Plot the mean point
-    ax.plot(mu[0], mu[1], 'o', markersize=5, color='black', label='Mean')
-    
-    # Add confidence ellipses using corrected eigenvalues
-    eigenvals_corrected, eigenvecs_corrected = np.linalg.eigh(sigma_reg)
-    
-    # Sort eigenvalues and eigenvectors
-    idx = np.argsort(eigenvals_corrected)[::-1]
-    eigenvals_corrected = eigenvals_corrected[idx]
-    eigenvecs_corrected = eigenvecs_corrected[:, idx]
-    
-    # Calculate angle of rotation
-    angle = np.degrees(np.arctan2(eigenvecs_corrected[1, 0], eigenvecs_corrected[0, 0]))
-    
-    # Plot ellipses for different confidence levels
-    colors = ['red', 'orange', 'yellow']
-    confidence_levels = [1, 2, 3]  # 1σ, 2σ, 3σ
-    
-    for i, (conf_level, color) in enumerate(zip(confidence_levels[:n_ellipses], colors[:n_ellipses])):
-        # Calculate ellipse parameters
-        width = 2 * conf_level * np.sqrt(np.abs(eigenvals_corrected[0]))
-        height = 2 * conf_level * np.sqrt(np.abs(eigenvals_corrected[1]))
-        
-        ellipse = Ellipse(xy=mu, width=width, height=height, 
-                         angle=angle, facecolor='none', 
-                         edgecolor=color, linewidth=2,
-                         label=f'{conf_level}σ ellipse')
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    im = ax.imshow(scaled_heatmap, extent=[xmin, xmax, ymin, ymax],
+                   origin='lower', cmap='viridis', aspect='equal')
+
+    # Add 2-sigma ellipses for each Gaussian
+    for mu, sigma in zip(mus, sigmas):
+        # Eigendecomposition for ellipse orientation and size
+        eigenvals, eigenvecs = np.linalg.eigh(sigma)
+        order = eigenvals.argsort()[::-1]  # Sort in descending order
+        eigenvals = eigenvals[order]
+        eigenvecs = eigenvecs[:, order]
+
+        # Calculate ellipse parameters for 2-sigma boundary
+        angle = np.degrees(np.arctan2(eigenvecs[1, 0], eigenvecs[0, 0]))
+        width = 4 * np.sqrt(eigenvals[0])   # 2-sigma width (2 * 2 * sqrt)
+        height = 4 * np.sqrt(eigenvals[1])  # 2-sigma height (2 * 2 * sqrt)
+
+        # Draw 2-sigma ellipse
+        ellipse = Ellipse(xy=mu, width=width, height=height, angle=angle,
+                          edgecolor='white', facecolor='none', linewidth=1, linestyle='-')
         ax.add_patch(ellipse)
-    
-    # Add information about the distribution
-    # info_text = f'det(Σ) = {det:.2e}\nλ₁ = {eigenvals[0]:.2e}\nλ₂ = {eigenvals[1]:.2e}'
-    # if is_negative_definite:
-    #     info_text += '\nNegative definite!'
-    # elif is_singular:
-    #     info_text += '\nSingular matrix!'
-    # elif not is_positive_definite:
-    #     info_text += '\nNot pos. definite!'
-    
-    # ax.text(0.02, 0.98, info_text, 
-    #         transform=ax.transAxes, verticalalignment='top',
-    #         bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
-    
-    # Set labels and title
-    ax.set_xlabel('$x_1$')
-    ax.set_ylabel('$x_2$')
-    # ax.set_title('2D Gaussian Distribution with Confidence Ellipses')
-    # ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.set_aspect('equal')
-    
-    if ax is None:
-        plt.tight_layout()
-        plt.show()
-        return fig, ax
+
+    # Add direction arrows
+    if directions is not None:
+        directions = np.array(directions)
+        if directions.ndim == 1:
+            directions = directions.reshape(1, -1)
+
+        directions_norm = directions / (np.linalg.norm(directions, axis=1, keepdims=True) + 1e-10)
+
+        # FIXED: Use ymin instead of ymax, and scale appropriately
+        arrow_scale = min(xmax - xmin, ymax - ymin) * 0.05
+
+        for mu, dir_vec in zip(mus, directions_norm):
+            ax.arrow(mu[0], mu[1],
+                     dir_vec[0] * arrow_scale, dir_vec[1] * arrow_scale,
+                     head_width=arrow_scale*0.2, head_length=arrow_scale*0.15,
+                     fc='white', ec='black', linewidth=2, alpha=0.8)
+
+    return ax
+
 
 def plot_gmm(x_train, label, damm, ax = None):
     """ passing damm object to plot the ellipsoids of clustering results"""

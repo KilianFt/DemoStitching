@@ -1,8 +1,9 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-# from numpy.f2py.symbolic import normalize
+from collections.abc import Iterable
 from src.util import plot_tools
+
 
 class GaussianGraph:
 
@@ -10,7 +11,7 @@ class GaussianGraph:
 
         self.param_dist = param_dist
         self.param_cos = param_cos
-        self.N = gaussian_mu.shape[0]
+        self.n_gaussians = gaussian_mu.shape[0]
         self.graph = self.create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction,
                                                 reverse_gaussians=reverse_gaussians)
         self.gaussian_ids = list(self.graph.nodes.keys())
@@ -40,11 +41,11 @@ class GaussianGraph:
         gaussian_graph = nx.DiGraph()
 
         # Convert gaussians to nodes
-        for i in range(self.N):
+        for i in range(self.n_gaussians):
             gaussian_graph.add_node(i, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=gaussian_direction[i])
 
             if reverse_gaussians:
-                gaussian_graph.add_node(i+self.N, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
+                gaussian_graph.add_node(i + self.n_gaussians, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
 
 
         # Connect nodes by weighted edges
@@ -103,9 +104,20 @@ class GaussianGraph:
                 self.graph.add_edge(self.initial_id, gaussian_id, weight=edge_weight)
 
     def compute_edge_weight(self, pos1, direction1, pos2):
+        """Computes edge weight between two nodes based on distance and directionality.
+
+        Args:
+            pos1 (array): Position of first node.
+            direction1 (array): Direction vector of first node.
+            pos2 (array): Position of second node.
+
+        Returns:
+            float or None: Edge weight (distance^param_dist / dir_score^param_cos)
+                or None if nodes have same position or direction score is negative.
+        """
 
         # skip nodes with the same mean (same or reverse-pairs)
-        if np.array_equal(pos1, pos2):
+        if np.allclose(pos1, pos2):
             return None
 
         # distance
@@ -123,25 +135,109 @@ class GaussianGraph:
     def compute_shortest_path(self):
         """ Computes the shortest path from the initial to the attractor.
         """
-        if self.initial_id is not None and self.attractor_id is not None:
-            self.shortest_path = nx.shortest_path(self.graph, source='initial', target='attractor', weight='weight')
+        if self.initial_id is None or self.attractor_id is None:
+            print("Initial or attractor node not set. Cannot compute shortest path.")
 
-    def get_gaussian(self, node_id):
-        """ Gets the gaussian parameters of a node.
+        self.shortest_path = nx.shortest_path(self.graph, source='initial', target='attractor', weight='weight')
+
+        # Give the initial node a mean, covariance, and direction toward the next node in the path
+        next_node = self.graph.nodes[self.shortest_path[1]]
+
+        # direction
+        init_direction = next_node['mean'] - self.graph.nodes[self.initial_id]['pos']
+        init_direction = init_direction / np.linalg.norm(init_direction) * np.linalg.norm(next_node['direction'])
+
+        # covariance
+        R = self._rotation_matrix_between_vectors(next_node['direction'], init_direction)
+        init_covariance = R @ next_node['covariance'] @ R.T
+
+        self.graph.nodes[self.initial_id]['mean'] = self.graph.nodes[self.initial_id]['pos']
+        self.graph.nodes[self.initial_id]['covariance'] = init_covariance
+        self.graph.nodes[self.initial_id]['direction'] = init_direction
+
+
+
+    @staticmethod
+    def _rotation_matrix_between_vectors(a, b, tol=1e-8):
+        """Rotation matrix that rotates vector a to align with vector b.
 
         Args:
-            node_id: id of the node
+            a: Source vector (2D or 3D).
+            b: Target vector (2D or 3D).
+            tol: Tolerance for parallel/anti-parallel detection (3D only).
 
         Returns:
-            mu: Gaussian mean
-            sigma: Gaussian covariance
-            direction: Gaussian direction
+            Rotation matrix (2×2 for 2D vectors, 3×3 for 3D vectors).
         """
-        mu = self.graph.nodes[node_id]['mean']
-        sigma = self.graph.nodes[node_id]['covariance']
-        direction = self.graph.nodes[node_id]['direction']
+        if a.shape != b.shape:
+            raise ValueError("Vectors must have the same dimension")
 
-        return mu, sigma, direction
+        dim = len(a)
+
+        # Normalize input vectors
+        a_norm = a / np.linalg.norm(a)
+        b_norm = b / np.linalg.norm(b)
+
+        if dim == 2:
+            # 2D case: calculate rotation angle and build matrix
+            angle = np.arctan2(b_norm[1], b_norm[0]) - np.arctan2(a_norm[1], a_norm[0])
+            c, s = np.cos(angle), np.sin(angle)
+            return np.array([[c, -s],
+                             [s, c]])
+
+        elif dim == 3:
+            # 3D case: use cross product and Rodrigues' formula
+            v = np.cross(a_norm, b_norm)  # rotation axis (unnormalized)
+            s = np.linalg.norm(v)  # sin(θ)
+            c = np.dot(a_norm, b_norm)  # cos(θ)
+
+            if s < tol:  # parallel or anti-parallel
+                return np.eye(3) if c > 0 else (2 * np.outer(a_norm, a_norm) - np.eye(3))
+
+            # Skew-symmetric matrix
+            vx = np.array([[0, -v[2], v[1]],
+                           [v[2], 0, -v[0]],
+                           [-v[1], v[0], 0]])
+
+            return np.eye(3) + vx + vx @ vx * ((1 - c) / s ** 2)
+
+        else:
+            raise ValueError(f"Only 2D and 3D vectors supported, got {dim}D")
+
+    def get_gaussians(self, node_id):
+        """Gets the Gaussian parameters of one or more nodes.
+
+        Args:
+            node_id (int or iterable): Node ID or iterable of node IDs.
+
+        Returns:
+            tuple or tuple of ndarrays:
+                If node_id is a single ID, returns tuple of (mu, sigma, direction).
+                If node_id is an iterable, returns tuple of three ndarrays
+                (mus, sigmas, directions), each containing the respective values for all nodes.
+
+                Where:
+                    mu: Gaussian mean
+                    sigma: Gaussian covariance
+                    direction: Gaussian direction
+        """
+        if isinstance(node_id, Iterable) and not isinstance(node_id, (str, bytes)):
+            mus = []
+            sigmas = []
+            directions = []
+            for id in node_id:
+                mu = self.graph.nodes[id]['mean']
+                sigma = self.graph.nodes[id]['covariance']
+                direction = self.graph.nodes[id]['direction']
+                mus.append(mu)
+                sigmas.append(sigma)
+                directions.append(direction)
+            return np.array(mus), np.array(sigmas), np.array(directions)
+        else:
+            mu = self.graph.nodes[node_id]['mean']
+            sigma = self.graph.nodes[node_id]['covariance']
+            direction = self.graph.nodes[node_id]['direction']
+            return mu, sigma, direction
 
     def plot(self, ax=None):
         """Plots a GaussianGraph.
@@ -209,7 +305,7 @@ class GaussianGraph:
         shortest_path_sigmas = []
         shortest_path_directions = []
         for node_id in self.shortest_path[1:-1]:
-            mu, sigma, direction = self.get_gaussian(node_id)
+            mu, sigma, direction = self.get_gaussians(node_id)
             shortest_path_mus.append(mu)
             shortest_path_sigmas.append(sigma)
             shortest_path_directions.append(direction)
