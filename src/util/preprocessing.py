@@ -41,7 +41,7 @@ def lpvds_per_demo(data):
         xs.append(x)
         x_dots.append(x_dot)
         x_atts.append(np.squeeze(x_att))
-        x_inits.append(np.squeeze(x_init))#.mean(axis=0))
+        x_inits.append(np.squeeze(x_init).mean(axis=0))
         As.append(lpvds.A)
         Ps.append(lpvds.ds_opt.P)
 
@@ -56,6 +56,8 @@ def lpvds_per_demo(data):
     # M: number of observations per trajectory
     # D: total number of nodes (across all demo sets)
 
+    # print(x_inits)
+
     return {
         "centers": np.array(node_centers), # [D, N] center of nodes
         "directions": np.array(node_directions), # [D, N] direction of nodes
@@ -63,7 +65,7 @@ def lpvds_per_demo(data):
         "x_sets": np.vstack(xs), # [D, M, N] states
         "x_dot_sets": np.vstack(x_dots), # [D, M, N] velocities
         "x_attrator_sets": np.array(x_atts), # [K, N] attractor positions
-        "x_initial_sets": np.array(x_inits).mean(axis=1), # [K, N] initial positions (mean per set)
+        "x_initial_sets": np.array(x_inits), # [K, N] initial positions (mean per set)
         # "all_x_initial": np.vstack(x_inits), # [D, N] all initial positions
         "assignment_arrs": np.hstack(assignment_arrs), # [D, M] node assignment arrays
         "As": np.vstack(As), # [D, N, N] A matrices

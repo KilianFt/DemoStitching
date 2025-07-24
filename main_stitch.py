@@ -11,10 +11,6 @@ from src.util.stitching import initialize_iter_strategy, get_nan_results
 
 # TODO
 # - implement recalculating P?
-# - calculate metrics for all methods
-# - method where all gaussians point towards goal
-# - add option where shortest path returns all paths to goal
-
 
 # ds_method options:
 # - ["recompute_all"] Recompute using shortest path
@@ -24,11 +20,10 @@ from src.util.stitching import initialize_iter_strategy, get_nan_results
 
 @dataclass
 class Config:
-    data_file: Optional[str] = "asdf" # this only matters for option 3
-    # dataset_path: str = "./dataset/stitching/data_1"
+    dataset_path: str = "./dataset/stitching/testing"
     force_preprocess: bool = True
-    initial: Optional[np.ndarray] = None #np.array([4,15]) # np.array([3,15])
-    attractor: Optional[np.ndarray] = None #np.array([14,2]) # np.array([17,2])
+    initial: Optional[np.ndarray] = None #np.array([4,15])
+    attractor: Optional[np.ndarray] = None #np.array([14,2])
     ds_method: str = "recompute_all" # ["recompute_all", "recompute_ds", "reuse", "chain"]
     reverse_gaussians: bool = True
     param_dist: int = 3
@@ -48,7 +43,7 @@ def main():
     config = Config()
 
     # load data
-    data = load_data_from_file(config.data_file, config.n_demos, config.noise_std, config.force_preprocess)
+    data = load_data_from_file(config.dataset_path, config.n_demos, config.noise_std, config.force_preprocess)
 
     # determine iteration strategy based on config
     combinations, save_folder = initialize_iter_strategy(config, data["x_initial_sets"], data["x_attrator_sets"])

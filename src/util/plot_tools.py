@@ -1,3 +1,4 @@
+from typing import List
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.lines as mlines
@@ -161,6 +162,26 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=100, extent=None,
                      fc='white', ec='black', linewidth=2, alpha=0.8)
 
     return ax
+
+
+def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories"):
+    """Plot trajectories."""
+    plt.figure(figsize=(10, 8))
+    
+    colors = plt.cm.tab10(np.linspace(0, 1, len(trajectories)))
+    
+    for i, traj in enumerate(trajectories):
+        plt.plot(traj[:, 0], traj[:, 1], color=colors[i], linewidth=2, alpha=0.7, label=f'Traj {i+1}')
+        plt.plot(traj[0, 0], traj[0, 1], 'go', markersize=8)
+        plt.plot(traj[-1, 0], traj[-1, 1], 'ro', markersize=8)
+        
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.title(title)
+    plt.grid(True, alpha=0.3)
+    # plt.legend()
+    plt.waitforbuttonpress()
+    plt.close()
 
 
 def plot_gmm(x_train, label, damm, ax = None):

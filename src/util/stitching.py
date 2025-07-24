@@ -10,13 +10,13 @@ def initialize_iter_strategy(config, x_initial_sets, x_attrator_sets):
     if config.initial is not None and config.attractor is not None:
         # Use specified initial and attractor positions
         combinations = [(config.initial, config.attractor)]
-        save_folder = f"./figures/stitching/{config.data_file}/{config.ds_method}_test/"
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}_test/"
         print("Using specified initial and attractor positions")
     else:
         # Use all permutations of available points
         all_points = np.vstack((x_initial_sets, x_attrator_sets))
         combinations = list(permutations(all_points, 2))
-        save_folder = f"./figures/stitching/{config.data_file}/{config.ds_method}/"
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         print("Using all permutations of initial and attractor positions")
     os.makedirs(save_folder, exist_ok=True)
     return combinations, save_folder

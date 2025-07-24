@@ -144,10 +144,6 @@ class TrajectoryDrawer:
         """Handle key press events."""
         if event.key == 'n':
             print("Starting new trajectory...")
-        elif event.key == 's':
-            filename = input("Enter filename to save (without extension): ")
-            if filename:
-                self.save_trajectories(f"{filename}.pkl")
         elif event.key == 'c':
             self.clear_trajectories()
         elif event.key == 'r':
@@ -274,24 +270,149 @@ class TrajectoryDrawer:
         plt.close()
 
 
-def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories"):
-    """Plot trajectories."""
-    plt.figure(figsize=(10, 8))
+class EnhancedTrajectoryDrawer(TrajectoryDrawer):
+    """
+    Enhanced trajectory drawer that supports multiple trajectory sets.
+    """
     
-    colors = plt.cm.tab10(np.linspace(0, 1, len(trajectories)))
-    
-    for i, traj in enumerate(trajectories):
-        plt.plot(traj[:, 0], traj[:, 1], color=colors[i], linewidth=2, alpha=0.7, label=f'Traj {i+1}')
-        plt.plot(traj[0, 0], traj[0, 1], 'go', markersize=8)
-        plt.plot(traj[-1, 0], traj[-1, 1], 'ro', markersize=8)
+    def __init__(self, canvas_size=(15, 15)):
+        super().__init__(canvas_size)
+        self.trajectory_sets = []  # List of trajectory sets
+        self.current_set = []  # Current trajectory set being built
+        self.current_set_index = 0
         
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.title(title)
-    plt.grid(True, alpha=0.3)
-    # plt.legend()
-    plt.waitforbuttonpress()
-    plt.close()
+    def start_interactive_drawing(self):
+        """Start interactive drawing session with enhanced controls."""
+        print("Enhanced Interactive Trajectory Drawing")
+        print("Instructions:")
+        print("- Click and drag to draw trajectories")
+        print("- Press 'n' to start a new trajectory within current set")
+        print("- Press 'x' to start a NEW TRAJECTORY SET")
+        print("- Press 'c' to clear all trajectories")
+        print("- Press 'r' to resize canvas")
+        print("- Press 'q' to quit")
+        print("- Close window to finish drawing")
+        print(f"- Current canvas size: {self.canvas_size[0]} x {self.canvas_size[1]}")
+        
+        self.fig, self.ax = plt.subplots(figsize=(12, 8))
+        self.ax.set_xlim(0, self.canvas_size[0])
+        self.ax.set_ylim(0, self.canvas_size[1])
+        self.ax.set_xlabel('X')
+        self.ax.set_ylabel('Y')
+        self._update_title()
+        self.ax.grid(True, alpha=0.3)
+        
+        # Enable interactive mode for real-time updates
+        plt.ion()
+        
+        # Connect event handlers
+        self.fig.canvas.mpl_connect('button_press_event', self._on_press)
+        self.fig.canvas.mpl_connect('button_release_event', self._on_release)
+        self.fig.canvas.mpl_connect('motion_notify_event', self._on_motion)
+        self.fig.canvas.mpl_connect('key_press_event', self._on_key_enhanced)
+        
+        # Show the plot
+        plt.show()
+        
+        # Keep the window open and responsive
+        try:
+            while plt.get_fignums():
+                plt.pause(0.01)
+        except KeyboardInterrupt:
+            print("\nDrawing session interrupted.")
+        finally:
+            plt.ioff()
+            # Finalize current set if it has trajectories
+            if self.current_set:
+                self.trajectory_sets.append(self.current_set)
+    
+    def _update_title(self):
+        """Update the plot title with current set information."""
+        title = f'Draw Trajectories - Set {self.current_set_index + 1} ({len(self.current_set)} trajs)'
+        title += f' - Total Sets: {len(self.trajectory_sets)}'
+        self.ax.set_title(title)
+        
+    def _on_key_enhanced(self, event):
+        """Enhanced key press handler with trajectory set support."""
+        if event.key == 'n':
+            print(f"Starting new trajectory in set {self.current_set_index + 1}")
+        elif event.key == 'x':
+            self._start_new_set()
+        elif event.key == 'c':
+            self._clear_all_trajectories()
+        elif event.key == 'r':
+            self.resize_canvas()
+        elif event.key == 'q':
+            print("Quitting drawing session...")
+            plt.close(self.fig)
+            
+    def _start_new_set(self):
+        """Start a new trajectory set while keeping previous sets visible."""
+        if self.current_set:  # Only save if current set has trajectories
+            self.trajectory_sets.append(self.current_set)
+            print(f"Finished set {self.current_set_index + 1} with {len(self.current_set)} trajectories")
+        
+        self.current_set = []
+        self.current_set_index = len(self.trajectory_sets)
+        
+        # DON'T clear the plot - keep previous sets visible
+        # Just update the title to show we're on a new set
+        self._update_title()
+        plt.draw()
+        
+        print(f"Started new trajectory set {self.current_set_index + 1} (previous sets still visible)")
+        
+    def _on_release(self, event):
+        """Enhanced release handler that adds to current set."""
+        if not self.drawing:
+            return
+        self.drawing = False
+        
+        if len(self.current_trajectory) > 1:
+            # Convert to numpy array and add to current set
+            traj_array = np.array(self.current_trajectory)
+            self.current_set.append(traj_array)
+            
+            # Remove the temporary red line
+            if self.current_line:
+                self.current_line.remove()
+            
+            # Plot the final trajectory with set-specific color
+            colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive']
+            color = colors[self.current_set_index % len(colors)]
+            
+            line, = self.ax.plot(traj_array[:, 0], traj_array[:, 1], 
+                               color=color, linewidth=2, alpha=0.7)
+            start_marker, = self.ax.plot(traj_array[0, 0], traj_array[0, 1], 
+                                       'go', markersize=8)
+            end_marker, = self.ax.plot(traj_array[-1, 0], traj_array[-1, 1], 
+                                     'ro', markersize=8)
+            
+            self.trajectory_lines.extend([line, start_marker, end_marker])
+            self._update_title()
+            plt.draw()
+            
+            print(f"Added trajectory {len(self.current_set)} to set {self.current_set_index + 1}")
+        
+        self.current_trajectory = []
+        self.current_line = None
+        
+    def _clear_all_trajectories(self):
+        """Clear all trajectory sets."""
+        self.trajectory_sets = []
+        self.current_set = []
+        self.current_set_index = 0
+        
+        # Clear the plot
+        for line in self.trajectory_lines:
+            line.remove()
+        self.trajectory_lines = []
+        
+        self._update_title()
+        plt.draw()
+        print("Cleared all trajectory sets")
+        
+    # Removed save functionality to avoid folder popup dialogs
 
 
 def main():
@@ -339,7 +460,6 @@ def main():
     else:
         # Start interactive drawing
         drawer.start_interactive_drawing()
-
-
+        
 if __name__ == "__main__":
     main()
