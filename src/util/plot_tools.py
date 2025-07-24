@@ -14,6 +14,31 @@ plt.rcParams.update({
 })
 
 
+def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config): 
+    fig, axs = plt.subplots(1, 2, figsize=(12,6), sharex=True, sharey=True)
+    gg.plot_shortest_path_gaussians(ax=axs[0])
+    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs[1], x_min=config.x_min, x_max=config.x_max, y_min=config.y_min, y_max=config.y_max)
+    axs[1].set_xlim(config.x_min, config.x_max)
+    axs[1].set_ylim(config.y_min, config.y_max)
+    axs[0].set_xlim(config.x_min, config.x_max)
+    axs[0].set_ylim(config.y_min, config.y_max)
+    plt.tight_layout()
+    plt.savefig(save_folder + "ds_{}.png".format(i))
+    plt.close()
+
+
+def save_initial_plots(gg, data, save_folder):
+    # initial plots that only need to be computed once
+    fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
+    gg.plot(ax=axs)
+    plt.savefig(save_folder + "graph.png")
+    plt.close()
+    fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
+    plot_gaussians(data["centers"], data["sigmas"], data["directions"], ax=axs)
+    plt.savefig(save_folder + "gaussians.png")
+    plt.close()
+
+
 def plot_gaussians(gaussian_mu, gaussian_sigma, gaussian_direction, ax=None):
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(8, 5))

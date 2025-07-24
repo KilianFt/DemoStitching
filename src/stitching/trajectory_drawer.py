@@ -247,29 +247,6 @@ class TrajectoryDrawer:
             
         print(f"Added noise (std={noise_std}) to {len(trajectories)} trajectories")
         return noisy_trajectories
-        
-    def generate_multiple_demos(self, base_trajectories: List[np.ndarray], base_velocities: List[np.ndarray], 
-                              n_demos: int = 5, noise_std: float = 0.2) -> List[List[np.ndarray]]:
-        """Generate multiple demonstrations from base trajectories."""
-        demo_sets = []
-        demo_vel_sets = []
-        
-        for base_traj, base_vel in zip(base_trajectories, base_velocities):
-            demos = []
-            demo_vels = []
-            for _ in range(n_demos):
-                noise = np.random.normal(0, noise_std, base_traj.shape)
-                demo = base_traj + noise
-                demos.append(demo)
-                
-                # noise_vel = np.random.normal(0, noise_std, base_vel.shape)
-                noise_vel = np.gradient(demo, axis=0)
-                demo_vels.append(noise_vel)#base_vel + noise_vel)
-            demo_sets.append(demos)
-            demo_vel_sets.append(demo_vels)
-            
-        print(f"Generated {n_demos} demonstrations for each of {len(base_trajectories)} base trajectories")
-        return demo_sets, demo_vel_sets
     
     def plot_trajectory_set(self, trajectory_sets: List[List[np.ndarray]], 
                           title: str = "Multiple Trajectory Sets"):
@@ -318,6 +295,7 @@ def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories
 
 
 def main():
+    from src.util.load_tools import generate_multiple_demos
     """Main function with command line interface."""
     parser = argparse.ArgumentParser(description='Interactive Trajectory Drawing Tool')
     parser.add_argument('--load', type=str, help='Load trajectories from file')
@@ -340,7 +318,7 @@ def main():
                 plot_trajectories(trajectories, "Loaded Trajectories")
             else:
                 # Generate multiple demos with noise
-                demo_sets = drawer.generate_multiple_demos(trajectories, args.demos, args.noise)
+                demo_sets = generate_multiple_demos(trajectories, args.demos, args.noise)
                 drawer.plot_trajectory_set(demo_sets, "Generated Demonstrations")
                 
                 # Save the generated demos

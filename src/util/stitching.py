@@ -1,7 +1,45 @@
+from itertools import permutations
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.widgets import Button
+
+
+def initialize_iter_strategy(config, x_initial_sets, x_attrator_sets):
+    if config.initial is not None and config.attractor is not None:
+        # Use specified initial and attractor positions
+        combinations = [(config.initial, config.attractor)]
+        save_folder = f"./figures/stitching/{config.data_file}/{config.ds_method}_test/"
+        print("Using specified initial and attractor positions")
+    else:
+        # Use all permutations of available points
+        all_points = np.vstack((x_initial_sets, x_attrator_sets))
+        combinations = list(permutations(all_points, 2))
+        save_folder = f"./figures/stitching/{config.data_file}/{config.ds_method}/"
+        print("Using all permutations of initial and attractor positions")
+    os.makedirs(save_folder, exist_ok=True)
+    return combinations, save_folder
+
+
+def get_nan_results(i, ds_method, initial, attractor):
+    return {
+                'combination_id': i,
+                'ds_method': ds_method,
+                'initial_x': initial[0],
+                'initial_y': initial[1],
+                'attractor_x': attractor[0],
+                'attractor_y': attractor[1],
+                'prediction_rmse': np.nan,
+                'cosine_dissimilarity': np.nan,
+                'dtw_distance_mean': np.nan,
+                'dtw_distance_std': np.nan,
+                'distance_to_attractor_mean': np.nan,
+                'distance_to_attractor_std': np.nan,
+                'trajectory_length_mean': np.nan,
+                'trajectory_length_std': np.nan,
+                'n_simulations': 0
+            }
 
 def is_negative_definite(matrix):
     """

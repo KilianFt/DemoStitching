@@ -3,7 +3,7 @@ import numpy as np
 
 from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
-from src.stitching.utils import is_negative_definite
+from src.util.stitching import is_negative_definite
 from src.stitching.optimization import compute_valid_A
 
 
@@ -26,14 +26,15 @@ def reuse_ds(gg, data, attractor, reverse_gaussians):
     # get A's that are in shortest path
     path_len = len(gg.shortest_path)
     x_att = attractor[None,:]
-    all_x = np.vstack(data["xs"])
-    all_x_dot = np.vstack(data["x_dots"])
-    all_assignment_arr = np.hstack(data["assignment_arrs"])
+    all_x = data["x_sets"] # [D, M, N]
+    all_x_dot = data["x_dot_sets"] # [D, M, N]
+    all_assignment_arr = data["assignment_arrs"] # [D, M]
 
     # select P
+    # TODO is this fine? why not negative P?
     P = None
     min_dist = np.inf
-    for i, potential_x_att in enumerate(data["x_atts"]):
+    for i, potential_x_att in enumerate(data["x_attrator_sets"]):
         dist = np.linalg.norm(potential_x_att - attractor)
         if dist < min_dist:
             min_dist = dist
@@ -95,9 +96,9 @@ def recompute_ds(gg, data, attractor, reverse_gaussians, rebuild_lpvds):
     gaussian_list = []
 
     x_att = attractor[None,:]
-    all_x = np.vstack(data["xs"])
-    all_x_dot = np.vstack(data["x_dots"])
-    all_assignment_arr = np.hstack(data["assignment_arrs"])
+    all_x = data["x_sets"]
+    all_x_dot = data["x_dot_sets"]
+    all_assignment_arr = data["assignment_arrs"]
 
     filtered_xs = []
     filtered_x_dots = []

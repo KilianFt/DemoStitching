@@ -1,50 +1,333 @@
 import os, sys
 import pickle
 import numpy as np
+from typing import List
 import pyLasaDataset as lasa
 from scipy.io import loadmat
-from scipy.spatial.transform import Rotation as R
+
 from src.stitching.trajectory_drawer import TrajectoryDrawer, plot_trajectories
+from src.util.preprocessing import lpvds_per_demo, _pre_process, _process_bag
 
-from src.stitching.preprocessing import calculate_demo_lpvds
 
-def load_data_from_file(input_opt, data_file=None):
+def load_data_from_file(data_file, n_demos=5, noise_std=0.05, force_preprocess=False):
+    """
+    Load trajectory data from file with caching support.
+    
+    Loads processed trajectory data from a cached pickle file if it exists,
+    otherwise calculates the data from raw trajectories and caches the result.
+    
+    Parameters:
+    -----------
+    data_file : str
+        Name of the data file (without extension)
+    n_demos : int, optional
+        Number of demonstrations to generate per base trajectory (default: 5)
+    noise_std : float, optional
+        Standard deviation of noise to add to demonstrations (default: 0.05)
+        
+    Returns:
+    --------
+    dict
+        Processed trajectory data containing centers, directions, sigmas, etc.
+        
+    Raises:
+    -------
+    ValueError
+        If data_file is None
+    """
+    if data_file is None:
+        raise ValueError("No data file provided")
 
-    if input_opt < 3:
-        data_file = f"nodes_{input_opt}"
-    elif data_file is not None:
-        data_file = data_file
-    else:
-        raise ValueError("Invalid input option")
-
+    # load data from file if exists
     filename = "./dataset/stitching/{}.pkl".format(data_file)
-    if os.path.exists(filename):
+    if os.path.exists(filename) and not force_preprocess:
         print("Using cached nodes")
         with open(filename, 'rb') as f:
-            data = pickle.load(f)
+            processed_data = pickle.load(f)
     else:
+        # calculate nodes if not yet calculated
         print("Calculating nodes")
-        data, used_data_file = calculate_demo_lpvds(input_opt, data_file)
-        if used_data_file != data_file:
-            print(f"Using data file: {used_data_file}")
-            filename = "./dataset/stitching/{}.pkl".format(used_data_file)
-        with open(filename, 'wb') as f:
-            pickle.dump(data, f)
+        raw_data = load_data_stitch(data_file=data_file, n_demos=n_demos, noise_std=noise_std)
 
-    return data, data_file
+        processed_data = lpvds_per_demo(raw_data)
+        with open(filename, 'wb') as f:
+            pickle.dump(processed_data, f)
+
+    return processed_data
+
+
+def load_nodes_1():
+    """
+    Generate two intersecting diagonal trajectories for testing.
+    
+    Creates two base trajectories:
+    1. Main diagonal: from (10, 10) to (0, 0)
+    2. Anti-diagonal: from (0, 10) to (10, 0)
+    
+    Returns:
+    --------
+    tuple[List[np.ndarray], List[np.ndarray]]
+        x_sets: List of trajectory position arrays, each [M, 2]
+        x_dot_sets: List of trajectory velocity arrays, each [M, 2]
+    """
+    n_samples = 101  # number of points per trajectory
+    t = np.linspace(0, 1, n_samples)
+
+    # Trajectory 1: from (10, 10) to (0, 0) (main diagonal)
+    base_traj_target = np.vstack((10 - 10 * t, 10 - 10 * t)).T
+
+    # Trajectory 2: from (0, 10) to (10, 0) (anti-diagonal)
+    base_traj_other = np.vstack((10 * t, 10 - 10 * t)).T
+
+    x_sets = [base_traj_target, base_traj_other]
+
+    # Calculate velocities
+    x_dot_sets = [np.gradient(traj, axis=0) for traj in x_sets]
+
+    return x_sets, x_dot_sets
+
+
+def load_nodes_2():
+    """
+    Generate three curved trajectories with sinusoidal components.
+    
+    Creates three base trajectories with different mathematical patterns:
+    1. Trajectory with sine and cosine modulation
+    2. Linear trajectory with sine modulation  
+    3. Nearly vertical trajectory with sine modulation
+    
+    Returns:
+    --------
+    tuple[List[np.ndarray], List[np.ndarray]]
+        raw_x_sets: List of trajectory position arrays, each [M, 2]
+        raw_x_dot_sets: List of trajectory velocity arrays, each [M, 2]
+    """
+    n_points = 40
+
+    # Trajectory 1
+    raw_x_sets = []
+    raw_x_dot_sets = []
+    base_x1_1 = np.linspace(0, 15, n_points) + np.sin(np.linspace(0, 15, n_points))
+    base_x1_2 = np.linspace(0, 15, n_points) + np.cos(0.2*np.linspace(0, 15, n_points))
+    raw_x_sets.append(np.vstack((base_x1_1, base_x1_2)).T)
+    raw_x_dot_sets.append(np.gradient(raw_x_sets[-1], axis=0))
+
+    # Trajectory 2
+    base_x2_1 = np.linspace(10, 14, n_points)
+    base_x2_2 = np.linspace(8, 2, n_points) + np.sin(0.4*np.linspace(8, 2, n_points))
+    raw_x_sets.append(np.vstack((base_x2_1, base_x2_2)).T)
+    raw_x_dot_sets.append(np.gradient(raw_x_sets[-1], axis=0))
+
+    # Trajectory 3
+    base_x3_1 = np.linspace(4, 5, n_points)
+    base_x3_2 = np.linspace(6.5, 13, n_points) + np.sin(0.6*np.linspace(6, 13, n_points))
+    raw_x_sets.append(np.vstack((base_x3_1, base_x3_2)).T)
+    raw_x_dot_sets.append(np.gradient(raw_x_sets[-1], axis=0))
+
+    return raw_x_sets, raw_x_dot_sets
+
+
+def generate_multiple_demos(base_trajectories: List[np.ndarray], base_velocities: List[np.ndarray], 
+                            n_demos: int = 5, noise_std: float = 0.2) -> List[List[np.ndarray]]:
+    """
+    Generate multiple noisy demonstrations from base trajectories.
+    
+    Takes base trajectories and generates multiple variations by adding Gaussian noise.
+    Velocities are recalculated from the noisy position trajectories using gradient.
+    
+    Parameters:
+    -----------
+    base_trajectories : List[np.ndarray]
+        List of base trajectory position arrays, each [M, N]
+    base_velocities : List[np.ndarray]
+        List of base trajectory velocity arrays, each [M, N]
+    n_demos : int, optional
+        Number of demonstrations to generate per base trajectory (default: 5)
+    noise_std : float, optional
+        Standard deviation of Gaussian noise to add (default: 0.2)
+        
+    Returns:
+    --------
+    tuple[List[List[np.ndarray]], List[List[np.ndarray]]]
+        demo_sets: List of demo sets, each containing n_demos position trajectories
+        demo_vel_sets: List of demo sets, each containing n_demos velocity trajectories
+    """
+    demo_sets = []
+    demo_vel_sets = []
+    
+    for base_traj, base_vel in zip(base_trajectories, base_velocities):
+        demos = []
+        demo_vels = []
+        for _ in range(n_demos):
+            noise = np.random.normal(0, noise_std, base_traj.shape)
+            demo = base_traj + noise
+            demos.append(demo)
+            
+            # noise_vel = np.random.normal(0, noise_std, base_vel.shape)
+            noise_vel = np.gradient(demo, axis=0)
+            demo_vels.append(noise_vel)#base_vel + noise_vel)
+        demo_sets.append(demos)
+        demo_vel_sets.append(demo_vels)
+        
+    print(f"Generated {n_demos} demonstrations for each of {len(base_trajectories)} base trajectories")
+    return demo_sets, demo_vel_sets
+
+
+def load_data_stitch(data_file, n_demos=5, noise_std=0.05):
+    """
+    Load and process trajectory data for stitching applications.
+    
+    Loads base trajectories from various sources (predefined nodes or drawn trajectories),
+    generates multiple noisy demonstrations, and preprocesses them for stitching.
+    
+    Parameters:
+    -----------
+    data_file : str
+        Data source identifier. Options:
+        - "nodes_1": Two intersecting diagonal trajectories
+        - "nodes_2": Three curved trajectories with sinusoidal components
+        - Other: Load from trajectory drawer files
+    n_demos : int, optional
+        Number of demonstrations to generate per base trajectory (default: 5)
+    noise_std : float, optional
+        Standard deviation of noise to add to demonstrations (default: 0.05)
+        
+    Returns:
+    --------
+    List[tuple]
+        A list of tuples, where each tuple contains:
+            x:     a [M, N] NumPy array: M observations of N dimension
+            x_dot: a [M, N] NumPy array: M observations velocities of N dimension
+            x_att: a [1, N] NumPy array of attractor
+            x_init: an L-length list of [1, N] NumPy array: L number of trajectories, each containing an initial point of N dimension
+    """
+
+    if data_file == "nodes_1":
+        raw_x_sets, raw_x_dot_sets = load_nodes_1()
+    elif data_file == "nodes_2":
+        raw_x_sets, raw_x_dot_sets = load_nodes_2()
+    else:
+        # x_sets, x_dot_sets = load_drawn_trajectories(data_file)
+        raw_x_sets, raw_x_dot_sets = load_drawn_trajectories(data_file)
+
+    x_sets, x_dot_sets = generate_multiple_demos(raw_x_sets, raw_x_dot_sets, n_demos, noise_std)
+
+    # Plot the loaded/generated trajectories
+    plot_trajs = []
+    for demo_set in x_sets:
+        plot_trajs.extend(demo_set)
+    plot_trajectories(plot_trajs, "Loaded Trajectories")
+
+    # return _pre_process_stitch(x_sets, x_dot_sets)
+    return [_pre_process(x, x_dot) for x, x_dot in zip(x_sets, x_dot_sets)]
+
+
+def load_drawn_trajectories(data_file):
+    """
+    Load trajectories from trajectory drawer files or create new ones interactively.
+    
+    Attempts to load existing trajectory files from the dataset/stitching/ directory.
+    If the file doesn't exist, provides an option to draw new trajectories interactively
+    using the TrajectoryDrawer interface.
+    
+    Parameters:
+    -----------
+    data_file : str
+        Base name of the trajectory file (without extension)
+        Will look for {data_file}_traj.pkl in dataset/stitching/
+        
+    Returns:
+    --------
+    tuple[List[np.ndarray], List[np.ndarray]] or None
+        trajectories: List of trajectory position arrays, each [M, 2]
+        velocities: List of trajectory velocity arrays, each [M, 2]
+        Returns None if no trajectories are loaded or drawn
+    """
+    print("\n=== Load Drawn Trajectories ===")
+    print("Options:")
+    print("1. Load existing trajectory file")
+    print("2. Draw new trajectories interactively")
+    
+    data_path = "./dataset/stitching/"
+    file_path = data_path + data_file + "_traj.pkl"
+    if not os.path.exists(file_path):
+        print(f"File {file_path} not found!")
+        choice = "2"
+    else:
+        choice = "1"
+    
+    drawer = TrajectoryDrawer()
+    if choice == "1":
+        # Load existing file
+        file_path = data_path + data_file + "_traj.pkl"
+
+        if not os.path.exists(file_path):
+            print(f"File {file_path} not found!")
+            return None
+            
+        trajectories, velocities = drawer.load_trajectories(file_path)
+        if not trajectories:
+            return None
+        
+        
+    elif choice == "2":
+        # Draw new trajectories
+        print("Starting interactive drawing session...")
+        drawer.start_interactive_drawing()
+        
+        if not drawer.trajectories:
+            print("No trajectories were drawn.")
+            return None
+            
+        trajectories = drawer.trajectories
+        
+        # Ask to save
+        save_choice = input("Save drawn trajectories? (y/n): ").strip().lower()
+        if save_choice == 'y':
+            drawer.save_trajectories(data_path + f"{data_file}_traj.pkl")
+        else:
+            return None
+
+        trajectories, velocities = drawer.load_trajectories(data_path + f"{data_file}_traj.pkl")
+                
+    else:
+        print("Invalid choice.")
+        return None
+
+    return trajectories, velocities
 
 
 def load_data(input_opt):
     """
-    Return:
-    -------
-        x:     a [M, N] NumPy array: M observations of N dimension
+    Load trajectory data from various benchmark datasets.
     
-        x_dot: a [M, N] NumPy array: M observations velocities of N dimension
-
-        x_att: a [1, N] NumPy array of attractor
-
-        x_init: an L-length list of [1, N] NumPy array: L number of trajectories, each containing an initial point of N dimension
+    Provides an interactive interface to load data from different sources including
+    PC-GMM benchmark data, LASA benchmark dataset, and custom demo datasets.
+    
+    Parameters:
+    -----------
+    input_opt : int or str
+        Data source option:
+        - 1: PC-GMM benchmark data (3D/2D trajectories)
+        - 2: LASA benchmark dataset (various trajectory shapes)
+        - 3: Damm demo dataset (bridge, Nshape, orientation)
+        - 4: Demo dataset with obstacles
+        - 'demo': General demo dataset
+        - 'increm': Incremental demo dataset
+        
+    Returns:
+    --------
+    tuple
+        Preprocessed trajectory data containing:
+        - x: [M, N] NumPy array: M observations of N dimension
+        - x_dot: [M, N] NumPy array: M observations velocities of N dimension
+        - x_att: [1, N] NumPy array of attractor
+        - x_init: L-length list of [1, N] NumPy arrays: initial points for L trajectories
+        
+    Notes:
+    ------
+    This function provides interactive prompts for dataset selection and may call
+    sys.exit() if invalid options are selected or user chooses to exit.
     """
 
     if input_opt == 1:
@@ -161,261 +444,3 @@ def load_data(input_opt):
 
 
     return _pre_process(x, x_dot)
-
-
-def load_data_stitch(input_opt, data_file=None):
-    """
-    Return:
-    -------
-        x:     a [M, N] NumPy array: M observations of N dimension
-    
-        x_dot: a [M, N] NumPy array: M observations velocities of N dimension
-
-        x_att: a [1, N] NumPy array of attractor
-
-        x_init: an L-length list of [1, N] NumPy array: L number of trajectories, each containing an initial point of N dimension
-    """
-
-    if input_opt == 1:
-        n_samples = 101  # number of points per trajectory
-        n_demos = 5
-        t = np.linspace(0, 1, n_samples)
-
-        # Trajectory 1: from (10, 10) to (0, 0) (main diagonal)
-        base_traj_target = np.vstack((10 - 10 * t, 10 - 10 * t)).T
-        trajs_target = []
-        for _ in range(n_demos):
-            noisy_traj = base_traj_target + np.random.normal(0, 0.05, base_traj_target.shape)
-            trajs_target.append(noisy_traj)
-
-        # Trajectory 2: from (0, 10) to (10, 0) (anti-diagonal)
-        base_traj_other = np.vstack((10 * t, 10 - 10 * t)).T
-        trajs_other = []
-        for _ in range(n_demos):
-            noisy_traj = base_traj_other + np.random.normal(0, 0.05, base_traj_other.shape)
-            trajs_other.append(noisy_traj)
-
-        x_sets = [trajs_target, trajs_other]
-
-        # Calculate velocities
-        x_dot_sets = []
-        for trajs in x_sets:
-            x_dot_trajs = [np.gradient(traj, axis=0) for traj in trajs]
-            x_dot_sets.append(x_dot_trajs)
-        data_hash = "nodes_1"
-
-    elif input_opt == 2:
-        n_points = 40
-        n_demos = 5
-
-        # Trajectory 1
-        trajs1 = []
-        base_x1_1 = np.linspace(0, 15, n_points) + np.sin(np.linspace(0, 15, n_points))
-        base_x1_2 = np.linspace(0, 15, n_points) + np.cos(0.2*np.linspace(0, 15, n_points))
-        for _ in range(n_demos):
-            x1_1 = base_x1_1 + np.random.normal(0, 0.2, n_points)
-            x1_2 = base_x1_2 + np.random.normal(0, 0.2, n_points)
-            trajs1.append(np.vstack((x1_1, x1_2)).T)
-
-        # Trajectory 2
-        trajs2 = []
-        base_x2_1 = np.linspace(10, 14, n_points)
-        base_x2_2 = np.linspace(8, 2, n_points) + np.sin(0.4*np.linspace(8, 2, n_points))
-        for _ in range(n_demos):
-            x2_1 = base_x2_1 + np.random.normal(0, 0.2, n_points)
-            x2_2 = base_x2_2 + np.random.normal(0, 0.2, n_points)
-            trajs2.append(np.vstack((x2_1, x2_2)).T)
-
-        # Trajectory 3
-        trajs3 = []
-        base_x3_1 = np.linspace(4, 5, n_points)
-        base_x3_2 = np.linspace(6.5, 13, n_points) + np.sin(0.6*np.linspace(6, 13, n_points))
-        for _ in range(n_demos):
-            x3_1 = base_x3_1 + np.random.normal(0, 0.2, n_points)
-            x3_2 = base_x3_2 + np.random.normal(0, 0.2, n_points)
-            trajs3.append(np.vstack((x3_1, x3_2)).T)
-
-        x_sets = [trajs1, trajs2, trajs3]
-
-        # Calculate velocities
-        x_dot_sets = []
-        for trajs in x_sets:
-            x_dot_trajs = [np.gradient(traj, axis=0) for traj in trajs]
-            x_dot_sets.append(x_dot_trajs)
-
-        data_hash = "nodes_2"
-
-    elif input_opt == 3:
-        x_sets, x_dot_sets, used_file = load_drawn_trajectories(data_file)
-        data_hash = used_file
-
-    # Flatten demo sets for processing
-    plot_trajs = []
-    for demo_set in x_sets:
-        plot_trajs.extend(demo_set)
-    
-    # Plot the loaded/generated trajectories
-    plot_trajectories(plot_trajs, "Loaded Trajectories")
-
-    # return _pre_process_stitch(x_sets, x_dot_sets)
-    return [_pre_process(x, x_dot) for x, x_dot in zip(x_sets, x_dot_sets)], data_hash
-
-
-def _pre_process(x, x_dot):
-    """ 
-    Roll out nested lists into a single list of M entries
-
-    Parameters:
-    -------
-        x:     an L-length list of [M, N] NumPy array: L number of trajectories, each containing M observations of N dimension,
-    
-        x_dot: an L-length list of [M, N] NumPy array: L number of trajectories, each containing M observations velocities of N dimension
-
-    Note:
-    -----
-        M can vary and need not be same between trajectories
-    """
-
-    L = len(x)
-    x_init = []
-    x_shifted = []
-
-    x_att  = [x[l][-1, :]  for l in range(L)]  
-    x_att_mean  =  np.mean(np.array(x_att), axis=0, keepdims=True)
-    for l in range(L):
-        x_init.append(x[l][0].reshape(1, -1))
-
-        x_diff = x_att_mean - x_att[l]
-        x_shifted.append(x_diff.reshape(1, -1) + x[l])
-
-    for l in range(L):
-        if l == 0:
-            x_rollout = x_shifted[l]
-            x_dot_rollout = x_dot[l]
-        else:
-            x_rollout = np.vstack((x_rollout, x_shifted[l]))
-            x_dot_rollout = np.vstack((x_dot_rollout, x_dot[l]))
-
-    return  x_rollout, x_dot_rollout, x_att_mean, x_init
-
-
-
-def _process_bag(path):
-    """ Process .mat files that is converted from .bag files """
-
-    data_ = loadmat(r"{}".format(path))
-    data_ = data_['data_ee_pose']
-    L = data_.shape[1]
-
-    x     = []
-    x_dot = [] 
-
-    sample_step = 5
-    vel_thresh  = 1e-3 
-    
-    for l in range(L):
-        data_l = data_[0, l]['pose'][0,0]
-        pos_traj  = data_l[:3, ::sample_step]
-        quat_traj = data_l[3:7, ::sample_step]
-        time_traj = data_l[-1, ::sample_step].reshape(1,-1)
-
-        raw_diff_pos = np.diff(pos_traj)
-        vel_mag = np.linalg.norm(raw_diff_pos, axis=0).flatten()
-        first_non_zero_index = np.argmax(vel_mag > vel_thresh)
-        last_non_zero_index = len(vel_mag) - 1 - np.argmax(vel_mag[::-1] > vel_thresh)
-
-        if first_non_zero_index >= last_non_zero_index:
-            raise Exception("Sorry, vel are all zero")
-
-        pos_traj  = pos_traj[:, first_non_zero_index:last_non_zero_index]
-        quat_traj = quat_traj[:, first_non_zero_index:last_non_zero_index]
-        time_traj = time_traj[:, first_non_zero_index:last_non_zero_index]
-        vel_traj = np.diff(pos_traj) / np.diff(time_traj)
-        
-        x.append(pos_traj[:, 0:-1].T)
-        x_dot.append(vel_traj.T)
-
-    return x, x_dot
-
-
-def load_drawn_trajectories(data_file=None):
-    """Load trajectories from trajectory drawer files."""
-    print("\n=== Load Drawn Trajectories ===")
-    print("Options:")
-    print("1. Load existing trajectory file")
-    print("2. Draw new trajectories interactively")
-    
-    data_path = "./dataset/stitching/"
-
-    if data_file is not None:
-        file_path = data_path + data_file + "_traj.pkl"
-        if not os.path.exists(file_path):
-            print(f"File {file_path} not found!")
-            choice = "2"
-        else:
-            choice = "1"
-    else:
-        choice = input("Choose option (1 or 2): ").strip()
-    
-    drawer = TrajectoryDrawer()
-    if choice == "1":
-        # Load existing file
-        if data_file is not None:
-            filename = data_file
-        else:
-            filename = input("Enter trajectory filename (without .pkl extension): ").strip()
-        if not filename:
-            print("No filename provided. Using default: sample_trajectories.pkl")
-            filename = "sample_trajectories"
-            
-        file_path = data_path + filename + "_traj.pkl"
-
-        if not os.path.exists(file_path):
-            print(f"File {file_path} not found!")
-            return None
-            
-        trajectories, velocities = drawer.load_trajectories(file_path)
-        if not trajectories:
-            return None
-        
-        
-    elif choice == "2":
-        # Draw new trajectories
-        print("Starting interactive drawing session...")
-        drawer.start_interactive_drawing()
-        
-        if not drawer.trajectories:
-            print("No trajectories were drawn.")
-            return None
-            
-        trajectories = drawer.trajectories
-        
-        # Ask to save
-        save_choice = input("Save drawn trajectories? (y/n): ").strip().lower()
-        if save_choice == 'y':
-            if data_file is not None:
-                filename = data_file
-            else:
-                filename = input("Enter filename (without .pkl extension): ").strip()
-            if filename:
-                drawer.save_trajectories(data_path + f"{filename}_traj.pkl")
-        else:
-            return None
-
-        trajectories, velocities = drawer.load_trajectories(data_path + f"{filename}_traj.pkl")
-                
-    else:
-        print("Invalid choice.")
-        return None
-
-
-    # Ask if user wants to generate more demonstrations
-    # generate_demos = input("Generate multiple demonstrations with noise? (y/n): ").strip().lower()
-    # if generate_demos == 'y':
-    n_demos = 3 #int(input("Number of demonstrations per trajectory (default 5): ") or 5)
-    noise_std = 0.05#float(input("Noise standard deviation (default 0.2): ") or 0.2)
-        
-    noisy_trajectories, noisy_velocities = drawer.generate_multiple_demos(trajectories, velocities, n_demos, noise_std)
-    # drawer.plot_trajectory_set(noisy_trajectories, "Generated Demonstrations")
-        
-    return noisy_trajectories, noisy_velocities, filename
