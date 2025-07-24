@@ -133,7 +133,10 @@ class GaussianGraph:
         return d ** self.param_dist / dir_score ** self.param_cos
 
     def compute_shortest_path(self):
-        """ Computes the shortest path from the initial to the attractor.
+        """Compute the shortest path from initial to attractor and configure initial node.
+
+        Finds the weighted shortest path and sets the initial node's mean, covariance,
+        and direction based on the next node in the path.
         """
         if self.initial_id is None or self.attractor_id is None:
             print("Initial or attractor node not set. Cannot compute shortest path.")
@@ -155,7 +158,46 @@ class GaussianGraph:
         self.graph.nodes[self.initial_id]['covariance'] = init_covariance
         self.graph.nodes[self.initial_id]['direction'] = init_direction
 
+    def compute_node_wise_shortest_path(self):
+        """Computes shortest paths to attractor and removes duplicate nodes at same positions.
 
+        Finds shortest paths from all nodes to the attractor node, then removes duplicate
+        nodes (same mean position) by keeping only the one with the shortest path length.
+
+        Returns:
+            None: Results stored in self.node_wise_shortest_path as list of node IDs.
+
+        Note:
+            Requires self.attractor_id to be set. No-op if attractor_id is None.
+        """
+        def path_length(path):
+            """Calculate the length of a path based on edge weights."""
+            return sum(self.graph[u][v]['weight'] for u, v in zip(path[:-1], path[1:]))
+
+        if self.attractor_id is None:
+            print("Attractor node not set. Cannot compute node-wise shortest path.")
+
+        all_paths_to_target = nx.shortest_path(self.graph, target=self.attractor_id, weight='weight')
+
+        # compare gaussians at the same location, remove the one with the longer path
+        nodes_to_remove = set()
+        for node, path in all_paths_to_target.items():
+            if node not in nodes_to_remove:
+
+                # find all other nodes with the same mean
+                for other_node, other_path in all_paths_to_target.items():
+                    if np.allclose(self.graph.nodes[node]['mean'], self.graph.nodes[other_node]['mean']) and node != other_node:
+
+                        # compare path lengths
+                        if path_length(path) > path_length(other_path):
+                            nodes_to_remove.add(node)
+                            break
+                        else:
+                            nodes_to_remove.add(other_node)
+                            continue
+
+        nodes_to_keep = list(set(all_paths_to_target.keys()) - nodes_to_remove)
+        self.node_wise_shortest_path = nodes_to_keep
 
     @staticmethod
     def _rotation_matrix_between_vectors(a, b, tol=1e-8):
