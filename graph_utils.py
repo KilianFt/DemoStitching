@@ -1,12 +1,9 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-from casadi.tools.structure3 import isIterable
-from scipy.signal.windows import gaussian
 from collections.abc import Iterable
-
-# from numpy.f2py.symbolic import normalize
 from src.util import plot_tools
+
 
 class GaussianGraph:
 
@@ -107,9 +104,20 @@ class GaussianGraph:
                 self.graph.add_edge(self.initial_id, gaussian_id, weight=edge_weight)
 
     def compute_edge_weight(self, pos1, direction1, pos2):
+        """Computes edge weight between two nodes based on distance and directionality.
+
+        Args:
+            pos1 (array): Position of first node.
+            direction1 (array): Direction vector of first node.
+            pos2 (array): Position of second node.
+
+        Returns:
+            float or None: Edge weight (distance^param_dist / dir_score^param_cos)
+                or None if nodes have same position or direction score is negative.
+        """
 
         # skip nodes with the same mean (same or reverse-pairs)
-        if np.array_equal(pos1, pos2):
+        if np.allclose(pos1, pos2):
             return None
 
         # distance
@@ -127,8 +135,74 @@ class GaussianGraph:
     def compute_shortest_path(self):
         """ Computes the shortest path from the initial to the attractor.
         """
-        if self.initial_id is not None and self.attractor_id is not None:
-            self.shortest_path = nx.shortest_path(self.graph, source='initial', target='attractor', weight='weight')
+        if self.initial_id is None or self.attractor_id is None:
+            print("Initial or attractor node not set. Cannot compute shortest path.")
+
+        self.shortest_path = nx.shortest_path(self.graph, source='initial', target='attractor', weight='weight')
+
+        # Give the initial node a mean, covariance, and direction toward the next node in the path
+        next_node = self.graph.nodes[self.shortest_path[1]]
+
+        # direction
+        init_direction = next_node['mean'] - self.graph.nodes[self.initial_id]['pos']
+        init_direction = init_direction / np.linalg.norm(init_direction) * np.linalg.norm(next_node['direction'])
+
+        # covariance
+        R = self._rotation_matrix_between_vectors(next_node['direction'], init_direction)
+        init_covariance = R @ next_node['covariance'] @ R.T
+
+        self.graph.nodes[self.initial_id]['mean'] = self.graph.nodes[self.initial_id]['pos']
+        self.graph.nodes[self.initial_id]['covariance'] = init_covariance
+        self.graph.nodes[self.initial_id]['direction'] = init_direction
+
+
+
+    @staticmethod
+    def _rotation_matrix_between_vectors(a, b, tol=1e-8):
+        """Rotation matrix that rotates vector a to align with vector b.
+
+        Args:
+            a: Source vector (2D or 3D).
+            b: Target vector (2D or 3D).
+            tol: Tolerance for parallel/anti-parallel detection (3D only).
+
+        Returns:
+            Rotation matrix (2×2 for 2D vectors, 3×3 for 3D vectors).
+        """
+        if a.shape != b.shape:
+            raise ValueError("Vectors must have the same dimension")
+
+        dim = len(a)
+
+        # Normalize input vectors
+        a_norm = a / np.linalg.norm(a)
+        b_norm = b / np.linalg.norm(b)
+
+        if dim == 2:
+            # 2D case: calculate rotation angle and build matrix
+            angle = np.arctan2(b_norm[1], b_norm[0]) - np.arctan2(a_norm[1], a_norm[0])
+            c, s = np.cos(angle), np.sin(angle)
+            return np.array([[c, -s],
+                             [s, c]])
+
+        elif dim == 3:
+            # 3D case: use cross product and Rodrigues' formula
+            v = np.cross(a_norm, b_norm)  # rotation axis (unnormalized)
+            s = np.linalg.norm(v)  # sin(θ)
+            c = np.dot(a_norm, b_norm)  # cos(θ)
+
+            if s < tol:  # parallel or anti-parallel
+                return np.eye(3) if c > 0 else (2 * np.outer(a_norm, a_norm) - np.eye(3))
+
+            # Skew-symmetric matrix
+            vx = np.array([[0, -v[2], v[1]],
+                           [v[2], 0, -v[0]],
+                           [-v[1], v[0], 0]])
+
+            return np.eye(3) + vx + vx @ vx * ((1 - c) / s ** 2)
+
+        else:
+            raise ValueError(f"Only 2D and 3D vectors supported, got {dim}D")
 
     def get_gaussians(self, node_id):
         """Gets the Gaussian parameters of one or more nodes.
