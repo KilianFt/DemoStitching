@@ -72,8 +72,7 @@ def save_initial_plots(gg, data, save_folder, config):
     plt.close()
 
 
-def plot_gaussians(mus, sigmas, directions=None, resolution=100, extent=None,
-                   scaling='sqrt', ax=None):
+def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax=None):
     """Plot heatmap of summed 2D Gaussian evaluations on a grid with 2-sigma ellipses and direction arrows.
 
     Args:
@@ -88,7 +87,8 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=100, extent=None,
     Returns:
         matplotlib axis object with heatmap
     """
-    # Ensure inputs are numpy arrays
+    # initialize lists for means and covariances
+    N = len(mus)
     mus = np.array(mus)
     sigmas = np.array(sigmas)
 
@@ -115,37 +115,28 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=100, extent=None,
     X, Y = np.meshgrid(x, y)
     grid_points = np.column_stack([X.ravel(), Y.ravel()])
 
-    # Evaluate and sum all Gaussians at each grid point
-    total_values = np.zeros(len(grid_points))
-
-    for mu, sigma in zip(mus, sigmas):
+    # Evaluate each grid point wrt each Gaussian
+    gaussian_evaluations = np.zeros((N, len(grid_points)))
+    for i, (mu, sigma) in enumerate(zip(mus, sigmas)):
         diff = grid_points - mu
         inv_sigma = np.linalg.inv(sigma)
         mahalanobis_sq = np.sum(diff @ inv_sigma * diff, axis=1)
         norm_const = 1 / (2 * np.pi * np.sqrt(np.linalg.det(sigma)))
         gaussian_values = norm_const * np.exp(-0.5 * mahalanobis_sq)
-        total_values += gaussian_values
+        gaussian_values_normalized = gaussian_values / np.max(gaussian_values)  # Normalize for visualization
+        gaussian_evaluations[i] = gaussian_values_normalized
+
+    # aggregate evaluations
+    total_values = np.max(gaussian_evaluations, axis=0)
 
     # Reshape back to grid
     heatmap = total_values.reshape(resolution[1], resolution[0])
-
-    # Apply scaling transformation
-    if scaling == 'exponential':
-        scaled_heatmap = np.exp(heatmap) - 1
-    elif scaling == 'log':
-        epsilon = np.max(heatmap) * 1e-10
-        scaled_heatmap = np.log(heatmap + epsilon)
-    elif scaling == 'sqrt':
-        scaled_heatmap = np.sqrt(heatmap)
-    else:  # linear
-        scaled_heatmap = heatmap
 
     # Create plot
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
 
-    im = ax.imshow(scaled_heatmap, extent=[xmin, xmax, ymin, ymax],
-                   origin='lower', cmap='viridis', aspect='equal')
+    im = ax.imshow(heatmap, extent=[xmin, xmax, ymin, ymax], origin='lower', cmap='GnBu', aspect='equal')
 
     # Add 2-sigma ellipses for each Gaussian
     for mu, sigma in zip(mus, sigmas):
@@ -162,7 +153,7 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=100, extent=None,
 
         # Draw 2-sigma ellipse
         ellipse = Ellipse(xy=mu, width=width, height=height, angle=angle,
-                          edgecolor='white', facecolor='none', linewidth=1, linestyle='-')
+                          edgecolor='black', facecolor='none', linewidth=0.25, linestyle='-')
         ax.add_patch(ellipse)
 
     # Add direction arrows
@@ -174,14 +165,18 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=100, extent=None,
         directions_norm = directions / (np.linalg.norm(directions, axis=1, keepdims=True) + 1e-10)
 
         # FIXED: Use ymin instead of ymax, and scale appropriately
-        arrow_scale = min(xmax - xmin, ymax - ymin) * 0.05
+        arrow_scale = min(xmax - xmin, ymax - ymin) * 0.025
 
         for mu, dir_vec in zip(mus, directions_norm):
             ax.arrow(mu[0], mu[1],
                      dir_vec[0] * arrow_scale, dir_vec[1] * arrow_scale,
                      head_width=arrow_scale*0.2, head_length=arrow_scale*0.15,
-                     fc='white', ec='black', linewidth=2, alpha=0.8)
+                     fc='white', ec='white', linewidth=2, alpha=0.8)
 
+    # plt.colorbar(im, ax=ax, label='Scaled Gaussian Density')
+
+    # set tight layout
+    ax.set_aspect('equal')
     return ax
 
 
