@@ -14,39 +14,60 @@ plt.rcParams.update({
     "font.size": 30
 })
 
-# Plot updates gaussians from lpvds:
-# if hasattr(lpvds.damm, "Mu"):
-#     centers = lpvds.damm.Mu
-#     assignment_arr = lpvds.assignment_arr
-#     mean_xdot = np.zeros((lpvds.damm.K, lpvds.x.shape[1]))
-#     for k in range(lpvds.damm.K):
-#         mean_xdot[k] = np.mean(lpvds.x_dot[assignment_arr==k], axis=0)
-#     plot_tools.plot_gaussians(centers, lpvds.damm.Sigma, mean_xdot, ax=axs[0,1])
 
 
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config): 
-    fig, axs = plt.subplots(1, 2, figsize=(12,6), sharex=True, sharey=True)
+    fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
     mus, sigmas, directions = gg.get_gaussians(gg.shortest_path[1:-1])
-    plot_gaussians(mus, sigmas, directions, ax=axs[0], extent=((config.x_min, config.x_max), (config.y_min, config.y_max)))
+    plot_gaussians(mus, sigmas, directions, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)))
     # gg.plot_shortest_path_gaussians(ax=axs[0])
-    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs[1], x_min=config.x_min, x_max=config.x_max, y_min=config.y_min, y_max=config.y_max)
-    axs[1].set_xlim(config.x_min, config.x_max)
-    axs[1].set_ylim(config.y_min, config.y_max)
-    axs[0].set_xlim(config.x_min, config.x_max)
-    axs[0].set_ylim(config.y_min, config.y_max)
+    axs.set_xlim(config.x_min, config.x_max)
+    axs.set_ylim(config.y_min, config.y_max)
+    axs.set_aspect('equal')
+    plt.tight_layout()
+    plt.savefig(save_folder + "shortest_path_{}.png".format(i))
+    plt.close()
+
+    fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
+    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs, x_min=config.x_min, x_max=config.x_max, y_min=config.y_min, y_max=config.y_max)
+    axs.set_xlim(config.x_min, config.x_max)
+    axs.set_ylim(config.y_min, config.y_max)
+    axs.set_aspect('equal')
     plt.tight_layout()
     plt.savefig(save_folder + "ds_{}.png".format(i))
     plt.close()
 
+    # Plot updates gaussians from lpvds if they were updated
+    if hasattr(lpvds.damm, "Mu"):
+        fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
+        centers = lpvds.damm.Mu
+        assignment_arr = lpvds.assignment_arr
+        mean_xdot = np.zeros((lpvds.damm.K, lpvds.x.shape[1]))
+        for k in range(lpvds.damm.K):
+            mean_xdot[k] = np.mean(lpvds.x_dot[assignment_arr==k], axis=0)
+        plot_gaussians(centers, lpvds.damm.Sigma, mean_xdot, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)))
+        axs.set_xlim(config.x_min, config.x_max)
+        axs.set_ylim(config.y_min, config.y_max)
+        axs.set_aspect('equal')
+        plt.tight_layout()
+        plt.savefig(save_folder + "updated_gaussians_{}.png".format(i))
+        plt.close()
 
-def save_initial_plots(gg, data, save_folder):
+
+def save_initial_plots(gg, data, save_folder, config):
     # initial plots that only need to be computed once
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
     gg.plot(ax=axs)
+    axs.set_xlim(config.x_min, config.x_max)
+    axs.set_ylim(config.y_min, config.y_max)
+    axs.set_aspect('equal')
     plt.savefig(save_folder + "graph.png")
     plt.close()
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
-    plot_gaussians(data["centers"], data["sigmas"], data["directions"], ax=axs)
+    plot_gaussians(data["centers"], data["sigmas"], data["directions"], ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)))
+    axs.set_xlim(config.x_min, config.x_max)
+    axs.set_ylim(config.y_min, config.y_max)
+    axs.set_aspect('equal')
     plt.savefig(save_folder + "gaussians.png")
     plt.close()
 
@@ -164,23 +185,26 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=100, extent=None,
     return ax
 
 
-def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories"):
+def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories", save_folder: str = "", config = None, ax = None):
     """Plot trajectories."""
-    plt.figure(figsize=(10, 8))
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6), sharex=True, sharey=True)
     
     colors = plt.cm.tab10(np.linspace(0, 1, len(trajectories)))
     
     for i, traj in enumerate(trajectories):
-        plt.plot(traj[:, 0], traj[:, 1], color=colors[i], linewidth=2, alpha=0.7, label=f'Traj {i+1}')
-        plt.plot(traj[0, 0], traj[0, 1], 'go', markersize=8)
-        plt.plot(traj[-1, 0], traj[-1, 1], 'ro', markersize=8)
+        ax.plot(traj[:, 0], traj[:, 1], color=colors[i], linewidth=2, alpha=0.7, label=f'Traj {i+1}')
+        ax.plot(traj[0, 0], traj[0, 1], 'go', markersize=8)
+        ax.plot(traj[-1, 0], traj[-1, 1], 'ro', markersize=8)
         
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.title(title)
-    plt.grid(True, alpha=0.3)
-    # plt.legend()
-    plt.waitforbuttonpress()
+    ax.grid(True, alpha=0.3)
+    if config is not None:
+        ax.set_xlim(config.x_min, config.x_max)
+        ax.set_ylim(config.y_min, config.y_max)
+
+    ax.set_aspect('equal')
+    plt.tight_layout()
+    plt.savefig(save_folder + "trajectories.png")
     plt.close()
 
 

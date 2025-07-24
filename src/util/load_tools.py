@@ -10,7 +10,7 @@ from src.util.preprocessing import lpvds_per_demo, _pre_process, _process_bag
 from src.util.generate_data import generate_data
 
 
-def load_data_from_file(dataset_path, n_demos=5, noise_std=0.05, force_preprocess=False):
+def load_data_from_file(dataset_path, config):
     """
     Load trajectory data from file with caching support.
     
@@ -21,10 +21,8 @@ def load_data_from_file(dataset_path, n_demos=5, noise_std=0.05, force_preproces
     -----------
     dataset_path : str
         Path to the dataset file (without extension)
-    n_demos : int, optional
-        Number of demonstrations to generate per base trajectory (default: 5)
-    noise_std : float, optional
-        Standard deviation of noise to add to demonstrations (default: 0.05)
+    config : Config
+        Configuration object containing parameters for data loading
         
     Returns:
     --------
@@ -41,7 +39,7 @@ def load_data_from_file(dataset_path, n_demos=5, noise_std=0.05, force_preproces
 
     # load data from file if exists
     preprocessed_filename = "{}/preprocessed.pkl".format(dataset_path)
-    if os.path.exists(preprocessed_filename) and not force_preprocess:
+    if os.path.exists(preprocessed_filename) and not config.force_preprocess:
         print("Using cached nodes")
         with open(preprocessed_filename, 'rb') as f:
             processed_data = pickle.load(f)
@@ -52,7 +50,7 @@ def load_data_from_file(dataset_path, n_demos=5, noise_std=0.05, force_preproces
         # calculate nodes if not yet calculated
         os.makedirs(dataset_path, exist_ok=True)
         print("Calculating nodes")
-        raw_data = load_data_stitch(dataset_path=dataset_path, n_demos=n_demos, noise_std=noise_std)
+        raw_data = load_data_stitch(dataset_path=dataset_path, config=config)
 
         processed_data = lpvds_per_demo(raw_data)
         with open(preprocessed_filename, 'wb') as f:
@@ -61,7 +59,7 @@ def load_data_from_file(dataset_path, n_demos=5, noise_std=0.05, force_preproces
     return processed_data
 
 
-def load_data_stitch(dataset_path, n_demos=5, noise_std=0.05):
+def load_data_stitch(dataset_path, config):
     """
     Load and process trajectory data for stitching applications.
     
@@ -75,10 +73,8 @@ def load_data_stitch(dataset_path, n_demos=5, noise_std=0.05):
         - "nodes_1": Two intersecting diagonal trajectories
         - "nodes_2": Three curved trajectories with sinusoidal components
         - Other: Load from trajectory drawer files
-    n_demos : int, optional
-        Number of demonstrations to generate per base trajectory (default: 5)
-    noise_std : float, optional
-        Standard deviation of noise to add to demonstrations (default: 0.05)
+    config : Config
+        Configuration object containing parameters for data loading
         
     Returns:
     --------
@@ -128,7 +124,8 @@ def load_data_stitch(dataset_path, n_demos=5, noise_std=0.05):
     plot_trajs = []
     for demo_set in x_sets:
         plot_trajs.extend(demo_set)
-    plot_trajectories(plot_trajs, "Loaded Trajectories")
+    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+    plot_trajectories(plot_trajs, "Loaded Trajectories", save_folder, config=config)
 
     # return _pre_process_stitch(x_sets, x_dot_sets)
     return [_pre_process(x, x_dot) for x, x_dot in zip(x_sets, x_dot_sets)]

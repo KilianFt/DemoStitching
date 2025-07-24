@@ -20,11 +20,11 @@ from src.util.stitching import initialize_iter_strategy, get_nan_results
 
 @dataclass
 class Config:
-    dataset_path: str = "./dataset/stitching/testing"
+    dataset_path: str = "./dataset/stitching/nodes_2"
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None #np.array([4,15])
     attractor: Optional[np.ndarray] = None #np.array([14,2])
-    ds_method: str = "recompute_all" # ["recompute_all", "recompute_ds", "reuse", "chain"]
+    ds_method: str = "recompute_ds" # ["recompute_all", "recompute_ds", "reuse", "chain"]
     reverse_gaussians: bool = True
     param_dist: int = 3
     param_cos: int = 3
@@ -43,7 +43,7 @@ def main():
     config = Config()
 
     # load data
-    data = load_data_from_file(config.dataset_path, config.n_demos, config.noise_std, config.force_preprocess)
+    data = load_data_from_file(config.dataset_path, config)
 
     # determine iteration strategy based on config
     combinations, save_folder = initialize_iter_strategy(config, data["x_initial_sets"], data["x_attrator_sets"])
@@ -64,7 +64,7 @@ def main():
                               param_cos=config.param_cos)
         
         if i == 0 and config.save_fig:
-            plot_tools.save_initial_plots(gg, data, save_folder)
+            plot_tools.save_initial_plots(gg, data, save_folder, config)
 
         gg.compute_shortest_path()
 

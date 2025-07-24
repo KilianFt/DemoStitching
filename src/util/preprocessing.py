@@ -3,6 +3,45 @@ from scipy.io import loadmat
 
 from src.lpvds_class import lpvds_class
 
+def compute_weighted_average(x, x_dot, centers, sigmas, assignment_arr):
+    mean_xdot = np.zeros((centers.shape[0], x.shape[1]))
+    for k in range(centers.shape[0]):
+        # Get points assigned to cluster k
+        assigned_mask = assignment_arr == k
+        if np.sum(assigned_mask) == 0:
+            continue
+        
+        assigned_x = x[assigned_mask]
+        assigned_xdot = x_dot[assigned_mask]
+        
+        # Compute Gaussian weights for assigned points
+        center = centers[k]
+        sigma = sigmas[k]
+        
+        # Calculate multivariate Gaussian weights
+        diff = assigned_x - center
+        # Handle potential singular covariance matrix
+        try:
+            sigma_inv = np.linalg.inv(sigma)
+            weights = np.exp(-0.5 * np.sum(diff @ sigma_inv * diff, axis=1))
+        except np.linalg.LinAlgError:
+            # Fallback to identity if sigma is singular
+            weights = np.exp(-0.5 * np.sum(diff**2, axis=1))
+        
+        # Normalize weights
+        weights = weights / np.sum(weights)
+        
+        # Compute weighted average
+        mean_xdot[k] = np.sum(assigned_xdot * weights[:, np.newaxis], axis=0)
+
+    return mean_xdot
+
+def compute_average(x, x_dot, centers, sigmas, assignment_arr):
+    mean_xdot = np.zeros((centers.shape[0], x.shape[1]))
+    for k in range(centers.shape[0]):
+        mean_xdot[k] = np.mean(x_dot[assignment_arr==k], axis=0)
+    return mean_xdot
+
 
 def lpvds_per_demo(data):
     """
@@ -30,14 +69,14 @@ def lpvds_per_demo(data):
         # get directionality
         centers = lpvds.damm.Mu
         assignment_arr = lpvds.assignment_arr
-        # NOTE could be modified to have weighted average
-        mean_xdot = np.zeros((lpvds.damm.K, x.shape[1]))
-        for k in range(lpvds.damm.K):
-            mean_xdot[k] = np.mean(x_dot[assignment_arr==k], axis=0)
+        sigmas = lpvds.damm.Sigma
+        # Compute weighted average using Gaussian weights
+        # mean_xdot = compute_weighted_average(x, x_dot, centers, sigmas, assignment_arr)
+        mean_xdot = compute_average(x, x_dot, centers, sigmas, assignment_arr)
 
         node_centers.extend(centers.tolist())
         node_directions.extend(mean_xdot.tolist())
-        node_sigmas.extend(lpvds.damm.Sigma.tolist())
+        node_sigmas.extend(sigmas.tolist())
         xs.append(x)
         x_dots.append(x_dot)
         x_atts.append(np.squeeze(x_att))
