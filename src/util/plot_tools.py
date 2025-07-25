@@ -8,15 +8,13 @@ from scipy.stats import multivariate_normal
 import random
 import os
 
-
 plt.rcParams.update({
     "text.usetex": False,
     "font.family": "Times New Roman",
     "font.size": 30
 })
 
-
-def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config): 
+def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
     mus, sigmas, directions = gg.get_gaussians(gg.shortest_path[1:-1])
     plot_gaussians(mus, sigmas, directions, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
@@ -53,7 +51,6 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
         plt.savefig(save_folder + "updated_gaussians_{}.png".format(i), dpi=300)
         plt.close()
 
-
 def save_initial_plots(gg, data, save_folder, config):
     # initial plots that only need to be computed once
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
@@ -74,7 +71,6 @@ def save_initial_plots(gg, data, save_folder, config):
     axs.set_aspect('equal')
     plt.savefig(save_folder + "gaussians.png", dpi=300)
     plt.close()
-
 
 def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax=None):
     """Plot heatmap of summed 2D Gaussian evaluations on a grid with 2-sigma ellipses and direction arrows.
@@ -183,7 +179,6 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax
     ax.set_aspect('equal')
     return ax
 
-
 def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories", save_folder: str = "", config = None, ax = None):
     """Plot trajectories."""
     if ax is None:
@@ -206,27 +201,57 @@ def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories
     plt.savefig(save_folder + "trajectories.png", dpi=300)
     plt.close()
 
-def plot_demonstration_set(demoset, config):
-    """Plots all trajectories from a demonstration set and saves figures to disk.
+def plot_demonstration_set(demoset, config, ax=None):
+    """Plots demonstration trajectories grouped by demonstration.
 
     Args:
         demoset (Demoset): Namedtuple containing demonstration trajectory data.
-        config: Configuration object with dataset_path and ds_method attributes.
+        config: Configuration object with dataset_path, ds_method, and axis limit attributes.
+        ax: Optional matplotlib axis.
 
     Returns:
         None: Saves trajectory plots to configured directory.
     """
-    # Collect the trajectories
-    plot_trajs = []
-    for demo in demoset.x:
-        plot_trajs.extend(demo)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
 
-    # Plot and save
+    # Number of demonstrations
+    n_demos = len(demoset.x)
+
+    # Generate colors from colormap - one color per demonstration
+    colors = plt.cm.viridis(np.linspace(0, 1, n_demos+2))
+    colors = colors[1:-1]
+
+    # Plot each demonstration with its assigned color
+    for demo_idx, demo_trajectories in enumerate(demoset.x):
+        demo_color = colors[demo_idx]
+
+        # Plot all trajectories in this demonstration with the same color
+        for traj in demo_trajectories:
+            ax.plot(traj[:, 0], traj[:, 1], color=demo_color, linewidth=1, alpha=1)
+            # Start point (green)
+            ax.plot(traj[0, 0], traj[0, 1], 'go', markersize=8)
+            # End point (red)
+            ax.plot(traj[-1, 0], traj[-1, 1], 'ro', markersize=8)
+
+    # Apply config settings if provided
+    if config is not None:
+        if hasattr(config, 'x_min') and hasattr(config, 'x_max'):
+            ax.set_xlim(config.x_min, config.x_max)
+        if hasattr(config, 'y_min') and hasattr(config, 'y_max'):
+            ax.set_ylim(config.y_min, config.y_max)
+
+    ax.set_aspect('equal')
+    plt.tight_layout()
+    ax.tick_params(axis='both', which='major', labelsize=16)
+
+    # Save the figure
     save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
     os.makedirs(save_folder, exist_ok=True)
-    plot_trajectories(plot_trajs, "Loaded Trajectories", save_folder, config=config)
+    plt.savefig(save_folder + "Demonstrations.png", dpi=600)
 
-
+    if ax is None:  # Only close if we created the figure
+        plt.close()
 
 def plot_gmm(x_train, label, damm, ax = None):
     """ passing damm object to plot the ellipsoids of clustering results"""
@@ -275,8 +300,6 @@ def plot_gmm(x_train, label, damm, ax = None):
         ax.zaxis.set_major_locator(MaxNLocator(nbins=3))
         ax.tick_params(axis='z', which='major', pad=15)
 
-
-
 def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
@@ -312,9 +335,6 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
 
     if title is not None:
         ax.set_title(title)
-
-
-
 
 def plot_ds_3d(x_train, x_test_list):
     N = x_train.shape[1]

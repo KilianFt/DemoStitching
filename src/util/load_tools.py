@@ -6,14 +6,14 @@ import pyLasaDataset as lasa
 from scipy.io import loadmat
 from collections import namedtuple
 
-from src.util.plot_tools import plot_trajectories, plot_demonstration_set
+from src.util.plot_tools import plot_trajectories, plot_demonstration_set, plot_demonstration_set
 from src.util.preprocessing import lpvds_per_demo, _pre_process, _process_bag
 from src.util.generate_data import generate_data
 
 Demoset = namedtuple('Demoset', ['x', 'x_dot'])
 
 def get_ds_set(config):
-    """Loads or computes DS set from demonstration data with automatic caching.
+    """Loads or computes a DS set from demonstration data with automatic caching.
 
     Args:
         config: Configuration object with dataset_path and force_preprocess attributes.
@@ -42,7 +42,6 @@ def get_ds_set(config):
 
     # No DS set has been computed (or config forces recompute). Locate existing demos.
     demosets = load_demoset(demoset_path)
-
     if demosets is None:
         print(f'No existing demonstrations found in \"{demoset_path}\". Drawing new demonstrations.')
         generate_data(demoset_path)
