@@ -4,13 +4,112 @@ import pickle
 import numpy as np
 import pyLasaDataset as lasa
 from scipy.io import loadmat
+from collections import namedtuple
 
-from src.util.plot_tools import plot_trajectories
+from src.util.plot_tools import plot_trajectories, plot_demonstration_set
 from src.util.preprocessing import lpvds_per_demo, _pre_process, _process_bag
 from src.util.generate_data import generate_data
 
+Demoset = namedtuple('Demoset', ['x', 'x_dot'])
 
-def load_data_from_file(dataset_path, config):
+def get_ds_set(config):
+    """Loads or computes DS set from demonstration data with automatic caching.
+
+    Args:
+        config: Configuration object with dataset_path and force_preprocess attributes.
+
+    Returns:
+        DS set: Computed dynamical system set from demonstration trajectories.
+
+    Raises:
+        ValueError: If config.dataset_path is None.
+    """
+    demoset_path = config.dataset_path
+    if demoset_path is None:
+        raise ValueError("A demonstration set path must be provided.")
+
+    # Load demonstration set's DS set if it has already been computed exists
+    ds_set_filename = "{}/preprocessed.pkl".format(demoset_path)
+    if os.path.exists(ds_set_filename) and not config.force_preprocess:
+
+        print(f'Using cached DS set at \"{ds_set_filename}\"')
+        with open(ds_set_filename, 'rb') as f:
+            ds_set = pickle.load(f)
+        return ds_set
+
+    if not config.force_preprocess:
+        print(f'Could not find an existing DS set at \"{demoset_path}\".')
+
+    # No DS set has been computed (or config forces recompute). Locate existing demos.
+    demosets = load_demoset(demoset_path)
+
+    if demosets is None:
+        print(f'No existing demonstrations found in \"{demoset_path}\". Drawing new demonstrations.')
+        generate_data(demoset_path)
+        demosets = load_demoset(demoset_path)
+    else:
+        print(f'Found existing demonstrations in \"{demoset_path}\".')
+
+    # Compute the DS set from the loaded demonstration set
+    print(f'Computing DS set from demonstrations in \"{demoset_path}\".')
+    plot_demonstration_set(demosets, config)
+    preprocessed_demoset = [_pre_process(x, x_dot) for x, x_dot in zip(demosets.x, demosets.x_dot)]
+    ds_set = lpvds_per_demo(preprocessed_demoset)
+
+    # Save the DS set to a file for future use
+    print(f'Saving DS set to \"{demoset_path}\".')
+    with open(ds_set_filename, 'wb') as f:
+        pickle.dump(ds_set, f)
+
+    return ds_set
+
+
+def load_demoset(demoset_path):
+    """Loads a demoset from demonstration folders of trajectory JSON files.
+
+    Args:
+        demoset_path (str): Path to directory containing demonstration set folders.
+
+    Returns:
+        Demoset or None: Namedtuple with x (positions) and x_dot (velocities) lists,
+            or None if path doesn't exist or contains no dataset folders.
+    """
+    if not os.path.exists(demoset_path):
+        return None
+
+    # Collect all demonstration folders
+    demonstration_folders = []
+    for folder_name in os.listdir(demoset_path):
+       if 'dataset' in folder_name:
+           demonstration_folders.append(folder_name)
+
+    # Return if the folder does not contain any demonstrations
+    if not demonstration_folders:
+        return None
+
+    # Collect all trajectories from every demonstration folder
+    demoset_x = []
+    demoset_x_dot = []
+    for demo_folder in demonstration_folders:
+        demo_path = os.path.join(demoset_path, demo_folder)
+
+        demonstration_x = []
+        demonstration_x_dot = []
+
+        for trajectory_file in os.listdir(demo_path):
+            trajectory_path = os.path.join(demo_path, trajectory_file)
+
+            trajectory = json.load(open(trajectory_path))
+            demonstration_x.append(np.array(trajectory["x"]))
+            demonstration_x_dot.append(np.array(trajectory["x_dot"]))
+
+        demoset_x.append(demonstration_x)
+        demoset_x_dot.append(demonstration_x_dot)
+
+    return Demoset(demoset_x, demoset_x_dot)
+
+
+def load_data_from_file(demoset_path, config):
     """
     Load trajectory data from file with caching support.
     
@@ -34,26 +133,26 @@ def load_data_from_file(dataset_path, config):
     ValueError
         If data_file is None
     """
-    if dataset_path is None:
-        raise ValueError("No data file provided")
 
-    # load data from file if exists
-    preprocessed_filename = "{}/preprocessed.pkl".format(dataset_path)
-    if os.path.exists(preprocessed_filename) and not config.force_preprocess:
-        print("Using cached nodes")
-        with open(preprocessed_filename, 'rb') as f:
+    if demoset_path is None:
+        raise ValueError("A demonstration set path must be provided.")
+
+    # Load demonstration set's DS set if it has already been computed exists
+    ds_set_filename = "{}/preprocessed.pkl".format(demoset_path)
+    if os.path.exists(ds_set_filename) and not config.force_preprocess:
+
+        print(f'Using cached DS set at \"{ds_set_filename}\"')
+        with open(ds_set_filename, 'rb') as f:
             processed_data = pickle.load(f)
-    # check if path contains a folder which includes "dataset"
-    # elif "dataset" in dataset_path:
-    #     raise NotImplementedError("Loading from dataset path not implemented")
+
+    # No DS set has been computed (or forced recompute). Locate the demos (or draw them if not found)
     else:
-        # calculate nodes if not yet calculated
-        os.makedirs(dataset_path, exist_ok=True)
-        print("Calculating nodes")
-        raw_data = load_data_stitch(dataset_path=dataset_path, config=config)
+        print(f'Could not find an existing DS \"{demoset_path}\", locating demos.')
+        os.makedirs(demoset_path, exist_ok=True)
+        raw_data = load_data_stitch(dataset_path=demoset_path, config=config)
 
         processed_data = lpvds_per_demo(raw_data)
-        with open(preprocessed_filename, 'wb') as f:
+        with open(ds_set_filename, 'wb') as f:
             pickle.dump(processed_data, f)
 
     return processed_data

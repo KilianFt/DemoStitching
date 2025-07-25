@@ -8,7 +8,7 @@ from src.util import plot_tools
 import graph_utils as gu
 from src.stitching import build_ds
 from src.stitching.metrics import calculate_all_metrics, save_results_dataframe
-from src.util.load_tools import load_data_from_file
+from src.util.load_tools import load_data_from_file, get_ds_set
 from src.util.stitching import initialize_iter_strategy, get_nan_results
 
 # TODO
@@ -22,8 +22,8 @@ from src.util.stitching import initialize_iter_strategy, get_nan_results
 
 @dataclass
 class Config:
-    dataset_path: str = "./dataset/stitching/presentation"
-    force_preprocess: bool = True
+    dataset_path: str = "./dataset/stitching/testing"
+    force_preprocess: bool = False
     initial: Optional[np.ndarray] = None #np.array([4,15])
     attractor: Optional[np.ndarray] = None #np.array([14,2])
     ds_method: str = "recompute_all" # ["recompute_all", "recompute_ds", "reuse", "chain"]
@@ -42,12 +42,14 @@ class Config:
 
 
 def main():
+
     config = Config()
     save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
-    os.makedirs(save_folder, exist_ok=True)
+    # os.makedirs(save_folder, exist_ok=True)
 
-    # load data
-    data = load_data_from_file(config.dataset_path, config)
+    # load set of DSs
+    data = get_ds_set(config)
+    # data = load_data_from_file(config.dataset_path, config)
 
     # determine iteration strategy based on config
     combinations = initialize_iter_strategy(config, data["x_initial_sets"], data["x_attrator_sets"])
@@ -105,11 +107,11 @@ def main():
                 ds_method=config.ds_method,
                 combination_id=i
             )
-            
+
             # Calculate and add compute time for this iteration
             iteration_time = time.time() - iteration_start_time
             metrics_result['compute_time'] = iteration_time
-            
+
             all_results.append(metrics_result)
             
             print(f"  Metrics calculated: RMSE={metrics_result['prediction_rmse']:.4f}, "

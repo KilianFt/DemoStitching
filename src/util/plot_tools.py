@@ -6,6 +6,7 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.patches import Ellipse
 from scipy.stats import multivariate_normal
 import random
+import os
 
 
 plt.rcParams.update({
@@ -13,7 +14,6 @@ plt.rcParams.update({
     "font.family": "Times New Roman",
     "font.size": 30
 })
-
 
 
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config): 
@@ -205,6 +205,27 @@ def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories
     plt.tight_layout()
     plt.savefig(save_folder + "trajectories.png", dpi=300)
     plt.close()
+
+def plot_demonstration_set(demoset, config):
+    """Plots all trajectories from a demonstration set and saves figures to disk.
+
+    Args:
+        demoset (Demoset): Namedtuple containing demonstration trajectory data.
+        config: Configuration object with dataset_path and ds_method attributes.
+
+    Returns:
+        None: Saves trajectory plots to configured directory.
+    """
+    # Collect the trajectories
+    plot_trajs = []
+    for demo in demoset.x:
+        plot_trajs.extend(demo)
+
+    # Plot and save
+    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+    os.makedirs(save_folder, exist_ok=True)
+    plot_trajectories(plot_trajs, "Loaded Trajectories", save_folder, config=config)
+
 
 
 def plot_gmm(x_train, label, damm, ax = None):
