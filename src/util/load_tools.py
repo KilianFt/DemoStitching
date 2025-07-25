@@ -5,8 +5,7 @@ import numpy as np
 import pyLasaDataset as lasa
 from scipy.io import loadmat
 from collections import namedtuple
-
-from src.util.plot_tools import plot_trajectories, plot_demonstration_set, plot_demonstration_set
+from src.util.plot_tools import plot_trajectories, plot_demonstration_set
 from src.util.preprocessing import lpvds_per_demo, _pre_process, _process_bag
 from src.util.generate_data import generate_data
 
@@ -62,7 +61,6 @@ def get_ds_set(config):
 
     return ds_set
 
-
 def load_demoset(demoset_path):
     """Loads a demoset from demonstration folders of trajectory JSON files.
 
@@ -106,7 +104,6 @@ def load_demoset(demoset_path):
         demoset_x_dot.append(demonstration_x_dot)
 
     return Demoset(demoset_x, demoset_x_dot)
-
 
 def load_data_from_file(demoset_path, config):
     """
@@ -155,7 +152,6 @@ def load_data_from_file(demoset_path, config):
             pickle.dump(processed_data, f)
 
     return processed_data
-
 
 def load_data_stitch(dataset_path, config):
     """
@@ -228,14 +224,13 @@ def load_data_stitch(dataset_path, config):
     # return _pre_process_stitch(x_sets, x_dot_sets)
     return [_pre_process(x, x_dot) for x, x_dot in zip(x_sets, x_dot_sets)]
 
-
 def load_data(input_opt):
     """
     Load trajectory data from various benchmark datasets.
-    
+
     Provides an interactive interface to load data from different sources including
     PC-GMM benchmark data, LASA benchmark dataset, and custom demo datasets.
-    
+
     Parameters:
     -----------
     input_opt : int or str
@@ -246,7 +241,7 @@ def load_data(input_opt):
         - 4: Demo dataset with obstacles
         - 'demo': General demo dataset
         - 'increm': Incremental demo dataset
-        
+
     Returns:
     --------
     tuple
@@ -255,7 +250,7 @@ def load_data(input_opt):
         - x_dot: [M, N] NumPy array: M observations velocities of N dimension
         - x_att: [1, N] NumPy array of attractor
         - x_init: L-length list of [1, N] NumPy arrays: initial points for L trajectories
-        
+
     Notes:
     ------
     This function provides interactive prompts for dataset selection and may call
@@ -317,7 +312,7 @@ def load_data(input_opt):
             if (i+1) % 6 ==0:
                 message += "\n"
         message += '\nEnter the corresponding option number [type 0 to exit]: '
-        
+
         data_opt = int(input(message))
 
         if data_opt == 0:
@@ -327,7 +322,7 @@ def load_data(input_opt):
             sys.exit()
 
         data = getattr(lasa.DataSet, lasa_list[data_opt-1])
-        demos = data.demos 
+        demos = data.demos
         sub_sample = 1
         L = len(demos)
 
@@ -339,16 +334,16 @@ def load_data(input_opt):
         print("\nYou selected Damm demo dataset.\n")
 
         damm_list = ["bridge", "Nshape", "orientation"]
-        
+
         message = """Available Models: \n"""
         for i in range(len(damm_list)):
             message += "{:2}) {: <18} ".format(i+1, damm_list[i])
             if (i+1) % 6 ==0:
                 message += "\n"
         message += '\nEnter the corresponding option number [type 0 to exit]: '
-        
+
         data_opt = int(input(message))
-    
+
         folder_name = str(damm_list[data_opt-1])
         input_path  = os.path.join(os.path.dirname(os.path.realpath(__file__)),"..", "..", "dataset", "damm-demo-data", folder_name, "all.mat")
         x, x_dot    = _process_bag(input_path)

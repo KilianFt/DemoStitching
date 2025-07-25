@@ -8,7 +8,7 @@ from src.util import plot_tools
 import graph_utils as gu
 from src.stitching import build_ds
 from src.stitching.metrics import calculate_all_metrics, save_results_dataframe
-from src.util.load_tools import load_data_from_file, get_ds_set
+from src.util.load_tools import get_ds_set
 from src.util.stitching import initialize_iter_strategy, get_nan_results
 
 # TODO
@@ -49,7 +49,6 @@ def main():
 
     # load set of DSs
     data = get_ds_set(config)
-    # data = load_data_from_file(config.dataset_path, config)
 
     # determine iteration strategy based on config
     combinations = initialize_iter_strategy(config, data["x_initial_sets"], data["x_attrator_sets"])
