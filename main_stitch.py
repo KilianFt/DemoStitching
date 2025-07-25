@@ -1,3 +1,5 @@
+import os
+import time
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional
@@ -20,11 +22,11 @@ from src.util.stitching import initialize_iter_strategy, get_nan_results
 
 @dataclass
 class Config:
-    dataset_path: str = "./dataset/stitching/nodes_2"
+    dataset_path: str = "./dataset/stitching/presentation"
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None #np.array([4,15])
     attractor: Optional[np.ndarray] = None #np.array([14,2])
-    ds_method: str = "recompute_ds" # ["recompute_all", "recompute_ds", "reuse", "chain"]
+    ds_method: str = "recompute_all" # ["recompute_all", "recompute_ds", "reuse", "chain"]
     reverse_gaussians: bool = True
     param_dist: int = 3
     param_cos: int = 3
@@ -41,16 +43,20 @@ class Config:
 
 def main():
     config = Config()
+    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+    os.makedirs(save_folder, exist_ok=True)
 
     # load data
     data = load_data_from_file(config.dataset_path, config)
 
     # determine iteration strategy based on config
-    combinations, save_folder = initialize_iter_strategy(config, data["x_initial_sets"], data["x_attrator_sets"])
+    combinations = initialize_iter_strategy(config, data["x_initial_sets"], data["x_attrator_sets"])
     n_iters = len(combinations)
     
     all_results = []
     for i, (initial, attractor) in enumerate(combinations):
+        # Start timing for this iteration
+        iteration_start_time = time.time()
         print("Processing combination {} of {}".format(i+1, n_iters))
 
         # build graph
@@ -62,19 +68,22 @@ def main():
                               reverse_gaussians=config.reverse_gaussians,
                               param_dist=config.param_dist,
                               param_cos=config.param_cos)
-        
+        gg.compute_shortest_path()
+
         if i == 0 and config.save_fig:
             plot_tools.save_initial_plots(gg, data, save_folder, config)
 
-        gg.compute_shortest_path()
 
         # build ds
         try:
             lpvds = build_ds(gg, data, attractor, config.ds_method, config.reverse_gaussians)
         except:
             print("Failed to build DS")
+            iteration_time = time.time() - iteration_start_time
             nan_result = get_nan_results(i, config.ds_method, initial, attractor)
+            nan_result['compute_time'] = iteration_time
             all_results.append(nan_result)
+            print(f"  Failed iteration completed in {iteration_time:.3f}s")
             continue
 
         # simulate
@@ -96,11 +105,17 @@ def main():
                 ds_method=config.ds_method,
                 combination_id=i
             )
+            
+            # Calculate and add compute time for this iteration
+            iteration_time = time.time() - iteration_start_time
+            metrics_result['compute_time'] = iteration_time
+            
             all_results.append(metrics_result)
             
             print(f"  Metrics calculated: RMSE={metrics_result['prediction_rmse']:.4f}, "
                   f"Cosine={metrics_result['cosine_dissimilarity']:.4f}, "
-                  f"DTW={metrics_result['dtw_distance_mean']:.4f}±{metrics_result['dtw_distance_std']:.4f}")
+                  f"DTW={metrics_result['dtw_distance_mean']:.4f}±{metrics_result['dtw_distance_std']:.4f}, "
+                  f"Time={iteration_time:.3f}s")
         except Exception as e:
             print(f"  Failed to calculate metrics: {e}")
 

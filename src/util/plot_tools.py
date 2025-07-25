@@ -19,13 +19,13 @@ plt.rcParams.update({
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config): 
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
     mus, sigmas, directions = gg.get_gaussians(gg.shortest_path[1:-1])
-    plot_gaussians(mus, sigmas, directions, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)))
+    plot_gaussians(mus, sigmas, directions, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
     # gg.plot_shortest_path_gaussians(ax=axs[0])
     axs.set_xlim(config.x_min, config.x_max)
     axs.set_ylim(config.y_min, config.y_max)
     axs.set_aspect('equal')
     plt.tight_layout()
-    plt.savefig(save_folder + "shortest_path_{}.png".format(i))
+    plt.savefig(save_folder + "shortest_path_{}.png".format(i), dpi=300)
     plt.close()
 
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
@@ -34,7 +34,7 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     axs.set_ylim(config.y_min, config.y_max)
     axs.set_aspect('equal')
     plt.tight_layout()
-    plt.savefig(save_folder + "ds_{}.png".format(i))
+    plt.savefig(save_folder + "ds_{}.png".format(i), dpi=300)
     plt.close()
 
     # Plot updates gaussians from lpvds if they were updated
@@ -45,30 +45,34 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
         mean_xdot = np.zeros((lpvds.damm.K, lpvds.x.shape[1]))
         for k in range(lpvds.damm.K):
             mean_xdot[k] = np.mean(lpvds.x_dot[assignment_arr==k], axis=0)
-        plot_gaussians(centers, lpvds.damm.Sigma, mean_xdot, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)))
+        plot_gaussians(centers, lpvds.damm.Sigma, mean_xdot, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
         axs.set_xlim(config.x_min, config.x_max)
         axs.set_ylim(config.y_min, config.y_max)
         axs.set_aspect('equal')
         plt.tight_layout()
-        plt.savefig(save_folder + "updated_gaussians_{}.png".format(i))
+        plt.savefig(save_folder + "updated_gaussians_{}.png".format(i), dpi=300)
         plt.close()
 
 
 def save_initial_plots(gg, data, save_folder, config):
     # initial plots that only need to be computed once
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
-    gg.plot(ax=axs)
+    axs = gg.plot(ax=axs)
+    # Override the grid setting from gg.plot() and set proper limits
+    axs.grid(False)
+    axs.axis("off")
     axs.set_xlim(config.x_min, config.x_max)
     axs.set_ylim(config.y_min, config.y_max)
     axs.set_aspect('equal')
-    plt.savefig(save_folder + "graph.png")
+    plt.savefig(save_folder + "graph.png", dpi=300)
     plt.close()
+
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
-    plot_gaussians(data["centers"], data["sigmas"], data["directions"], ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)))
+    plot_gaussians(data["centers"], data["sigmas"], data["directions"], ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
     axs.set_xlim(config.x_min, config.x_max)
     axs.set_ylim(config.y_min, config.y_max)
     axs.set_aspect('equal')
-    plt.savefig(save_folder + "gaussians.png")
+    plt.savefig(save_folder + "gaussians.png", dpi=300)
     plt.close()
 
 
@@ -165,7 +169,7 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax
         directions_norm = directions / (np.linalg.norm(directions, axis=1, keepdims=True) + 1e-10)
 
         # FIXED: Use ymin instead of ymax, and scale appropriately
-        arrow_scale = min(xmax - xmin, ymax - ymin) * 0.025
+        arrow_scale = min(xmax - xmin, ymax - ymin) * 0.01
 
         for mu, dir_vec in zip(mus, directions_norm):
             ax.arrow(mu[0], mu[1],
@@ -192,14 +196,14 @@ def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories
         ax.plot(traj[0, 0], traj[0, 1], 'go', markersize=8)
         ax.plot(traj[-1, 0], traj[-1, 1], 'ro', markersize=8)
         
-    ax.grid(True, alpha=0.3)
+    # ax.grid(True, alpha=0.3)
     if config is not None:
         ax.set_xlim(config.x_min, config.x_max)
         ax.set_ylim(config.y_min, config.y_max)
 
     ax.set_aspect('equal')
     plt.tight_layout()
-    plt.savefig(save_folder + "trajectories.png")
+    plt.savefig(save_folder + "trajectories.png", dpi=300)
     plt.close()
 
 

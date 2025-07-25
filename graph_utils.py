@@ -310,15 +310,15 @@ class GaussianGraph:
             else:
                 colormap.append('blue')
 
-        nx.draw_networkx_nodes(gg, pos, node_color=colormap, node_size=300, ax=ax)
-        nx.draw_networkx_labels(gg, pos, font_size=12, font_weight='bold', ax=ax)
+        nx.draw_networkx_nodes(gg, pos, node_color=colormap, node_size=100, ax=ax)
+        nx.draw_networkx_labels(gg, pos, font_size=8, font_weight='bold', ax=ax)
 
         # Extract edge weights
         edges = gg.edges(data=True)
         weights = [edata['weight'] for _, _, edata in edges]
 
         # Normalize weights for alpha values (higher weight = lower alpha)
-        norm_param = 5
+        norm_param = 10
         normalize_weights = weights / min(weights)
         normalize_weights = normalize_weights - 1
         normalize_weights = normalize_weights * norm_param / np.median(normalize_weights)
@@ -329,7 +329,7 @@ class GaussianGraph:
         for (u, v, edata), alpha in zip(edges, alphas):
             nx.draw_networkx_edges(gg, pos, edgelist=[(u, v)],
                                    alpha=alpha, edge_color='black',
-                                   arrows=True, arrowsize=20, ax=ax)
+                                   arrows=True, arrowsize=8, ax=ax)
 
         # Draw shortest path
         if self.shortest_path is not None:
@@ -341,6 +341,7 @@ class GaussianGraph:
         # ax.tight_layout()
         ax.grid(True, alpha=0.5)
         # plt.show()
+        return ax
 
     def plot_shortest_path_gaussians(self, ax=None):
         shortest_path_mus = []

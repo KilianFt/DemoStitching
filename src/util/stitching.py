@@ -17,9 +17,8 @@ def initialize_iter_strategy(config, x_initial_sets, x_attrator_sets):
         combinations = list(permutations(all_points, 2))
         print("Using all permutations of initial and attractor positions")
 
-    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
-    os.makedirs(save_folder, exist_ok=True)
-    return combinations, save_folder
+
+    return combinations
 
 
 def get_nan_results(i, ds_method, initial, attractor):
