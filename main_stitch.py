@@ -1,13 +1,12 @@
-import time
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 from src.util import plot_tools
-import graph_utils as gu
 from src.stitching import build_ds
 from src.stitching.metrics import save_results_dataframe, calculate_ds_metrics
 from src.util.load_tools import get_ds_set
-from src.util.stitching import initialize_iter_strategy, get_nan_results
+from src.util.stitching import initialize_iter_strategy
+from src.stitching.ds import construct_stitched_ds
 
 # TODO
 # - implement recalculating P?
@@ -36,43 +35,6 @@ class Config:
     y_max: float = 20
     n_test_simulations: int = 2 # number of test simulations for metrics
     save_fig: bool = True
-
-def construct_stitched_ds(ds_set, initial, attractor, config):
-    """Constructs a stitched dynamical system using Gaussian graphs.
-
-    Args:
-        ds_set: Dataset with centers, sigmas, and directions.
-        initial: Initial point for path planning.
-        attractor: Target attractor point.
-        config: Configuration object with DS parameters.
-
-    Returns:
-        tuple: (GaussianGraph, dynamical_system, timing_stats)
-    """
-    # Construct the gaussian graph and find the shortest path
-    t0 = time.time()
-    gg = gu.GaussianGraph(ds_set["centers"],
-                          ds_set["sigmas"],
-                          ds_set["directions"],
-                          attractor=attractor,
-                          initial=initial,
-                          reverse_gaussians=config.reverse_gaussians,
-                          param_dist=config.param_dist,
-                          param_cos=config.param_cos)
-    gg.compute_shortest_path()
-    gg_time = time.time() - t0
-
-    # Construct the Stitched DS
-    t0 = time.time()
-    try:
-        ds = build_ds(gg, ds_set, attractor, config.ds_method, config.reverse_gaussians)
-    except Exception as e:
-        print(f'Failed to construct Stitched DS: {e}')
-        ds = None
-    ds_time = time.time() - t0
-
-    stats = {'total compute time': gg_time + ds_time, 'gg compute time': gg_time, 'ds compute time': ds_time}
-    return gg, ds, stats
 
 def simulate_trajectories(ds, initial, config):
     """Simulates multiple trajectories from noisy initial conditions.
@@ -115,7 +77,7 @@ def main():
 
         # Construct Gaussian Graph and Stitched DS
         print('Constructing Gaussian Graph and Stitched DS...')
-        gg, stitched_ds, ds_stats = construct_stitched_ds(ds_set, initial, attractor, config)
+        stitched_ds, gg, ds_stats = construct_stitched_ds(config, ds_set, initial, attractor)
 
         # Simulate trajectories
         print('Simulating trajectories...')
@@ -147,10 +109,10 @@ def main():
             print(f'Successful Stitched DS construction: {ds_stats["total compute time"]:.2f} s')
             print(f'  Gaussian Graph: {ds_stats["gg compute time"]:.2f} s, ')
             print(f'  Stitched DS: {ds_stats["ds compute time"]:.2f} s')
-            print(f'  Metrics:')
-            print(f'    RMSE: {ds_metrics["prediction_rmse"]:.4f}')
-            print(f'    Cosine Dissimilarity: {ds_metrics["cosine_dissimilarity"]:.4f}')
-            print(f'    DTW Distance: {ds_metrics["dtw_distance_mean"]:.4f} ± {ds_metrics["dtw_distance_std"]:.4f}')
+            print(f'Metrics:')
+            print(f'  RMSE: {ds_metrics["prediction_rmse"]:.4f}')
+            print(f'  Cosine Dissimilarity: {ds_metrics["cosine_dissimilarity"]:.4f}')
+            print(f'  DTW Distance: {ds_metrics["dtw_distance_mean"]:.4f} ± {ds_metrics["dtw_distance_std"]:.4f}')
         else:
             print("Stitched DS construction failed.")
 

@@ -11,9 +11,6 @@ def write_json(data, path):
     with open(path, "w") as json_file:
         json.dump(data, json_file, indent=4)
 
-
-
-
 class lpvds_class():
     def __init__(self, x, x_dot, x_att) -> None:
         self.x      = x

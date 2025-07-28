@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 from collections.abc import Iterable
 from src.util import plot_tools
 
-
 class GaussianGraph:
 
     def __init__(self, gaussian_mu, gaussian_sigma, gaussian_direction, attractor=None, initial=None, reverse_gaussians=False, param_dist=1, param_cos=1):
@@ -12,6 +11,7 @@ class GaussianGraph:
         self.param_dist = param_dist
         self.param_cos = param_cos
         self.n_gaussians = gaussian_mu.shape[0]
+        self.gaussian_reversal_map = dict()
         self.graph = self.create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction,
                                                 reverse_gaussians=reverse_gaussians)
         self.gaussian_ids = list(self.graph.nodes.keys())
@@ -42,11 +42,15 @@ class GaussianGraph:
 
         # Convert gaussians to nodes
         for i in range(self.n_gaussians):
-            gaussian_graph.add_node(i, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=gaussian_direction[i])
 
+            id = i
+            gaussian_graph.add_node(id, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=gaussian_direction[i])
+
+            # If gaussian reversal is enabled, create a reverse node and mapping to the original
             if reverse_gaussians:
-                gaussian_graph.add_node(i + self.n_gaussians, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
-
+                id_reverse = i + self.n_gaussians
+                gaussian_graph.add_node(id_reverse, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
+                self.gaussian_reversal_map[id_reverse] = id
 
         # Connect nodes by weighted edges
         for id1 in gaussian_graph.nodes:
