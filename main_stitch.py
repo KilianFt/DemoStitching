@@ -38,9 +38,18 @@ class Config:
     save_fig: bool = True
 
 def construct_stitched_ds(ds_set, initial, attractor, config):
+    """Constructs a stitched dynamical system using Gaussian graphs.
 
+    Args:
+        ds_set: Dataset with centers, sigmas, and directions.
+        initial: Initial point for path planning.
+        attractor: Target attractor point.
+        config: Configuration object with DS parameters.
+
+    Returns:
+        tuple: (GaussianGraph, dynamical_system, timing_stats)
+    """
     # Construct the gaussian graph and find the shortest path
-    print('Building Gaussian Graph...')
     t0 = time.time()
     gg = gu.GaussianGraph(ds_set["centers"],
                           ds_set["sigmas"],
@@ -54,7 +63,6 @@ def construct_stitched_ds(ds_set, initial, attractor, config):
     gg_time = time.time() - t0
 
     # Construct the Stitched DS
-    print('Building Stitched DS...')
     t0 = time.time()
     try:
         ds = build_ds(gg, ds_set, attractor, config.ds_method, config.reverse_gaussians)
@@ -62,13 +70,21 @@ def construct_stitched_ds(ds_set, initial, attractor, config):
         print(f'Failed to construct Stitched DS: {e}')
         ds = None
     ds_time = time.time() - t0
-    print('Successfully constructed Stitched DS' if ds is not None else 'Failed to construct Stitched DS')
-    stats = {'total compute time': gg_time + ds_time, 'gg compute time': gg_time, 'ds compute time': ds_time}
 
+    stats = {'total compute time': gg_time + ds_time, 'gg compute time': gg_time, 'ds compute time': ds_time}
     return gg, ds, stats
 
 def simulate_trajectories(ds, initial, config):
+    """Simulates multiple trajectories from noisy initial conditions.
 
+    Args:
+        ds: Dynamical system to simulate, or None.
+        initial: Base initial point for trajectory generation.
+        config: Configuration object with noise_std and n_test_simulations.
+
+    Returns:
+        list: Simulated trajectories from noisy initial points, or None if ds is None.
+    """
     if ds is None:
         return None
 
@@ -86,7 +102,6 @@ def main():
 
     config = Config()
     save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
-    # os.makedirs(save_folder, exist_ok=True)
 
     # load set of DSs
     ds_set = get_ds_set(config)
@@ -97,9 +112,6 @@ def main():
     all_results = []
     for i, (initial, attractor) in enumerate(combinations):
         print(f"Processing combination {i+1} of {len(combinations)} #######################################")
-
-        # Start timing for this iteration
-        iteration_start_time = time.time()
 
         # Construct Gaussian Graph and Stitched DS
         print('Constructing Gaussian Graph and Stitched DS...')

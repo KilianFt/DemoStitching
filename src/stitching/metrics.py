@@ -171,7 +171,19 @@ def calculate_all_metrics(x_ref, x_dot_ref, lpvds, x_test_list, initial, attract
     return result
 
 def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attractor):
+    """Calculates performance metrics for a dynamical system.
 
+    Args:
+        x_ref: Reference trajectory positions.
+        x_dot_ref: Reference trajectory velocities.
+        ds: Dynamical system to evaluate, or None.
+        sim_trajectories: List of simulated trajectories.
+        initial: Initial point coordinates.
+        attractor: Attractor point coordinates.
+
+    Returns:
+        dict: Performance metrics including RMSE, DTW distances, and trajectory stats.
+    """
     # If DS is None, return NaN metrics
     if ds is None:
         return {
@@ -199,7 +211,6 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
     final_distances_to_attractor = []
     trajectory_lengths = []
     final_positions = []
-
     for trajectory in sim_trajectories:
 
         # Calculate DTW distance to reference trajectory
@@ -212,7 +223,7 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
         final_distances_to_attractor.append(np.linalg.norm(final_pos - attractor))
         trajectory_lengths.append(len(trajectory))
 
-    # Aggregate DTW and trajectory metrics
+    # Aggregate metrics
     result = {
         'initial_x': initial[0],
         'initial_y': initial[1],

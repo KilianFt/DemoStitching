@@ -20,7 +20,6 @@ def initialize_iter_strategy(config, x_initial_sets, x_attrator_sets):
 
     return combinations
 
-
 def get_nan_results(i, ds_method, initial, attractor):
     return {
                 'combination_id': i,
