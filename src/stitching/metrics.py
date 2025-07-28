@@ -170,6 +170,67 @@ def calculate_all_metrics(x_ref, x_dot_ref, lpvds, x_test_list, initial, attract
     
     return result
 
+def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attractor):
+
+    # If DS is None, return NaN metrics
+    if ds is None:
+        return {
+            'initial_x': initial[0],
+            'initial_y': initial[1],
+            'attractor_x': attractor[0],
+            'attractor_y': attractor[1],
+            'prediction_rmse': np.nan,
+            'cosine_dissimilarity': np.nan,
+            'dtw_distance_mean': np.nan,
+            'dtw_distance_std': np.nan,
+            'distance_to_attractor_mean': np.nan,
+            'distance_to_attractor_std': np.nan,
+            'trajectory_length_mean': np.nan,
+            'trajectory_length_std': np.nan,
+            'n_simulations': 0
+        }
+
+    # Calculate prediction metrics on reference data (once per combination)
+    prediction_rmse = calculate_prediction_rmse(x_ref, x_dot_ref, ds)
+    cosine_similarity = calculate_cosine_similarity(x_ref, x_dot_ref, ds)
+
+    # Calculate DTW distances for all simulated trajectories
+    dtw_distances = []
+    final_distances_to_attractor = []
+    trajectory_lengths = []
+    final_positions = []
+
+    for trajectory in sim_trajectories:
+
+        # Calculate DTW distance to reference trajectory
+        dtw_distance = calculate_dtw_distance(x_ref, trajectory)
+        dtw_distances.append(dtw_distance)
+
+        # Calculate final position metrics
+        final_pos = trajectory[-1]
+        final_positions.append(final_pos)
+        final_distances_to_attractor.append(np.linalg.norm(final_pos - attractor))
+        trajectory_lengths.append(len(trajectory))
+
+    # Aggregate DTW and trajectory metrics
+    result = {
+        'initial_x': initial[0],
+        'initial_y': initial[1],
+        'attractor_x': attractor[0],
+        'attractor_y': attractor[1],
+        'prediction_rmse': prediction_rmse,
+        'cosine_dissimilarity': cosine_similarity,
+        'dtw_distance_mean': np.mean(dtw_distances),
+        'dtw_distance_std': np.std(dtw_distances),
+        'distance_to_attractor_mean': np.mean(final_distances_to_attractor),
+        'distance_to_attractor_std': np.std(final_distances_to_attractor),
+        'trajectory_length_mean': np.mean(trajectory_lengths),
+        'trajectory_length_std': np.std(trajectory_lengths),
+        'n_simulations': len(sim_trajectories)
+    }
+
+    return result
+
 
 def save_results_dataframe(all_results, save_path):
     """
