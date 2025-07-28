@@ -39,10 +39,10 @@ class Config:
     n_test_simulations: int = 2 # number of test simulations for metrics
     save_fig: bool = True
 
-
 def build_stitched_ds(ds_set, initial, attractor, config):
 
     # build the gaussian graph
+    t0 = time.time()
     gg = gu.GaussianGraph(ds_set["centers"],
                           ds_set["sigmas"],
                           ds_set["directions"],
@@ -52,12 +52,20 @@ def build_stitched_ds(ds_set, initial, attractor, config):
                           param_dist=config.param_dist,
                           param_cos=config.param_cos)
     gg.compute_shortest_path()
+    gg_time = time.time() - t0
 
     # build the DS
-    ds = build_ds(gg, ds_set, attractor, config.ds_method, config.reverse_gaussians)
+    try:
+        t0 = time.time()
+        ds = build_ds(gg, ds_set, attractor, config.ds_method, config.reverse_gaussians)
+        ds_time = time.time() - t0
+    except:
+        ds = None
+        ds_time = None
 
-    return ds, gg
+    stats = {'gg time': gg_time, 'ds time': ds_time, 'total time': gg_time + (ds_time if ds_time is not None else 0)}
 
+    return gg, ds, stats
 
 def simulate_trajectories(ds, initial, config):
 
@@ -65,12 +73,11 @@ def simulate_trajectories(ds, initial, config):
     # TODO figure out initial/final position from data
     x_inits = [initial + np.random.normal(0, config.noise_std, initial.shape[0]) for _ in
                range(config.n_test_simulations)]
-    x_test_list = []
+    simulation_positions = []
     for x_0 in x_inits:
-        x_test_list.append(ds.sim(x_0[None, :], dt=0.01))
+        simulation_positions.append(ds.sim(x_0[None, :], dt=0.01))
 
-    return x_test_list
-
+    return simulation_positions
 
 def main():
 
@@ -92,10 +99,11 @@ def main():
         iteration_start_time = time.time()
         print("Processing combination {} of {}".format(i+1, n_iters))
 
-        # Get the stitched DS from initial to attractor
-        try:
-            stitched_ds, gg = build_stitched_ds(ds_set, initial, attractor, config)
-        except:
+        # Build gaussian graph and stitched DS
+        gg, stitched_ds, stats = build_stitched_ds(ds_set, initial, attractor, config)
+
+        # If building the Stitched DS failed, return NaN metrics
+        if stitched_ds is None:
             print("Failed to build DS")
             iteration_time = time.time() - iteration_start_time
             nan_result = get_nan_results(i, config.ds_method, initial, attractor)
@@ -104,26 +112,24 @@ def main():
             print(f"  Failed iteration completed in {iteration_time:.3f}s")
             continue
 
-        # Plotting and logging
-        if i == 0 and config.save_fig:
-            plot_tools.save_initial_plots(gg, ds_set, save_folder, config)
+        # Building the Stitched DS was successful
+        print(f'  Gaussian Graph and Stitched DS built in {stats["total time"]:.2f}s')
 
-        x_test_list = simulate_trajectories(stitched_ds, initial, config)
+        # Simulate some trajectories
+        simulation_positions = simulate_trajectories(stitched_ds, initial, config)
 
-        # --- calculate metrics
+        # Compute metrics
         try:
             metrics_result = calculate_all_metrics(
                 x_ref=stitched_ds.x,
                 x_dot_ref=stitched_ds.x_dot,
                 lpvds=stitched_ds,
-                x_test_list=x_test_list,
+                x_test_list=simulation_positions,
                 initial=initial,
                 attractor=attractor,
                 ds_method=config.ds_method,
                 combination_id=i
             )
-
-            # Calculate and add compute time for this iteration
             iteration_time = time.time() - iteration_start_time
             metrics_result['compute_time'] = iteration_time
 
@@ -133,15 +139,16 @@ def main():
                   f"Cosine={metrics_result['cosine_dissimilarity']:.4f}, "
                   f"DTW={metrics_result['dtw_distance_mean']:.4f}±{metrics_result['dtw_distance_std']:.4f}, "
                   f"Time={iteration_time:.3f}s")
-
         except Exception as e:
             print(f"  Failed to calculate metrics: {e}")
 
-        # --- plot
+        # Plot
+        if i == 0 and config.save_fig:
+            plot_tools.save_initial_plots(gg, ds_set, save_folder, config)
         if config.save_fig:
-            plot_tools.plot_gaussians_with_ds(gg, stitched_ds, x_test_list, save_folder, i, config)
+            plot_tools.plot_gaussians_with_ds(gg, stitched_ds, simulation_positions, save_folder, i, config)
 
-    # Save results dataframe
+    # Save Results to CSV
     if all_results:
         results_path = save_folder + "results.csv"
         save_results_dataframe(all_results, results_path)
