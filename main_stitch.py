@@ -40,6 +40,37 @@ class Config:
     save_fig: bool = True
 
 
+def build_stitched_ds(ds_set, initial, attractor, config):
+
+    # build the gaussian graph
+    gg = gu.GaussianGraph(ds_set["centers"],
+                          ds_set["sigmas"],
+                          ds_set["directions"],
+                          attractor=attractor,
+                          initial=initial,
+                          reverse_gaussians=config.reverse_gaussians,
+                          param_dist=config.param_dist,
+                          param_cos=config.param_cos)
+    gg.compute_shortest_path()
+
+    # build the DS
+    ds = build_ds(gg, ds_set, attractor, config.ds_method, config.reverse_gaussians)
+
+    return ds, gg
+
+
+def simulate_trajectories(ds, initial, config):
+
+    # --- simulate
+    # TODO figure out initial/final position from data
+    x_inits = [initial + np.random.normal(0, config.noise_std, initial.shape[0]) for _ in
+               range(config.n_test_simulations)]
+    x_test_list = []
+    for x_0 in x_inits:
+        x_test_list.append(ds.sim(x_0[None, :], dt=0.01))
+
+    return x_test_list
+
 
 def main():
 
@@ -48,36 +79,22 @@ def main():
     # os.makedirs(save_folder, exist_ok=True)
 
     # load set of DSs
-    data = get_ds_set(config)
+    ds_set = get_ds_set(config)
 
     # determine iteration strategy based on config
-    combinations = initialize_iter_strategy(config, data["x_initial_sets"], data["x_attrator_sets"])
+    combinations = initialize_iter_strategy(config, ds_set["x_initial_sets"], ds_set["x_attrator_sets"])
     n_iters = len(combinations)
     
     all_results = []
     for i, (initial, attractor) in enumerate(combinations):
+
         # Start timing for this iteration
         iteration_start_time = time.time()
         print("Processing combination {} of {}".format(i+1, n_iters))
 
-        # build graph
-        gg = gu.GaussianGraph(data["centers"],
-                              data["sigmas"],
-                              data["directions"],
-                              attractor=attractor,
-                              initial=initial,
-                              reverse_gaussians=config.reverse_gaussians,
-                              param_dist=config.param_dist,
-                              param_cos=config.param_cos)
-        gg.compute_shortest_path()
-
-        if i == 0 and config.save_fig:
-            plot_tools.save_initial_plots(gg, data, save_folder, config)
-
-
-        # build ds
+        # Get the stitched DS from initial to attractor
         try:
-            lpvds = build_ds(gg, data, attractor, config.ds_method, config.reverse_gaussians)
+            stitched_ds, gg = build_stitched_ds(ds_set, initial, attractor, config)
         except:
             print("Failed to build DS")
             iteration_time = time.time() - iteration_start_time
@@ -87,19 +104,18 @@ def main():
             print(f"  Failed iteration completed in {iteration_time:.3f}s")
             continue
 
-        # simulate
-        # TODO figure out initial/final position from data
-        x_inits = [initial+np.random.normal(0, config.noise_std, initial.shape[0]) for _ in range(config.n_test_simulations)]
-        x_test_list = []
-        for x_0 in x_inits:
-            x_test_list.append(lpvds.sim(x_0[None,:], dt=0.01))
+        # Plotting and logging
+        if i == 0 and config.save_fig:
+            plot_tools.save_initial_plots(gg, ds_set, save_folder, config)
 
-        # Calculate metrics
+        x_test_list = simulate_trajectories(stitched_ds, initial, config)
+
+        # --- calculate metrics
         try:
             metrics_result = calculate_all_metrics(
-                x_ref=lpvds.x,
-                x_dot_ref=lpvds.x_dot,
-                lpvds=lpvds,
+                x_ref=stitched_ds.x,
+                x_dot_ref=stitched_ds.x_dot,
+                lpvds=stitched_ds,
                 x_test_list=x_test_list,
                 initial=initial,
                 attractor=attractor,
@@ -112,17 +128,18 @@ def main():
             metrics_result['compute_time'] = iteration_time
 
             all_results.append(metrics_result)
-            
+
             print(f"  Metrics calculated: RMSE={metrics_result['prediction_rmse']:.4f}, "
                   f"Cosine={metrics_result['cosine_dissimilarity']:.4f}, "
                   f"DTW={metrics_result['dtw_distance_mean']:.4f}±{metrics_result['dtw_distance_std']:.4f}, "
                   f"Time={iteration_time:.3f}s")
+
         except Exception as e:
             print(f"  Failed to calculate metrics: {e}")
 
-        # plot
+        # --- plot
         if config.save_fig:
-            plot_tools.plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config)
+            plot_tools.plot_gaussians_with_ds(gg, stitched_ds, x_test_list, save_folder, i, config)
 
     # Save results dataframe
     if all_results:

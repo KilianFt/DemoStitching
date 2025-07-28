@@ -19,49 +19,45 @@ def get_ds_set(config):
 
     Returns:
         DS set: Computed dynamical system set from demonstration trajectories.
-
-    Raises:
-        ValueError: If config.dataset_path is None.
     """
+
     demoset_path = config.dataset_path
     if demoset_path is None:
         raise ValueError("A demonstration set path must be provided.")
 
-    # Load demonstration set's DS set if it has already been computed exists
+    # Load the DS set if it is cached
     ds_set_filename = "{}/preprocessed.pkl".format(demoset_path)
     if os.path.exists(ds_set_filename) and not config.force_preprocess:
 
-        print(f'Using cached DS set at \"{ds_set_filename}\"')
+        print(f'Fetching cached DS set at \"{ds_set_filename}\"')
         with open(ds_set_filename, 'rb') as f:
             ds_set = pickle.load(f)
         return ds_set
 
     if not config.force_preprocess:
-        print(f'Could not find an existing DS set at \"{demoset_path}\".')
+        print(f'Could not find a cached DS set at \"{demoset_path}\".')
 
-    # No DS set has been computed (or config forces recompute). Locate existing demos.
-    demosets = load_demoset(demoset_path)
+    # Load the demonstrations.
+    demosets = load_demonstration_set(demoset_path)
     if demosets is None:
-        print(f'No existing demonstrations found in \"{demoset_path}\". Drawing new demonstrations.')
+        print(f'No demonstrations found in \"{demoset_path}\". Drawing new demonstrations.')
         generate_data(demoset_path)
-        demosets = load_demoset(demoset_path)
-    else:
-        print(f'Found existing demonstrations in \"{demoset_path}\".')
+        demosets = load_demonstration_set(demoset_path)
 
-    # Compute the DS set from the loaded demonstration set
+    # Compute the DS set from the demonstration
     print(f'Computing DS set from demonstrations in \"{demoset_path}\".')
     plot_demonstration_set(demosets, config)
     preprocessed_demoset = [_pre_process(x, x_dot) for x, x_dot in zip(demosets.x, demosets.x_dot)]
     ds_set = lpvds_per_demo(preprocessed_demoset)
 
-    # Save the DS set to a file for future use
+    # Cache the DS set
     print(f'Saving DS set to \"{demoset_path}\".')
     with open(ds_set_filename, 'wb') as f:
         pickle.dump(ds_set, f)
 
     return ds_set
 
-def load_demoset(demoset_path):
+def load_demonstration_set(demoset_path):
     """Loads a demoset from demonstration folders of trajectory JSON files.
 
     Args:
@@ -71,13 +67,14 @@ def load_demoset(demoset_path):
         Demoset or None: Namedtuple with x (positions) and x_dot (velocities) lists,
             or None if path doesn't exist or contains no dataset folders.
     """
+
     if not os.path.exists(demoset_path):
         return None
 
     # Collect all demonstration folders
     demonstration_folders = []
     for folder_name in os.listdir(demoset_path):
-       if 'dataset' in folder_name:
+       if 'demonstration' in folder_name:
            demonstration_folders.append(folder_name)
 
     # Return if the folder does not contain any demonstrations
@@ -95,8 +92,8 @@ def load_demoset(demoset_path):
 
         for trajectory_file in os.listdir(demo_path):
             trajectory_path = os.path.join(demo_path, trajectory_file)
-
             trajectory = json.load(open(trajectory_path))
+
             demonstration_x.append(np.array(trajectory["x"]))
             demonstration_x_dot.append(np.array(trajectory["x_dot"]))
 
@@ -108,22 +105,22 @@ def load_demoset(demoset_path):
 def load_data_from_file(demoset_path, config):
     """
     Load trajectory data from file with caching support.
-    
+
     Loads processed trajectory data from a cached pickle file if it exists,
     otherwise calculates the data from raw trajectories and caches the result.
-    
+
     Parameters:
     -----------
     dataset_path : str
         Path to the dataset file (without extension)
     config : Config
         Configuration object containing parameters for data loading
-        
+
     Returns:
     --------
     dict
         Processed trajectory data containing centers, directions, sigmas, etc.
-        
+
     Raises:
     -------
     ValueError
@@ -156,10 +153,10 @@ def load_data_from_file(demoset_path, config):
 def load_data_stitch(dataset_path, config):
     """
     Load and process trajectory data for stitching applications.
-    
+
     Loads base trajectories from various sources (predefined nodes or drawn trajectories),
     generates multiple noisy demonstrations, and preprocesses them for stitching.
-    
+
     Parameters:
     -----------
     data_file : str
@@ -169,7 +166,7 @@ def load_data_stitch(dataset_path, config):
         - Other: Load from trajectory drawer files
     config : Config
         Configuration object containing parameters for data loading
-        
+
     Returns:
     --------
     List[tuple]
@@ -181,7 +178,7 @@ def load_data_stitch(dataset_path, config):
     """
 
     # generate data if not exists, else load it
-        
+
     dataset_exists = any("dataset" in task_dataset_path for task_dataset_path in os.listdir(dataset_path))
     if not dataset_exists:
         print("Generating data")

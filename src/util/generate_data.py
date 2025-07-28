@@ -16,11 +16,11 @@ def generate_data(dataset_path):
 
     # save each trajectory to a file
     for i, (task_x, task_x_dot) in enumerate(zip(x_sets, x_dot_sets)):
-        task_dataset_path = os.path.join(dataset_path, "dataset_{}".format(i))
+        task_dataset_path = os.path.join(dataset_path, "demonstration_{}".format(i))
         os.makedirs(task_dataset_path, exist_ok=True)
         for j, (demo_x, demo_x_dot) in enumerate(zip(task_x, task_x_dot)):
             # save to json
-            with open(os.path.join(task_dataset_path, "demo_{}.json".format(j)), "w") as f:
+            with open(os.path.join(task_dataset_path, "trajectory_{}.json".format(j)), "w") as f:
                 json.dump({"x": demo_x.tolist(), "x_dot": demo_x_dot.tolist()}, f)    
 
 
