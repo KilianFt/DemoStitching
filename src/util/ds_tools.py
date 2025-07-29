@@ -1,7 +1,119 @@
 import numpy as np
 from scipy.io import loadmat
-
 from src.lpvds_class import lpvds_class
+from collections import namedtuple
+
+Demoset = namedtuple('Demoset', ['x', 'x_dot'])
+Trajectory = namedtuple('Trajectory', ['x', 'x_dot'])
+DS = namedtuple('DS', ['mu', 'sigma', 'prior', 'A', 'P', 'direction', 'attractor', 'pdfs'])
+
+class Demonstration:
+
+    def __init__(self, trajectories):
+        self.trajectories = trajectories
+        self.x = []
+        self.x_dot = []
+        for trajectory in trajectories:
+            self.x.extend(trajectory.x)
+            self.x_dot.extend(trajectory.x_dot)
+
+        self.x = np.array(self.x)
+        self.x_dot = np.array(self.x_dot)
+
+    def __str__(self):
+        return f'Demonstration with {len(self.trajectories)} trajectories, total points: {self.x.shape[0]}'
+
+def apply_lpvds_demowise(demo_set):
+
+    # Normalize each demonstration to an attractor position
+    # TODO the damm_class expects trajectories are not shifted, but performance is better if they are shifted...
+    # normalized_demo_set, attractors = normalize_demo_set(demo_set)
+
+    # Get attractors
+    attractors = []
+    for demo in demo_set:
+        end_points = [traj.x[-1] for traj in demo.trajectories]
+        attractors.append(np.mean(end_points, axis=0))
+
+
+    # Apply LPV-DS to each normalized demonstration
+    ds_set = []
+    for demo, attractor in zip(demo_set, attractors):
+
+        # Apply LPV-DS
+        ds = lpvds_class(demo.x, demo.x_dot, attractor)
+        ds.begin()
+
+        # get each gaussian's directionality
+        direction = []
+        for i, gaussian in enumerate(ds.damm.gaussian_list):
+            dir = ds.A[i] @ gaussian['mu']
+            dir = dir / np.linalg.norm(dir)
+            direction.append(dir)
+        direction = np.array(direction)
+
+        ds_set.append(
+            DS(
+                mu=ds.damm.Mu,
+                sigma=ds.damm.Sigma,
+                prior=ds.damm.Prior,
+                A = ds.A,
+                P = ds.ds_opt.P,
+                direction=direction,
+                attractor=attractor,
+                pdfs=[g['rv'].pdf for g in ds.damm.gaussian_list]
+            )
+        )
+
+    # Shift the demonstration trajectories to the attractor position
+    """
+    unnormalized_demo_set = []
+    for i, demo in enumerate(demo_set):
+
+        trajectories = []
+        for traj in demo.trajectories:
+            trajectories.append(Trajectory(traj.x + attractors[i], traj.x_dot))
+        unnormalized_demo_set.append(Demonstration(trajectories))
+    """
+
+    return ds_set #, unnormalized_demo_set
+
+
+def normalize_demo_set(demo_set):
+    """Normalizes demonstration trajectories to end at origin. Collects the attractor position (mean of end points).
+
+    Args:
+        demo_set: List of Demonstration objects containing trajectory data.
+
+    Returns:
+        tuple: (normalized_demonstrations, attractors) where normalized
+            Demonstration objects have trajectories centered at origin.
+    """
+
+    normalized_demonstrations = []
+    attractors = []
+    for demo in demo_set:
+
+        # Get the demonstration's attractor (mean of end points)
+        end_points = [traj.x[-1] for traj in demo.trajectories]
+        attractors.append(np.mean(end_points, axis=0))
+
+        # Normalize each trajectory in the demonstration
+        normalized_trajectories = []
+        for trajectory in demo.trajectories:
+
+            normalized_x = trajectory.x - trajectory.x[-1]
+            normalized_trajectories.append(
+                Trajectory(x=normalized_x, x_dot=trajectory.x_dot)
+            )
+
+        # Compile the normalized demonstration
+        normalized_demo = Demonstration(normalized_trajectories)
+        normalized_demonstrations.append(normalized_demo)
+
+
+    return normalized_demonstrations, attractors
+
 
 def compute_weighted_average(x, x_dot, centers, sigmas, assignment_arr):
     mean_xdot = np.zeros((centers.shape[0], x.shape[1]))
@@ -41,7 +153,6 @@ def compute_average(x, x_dot, centers, sigmas, assignment_arr):
     for k in range(centers.shape[0]):
         mean_xdot[k] = np.mean(x_dot[assignment_arr==k], axis=0)
     return mean_xdot
-
 
 def lpvds_per_demo(data):
     """
@@ -111,7 +222,6 @@ def lpvds_per_demo(data):
         "Ps": np.array(Ps), # [K, N, N] P matrices
     }
 
-
 def _pre_process(x, x_dot):
     """ 
     Roll out nested lists into a single list of M entries
@@ -148,8 +258,6 @@ def _pre_process(x, x_dot):
             x_dot_rollout = np.vstack((x_dot_rollout, x_dot[l]))
 
     return  x_rollout, x_dot_rollout, x_att_mean, x_init
-
-
 
 def _process_bag(path):
     """ Process .mat files that is converted from .bag files """

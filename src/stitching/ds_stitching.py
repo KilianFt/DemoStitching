@@ -3,10 +3,9 @@ import numpy as np
 import time
 from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
-from src.util.stitching import is_negative_definite
+from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A
 import graph_utils as gu
-
 
 def construct_stitched_ds(config, ds_set, initial, attractor):
     """Constructs a stitched dynamical system based on configuration method.

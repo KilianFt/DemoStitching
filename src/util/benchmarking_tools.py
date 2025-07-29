@@ -6,17 +6,19 @@ from matplotlib.patches import Circle
 from matplotlib.widgets import Button
 
 
-def initialize_iter_strategy(config, x_initial_sets, x_attrator_sets):
+def initialize_iter_strategy(config, demo_set):
     if config.initial is not None and config.attractor is not None:
-        # Use specified initial and attractor positions
-        combinations = [(config.initial, config.attractor)]
         print("Using specified initial and attractor positions")
+        combinations = [(config.initial, config.attractor)]
     else:
-        # Use all permutations of available points
-        all_points = np.vstack((x_initial_sets, x_attrator_sets))
-        combinations = list(permutations(all_points, 2))
         print("Using all permutations of initial and attractor positions")
 
+        # Use all permutations of mean init and attractor positions
+        mean_inits = [np.mean([traj.x[0] for traj in demo.trajectories], axis=0) for demo in demo_set]
+        mean_attractors = [np.mean([traj.x[-1] for traj in demo.trajectories], axis=0) for demo in demo_set]
+
+        all_points = np.vstack(mean_inits + mean_attractors)
+        combinations = list(permutations(all_points, 2))
 
     return combinations
 

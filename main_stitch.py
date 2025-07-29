@@ -4,9 +4,11 @@ from typing import Optional
 from src.util import plot_tools
 from src.stitching import build_ds
 from src.stitching.metrics import save_results_dataframe, calculate_ds_metrics
-from src.util.load_tools import get_ds_set
-from src.util.stitching import initialize_iter_strategy
-from src.stitching.ds import construct_stitched_ds
+from src.util.load_tools import get_demonstration_set
+from src.util.benchmarking_tools import initialize_iter_strategy
+from src.stitching.ds_stitching import construct_stitched_ds
+from src.util.ds_tools import apply_lpvds_demowise
+from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians
 
 # TODO
 # - implement recalculating P?
@@ -20,7 +22,7 @@ from src.stitching.ds import construct_stitched_ds
 @dataclass
 class Config:
     dataset_path: str = "./dataset/stitching/testing"
-    force_preprocess: bool = False
+    force_preprocess: bool = True
     initial: Optional[np.ndarray] = None #np.array([4,15])
     attractor: Optional[np.ndarray] = None #np.array([14,2])
     ds_method: str = "recompute_all" # ["recompute_all", "recompute_ds", "reuse", "chain"]
@@ -65,11 +67,16 @@ def main():
     config = Config()
     save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
 
-    # load set of DSs
-    ds_set = get_ds_set(config)
+    # Load/create a set of demonstrations
+    demo_set = get_demonstration_set(config.dataset_path)
+    plot_demonstration_set(demo_set, config)
+
+    # Fit a DS to each demonstration
+    ds_set = apply_lpvds_demowise(demo_set)
+    plot_ds_set_gaussians(ds_set, config)
 
     # Determine iteration strategy based on config
-    combinations = initialize_iter_strategy(config, ds_set["x_initial_sets"], ds_set["x_attrator_sets"])
+    combinations = initialize_iter_strategy(config, demo_set)
 
     all_results = []
     for i, (initial, attractor) in enumerate(combinations):

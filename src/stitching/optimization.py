@@ -1,6 +1,6 @@
 import numpy as np
 import cvxpy as cp
-from src.util.stitching import is_negative_definite
+from src.util.benchmarking_tools import is_negative_definite
 
 
 def compute_valid_A(A_init, P, x, x_att, x_dot, regularization=1e-3, max_iters=1000):

@@ -11,7 +11,7 @@ import os
 plt.rcParams.update({
     "text.usetex": False,
     "font.family": "Times New Roman",
-    "font.size": 30
+    "font.size": 20
 })
 
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
@@ -135,6 +135,8 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax
     # Create plot
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
+        plt.tight_layout()
+
 
     im = ax.imshow(heatmap, extent=[xmin, xmax, ymin, ymax], origin='lower', cmap='GnBu', aspect='equal')
 
@@ -179,6 +181,31 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax
     ax.set_aspect('equal')
     return ax
 
+def plot_ds_set_gaussians(ds_set, config, file_name='ds_set_gaussians'):
+
+    # Collect means, covariances, and directions from the ds_set
+    mu = []
+    sigma = []
+    directions = []
+    for ds in ds_set:
+        mu.append(ds.mu)
+        sigma.append(ds.sigma)
+        directions.append(ds.direction)
+    mu = np.vstack(mu)
+    sigma = np.vstack(sigma)
+    directions = np.vstack(directions)
+
+    # Plot the Gaussians
+    fig, ax = plt.subplots(figsize=(8, 6))
+    extent = [(config.x_min, config.x_max), (config.y_min, config.y_max)]
+
+    plot_gaussians(mu, sigma, directions, extent=extent, ax=ax)
+
+    # save the figure
+    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+    os.makedirs(save_folder, exist_ok=True)
+    plt.savefig(save_folder + file_name + '.png', dpi=300)
+
 def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories", save_folder: str = "", config = None, ax = None):
     """Plot trajectories."""
     if ax is None:
@@ -201,11 +228,11 @@ def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories
     plt.savefig(save_folder + "trajectories.png", dpi=300)
     plt.close()
 
-def plot_demonstration_set(demoset, config, ax=None):
+def plot_demonstration_set(demo_set, config, ax=None, file_name="Demonstrations"):
     """Plots demonstration trajectories grouped by demonstration.
 
     Args:
-        demoset (Demoset): Namedtuple containing demonstration trajectory data.
+        demo_set (Demoset): Namedtuple containing demonstration trajectory data.
         config: Configuration object with dataset_path, ds_method, and axis limit attributes.
         ax: Optional matplotlib axis.
 
@@ -216,23 +243,23 @@ def plot_demonstration_set(demoset, config, ax=None):
         fig, ax = plt.subplots(figsize=(8, 6))
 
     # Number of demonstrations
-    n_demos = len(demoset.x)
+    n_demos = len(demo_set)
 
     # Generate colors from colormap - one color per demonstration
     colors = plt.cm.viridis(np.linspace(0, 1, n_demos+2))
     colors = colors[1:-1]
 
     # Plot each demonstration with its assigned color
-    for demo_idx, demo_trajectories in enumerate(demoset.x):
-        demo_color = colors[demo_idx]
+    for i, demo in enumerate(demo_set):
+        demo_color = colors[i]
 
         # Plot all trajectories in this demonstration with the same color
-        for traj in demo_trajectories:
-            ax.plot(traj[:, 0], traj[:, 1], color=demo_color, linewidth=1, alpha=1)
+        for traj in demo.trajectories:
+            ax.plot(traj.x[:, 0], traj.x[:, 1], color=demo_color, linewidth=1, alpha=1)
             # Start point (green)
-            ax.plot(traj[0, 0], traj[0, 1], 'go', markersize=8)
+            ax.plot(traj.x[0, 0], traj.x[0, 1], 'go', markersize=8)
             # End point (red)
-            ax.plot(traj[-1, 0], traj[-1, 1], 'ro', markersize=8)
+            ax.plot(traj.x[-1, 0], traj.x[-1, 1], 'ro', markersize=8)
 
     # Apply config settings if provided
     if config is not None:
@@ -243,12 +270,11 @@ def plot_demonstration_set(demoset, config, ax=None):
 
     ax.set_aspect('equal')
     plt.tight_layout()
-    ax.tick_params(axis='both', which='major', labelsize=16)
 
     # Save the figure
     save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
     os.makedirs(save_folder, exist_ok=True)
-    plt.savefig(save_folder + "Demonstrations.png", dpi=600)
+    plt.savefig(save_folder + file_name + '.png', dpi=600)
 
     if ax is None:  # Only close if we created the figure
         plt.close()

@@ -7,12 +7,9 @@ from src.stitching.trajectory_drawer import EnhancedTrajectoryDrawer
 
 
 def generate_data(dataset_path):
-    if "nodes_1" in dataset_path:
-        x_sets, x_dot_sets = load_nodes_1()
-    elif "nodes_2" in dataset_path:
-        x_sets, x_dot_sets = load_nodes_2()
-    else:
-        x_sets, x_dot_sets = draw_trajectories()
+
+
+    x_sets, x_dot_sets = draw_trajectories()
 
     # save each trajectory to a file
     for i, (task_x, task_x_dot) in enumerate(zip(x_sets, x_dot_sets)):
