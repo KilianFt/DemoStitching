@@ -8,6 +8,7 @@ Trajectory = namedtuple('Trajectory', ['x', 'x_dot'])
 DS = namedtuple('DS', ['mu', 'sigma', 'prior', 'A', 'P', 'direction', 'attractor', 'pdfs'])
 
 class Demonstration:
+    """Class representing a set of trajectories in a demonstration."""
 
     def __init__(self, trajectories):
         self.trajectories = trajectories
@@ -24,7 +25,14 @@ class Demonstration:
         return f'Demonstration with {len(self.trajectories)} trajectories, total points: {self.x.shape[0]}'
 
 def apply_lpvds_demowise(demo_set):
+    """Applies LPV-DS to each demonstration in the set.
 
+    Args:
+        demo_set: List of Demonstration objects containing trajectory data.
+
+    Returns:
+        list: List of DS objects containing LPV-DS parameters for each demonstration.
+    """
     # Normalize each demonstration to an attractor position
     # TODO the damm_class expects trajectories are not shifted, but performance is better if they are shifted...
     # normalized_demo_set, attractors = normalize_demo_set(demo_set)

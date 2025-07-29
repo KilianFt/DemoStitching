@@ -8,7 +8,6 @@ from src.stitching.trajectory_drawer import EnhancedTrajectoryDrawer
 
 def generate_data(dataset_path):
 
-
     x_sets, x_dot_sets = draw_trajectories()
 
     # save each trajectory to a file
