@@ -1,2 +1,2 @@
 # from .gaussians import *
-from .ds import *
+from .ds_stitching import *

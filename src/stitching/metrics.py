@@ -22,10 +22,10 @@ def predict_velocities(x_positions, lpvds):
         
         # Use the same logic as in _step method
         x_dot = np.zeros((x.shape[0], 1))
-        gamma = lpvds.damm.logProb(x)
+        gamma = lpvds.logProb(x)
         
-        for k in range(lpvds.K):
-            x_dot += gamma[k, 0] * lpvds.A[k] @ (x - lpvds.x_att.T)
+        for k in range(lpvds.A.shape[0]):
+            x_dot += gamma[k, 0] * lpvds.A[k] @ (x - lpvds.attractor.T)
         
         x_dot_pred.append(x_dot.flatten())
     

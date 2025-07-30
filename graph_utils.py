@@ -1,19 +1,28 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-from collections.abc import Iterable
 from src.util import plot_tools
 
 class GaussianGraph:
 
-    def __init__(self, gaussian_mu, gaussian_sigma, gaussian_direction, attractor=None, initial=None, reverse_gaussians=False, param_dist=1, param_cos=1):
+    def __init__(self, gaussians, attractor=None, initial=None, reverse_gaussians=False, param_dist=1, param_cos=1):
+        """Initializes a GaussianGraph with nodes and edge parameters.
 
+        Args:
+            gaussians: Dictionary of Gaussian parameters for graph nodes.
+            attractor: Optional attractor point to mark in the graph.
+            initial: Optional initial point to mark in the graph.
+            reverse_gaussians: If True, adds nodes with reversed directions.
+            param_dist: Distance scaling parameter for edge computation.
+            param_cos: Cosine scaling parameter for edge computation.
+
+        """
         self.param_dist = param_dist
         self.param_cos = param_cos
-        self.n_gaussians = gaussian_mu.shape[0]
+        self.n_gaussians = len(gaussians)
         self.gaussian_reversal_map = dict()
-        self.graph = self.create_gaussian_graph(gaussian_mu, gaussian_sigma, gaussian_direction,
-                                                reverse_gaussians=reverse_gaussians)
+        self.graph = nx.DiGraph()
+        self.create_gaussian_graph(gaussians, reverse_gaussians=reverse_gaussians)
         self.gaussian_ids = list(self.graph.nodes.keys())
 
         self.attractor_id = None
@@ -25,45 +34,43 @@ class GaussianGraph:
 
         self.shortest_path = None
 
-    def create_gaussian_graph(self, gaussian_mu, gaussian_sigma, gaussian_direction, reverse_gaussians=False):
-        """ Converts a set of gaussians (with direction) into a networkx graph and saves it to the graph.
+    def create_gaussian_graph(self, gaussians, reverse_gaussians=False):
+        """Builds a directed graph where nodes represent Gaussians with direction and prior.
 
         Args:
-            gaussian_mu: n x 2 ndarray of gaussian means
-            gaussian_sigma: n x 2 x 2 ndarray of gaussian covariance matrices
-            gaussian_direction: n x 2 ndarray of gaussian directions
-            reverse_gaussians: True to duplicate the gaussians and reverse the directions
+            gaussians: Dictionary mapping node IDs to Gaussian parameters
+                       ('mu', 'sigma', 'direction', 'prior').
+            reverse_gaussians: If True, adds reversed-direction nodes for each Gaussian.
 
         Returns:
-            gaussian_graph: networkx Digraph
+            None: Modifies the internal graph by adding nodes and weighted edges.
         """
 
-        gaussian_graph = nx.DiGraph()
+        # Convert gaussians to nodes (duplicate and reverse if enabled)
+        for id, gaussian_params in gaussians.items():
+            self.graph.add_node(id, mean=gaussian_params['mu'],
+                                covariance=gaussian_params['sigma'],
+                                direction=gaussian_params['direction'],
+                                prior=gaussian_params['prior'])
 
-        # Convert gaussians to nodes
-        for i in range(self.n_gaussians):
-
-            id = i
-            gaussian_graph.add_node(id, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=gaussian_direction[i])
-
-            # If gaussian reversal is enabled, create a reverse node and mapping to the original
             if reverse_gaussians:
-                id_reverse = i + self.n_gaussians
-                gaussian_graph.add_node(id_reverse, mean=gaussian_mu[i], covariance=gaussian_sigma[i], direction=-gaussian_direction[i])
-                self.gaussian_reversal_map[id_reverse] = id
+                id_reversed = (*id, 'reversed')
+                self.graph.add_node(id_reversed, mean=gaussian_params['mu'],
+                                    covariance=gaussian_params['sigma'],
+                                    direction=-gaussian_params['direction'],
+                                    prior=gaussian_params['prior'])
+                self.gaussian_reversal_map[id_reversed] = id
 
         # Connect nodes by weighted edges
-        for id1 in gaussian_graph.nodes:
-            for id2 in gaussian_graph.nodes:
-                edge_weight = self.compute_edge_weight(gaussian_graph.nodes[id1]['mean'],
-                                                       gaussian_graph.nodes[id1]['direction'],
-                                                       gaussian_graph.nodes[id2]['mean'])
+        for id1 in self.graph.nodes:
+            for id2 in self.graph.nodes:
+                edge_weight = self.compute_edge_weight(self.graph.nodes[id1]['mean'],
+                                                       self.graph.nodes[id1]['direction'],
+                                                       self.graph.nodes[id2]['mean'])
 
                 # add edge to graph
                 if edge_weight is not None:
-                    gaussian_graph.add_edge(id1, id2, weight=edge_weight)
-
-        return gaussian_graph
+                    self.graph.add_edge(id1, id2, weight=edge_weight)
 
     def set_attractor(self, attractor):
         """ Updates/creates an attractor node and adds it to the graph.
@@ -250,40 +257,30 @@ class GaussianGraph:
         else:
             raise ValueError(f"Only 2D and 3D vectors supported, got {dim}D")
 
-    def get_gaussians(self, node_id):
-        """Gets the Gaussian parameters of one or more nodes.
+    def get_gaussian(self, node_id):
+        """Retrieves the mean, covariance, direction, and prior for one or more Gaussian nodes.
 
         Args:
-            node_id (int or iterable): Node ID or iterable of node IDs.
+            node_id: Node ID (single tuple) or iterable of node IDs (list/set of tuples).
 
         Returns:
-            tuple or tuple of ndarrays:
-                If node_id is a single ID, returns tuple of (mu, sigma, direction).
-                If node_id is an iterable, returns tuple of three ndarrays
-                (mus, sigmas, directions), each containing the respective values for all nodes.
-
-                Where:
-                    mu: Gaussian mean
-                    sigma: Gaussian covariance
-                    direction: Gaussian direction
+            tuple:
+                - If node_id is a single tuple ID: (mu, sigma, direction, prior) for that node.
+                - If node_id is iterable: (mus, sigmas, directions, priors) as ndarrays.
         """
-        if isinstance(node_id, Iterable) and not isinstance(node_id, (str, bytes)):
-            mus = []
-            sigmas = []
-            directions = []
-            for id in node_id:
-                mu = self.graph.nodes[id]['mean']
-                sigma = self.graph.nodes[id]['covariance']
-                direction = self.graph.nodes[id]['direction']
-                mus.append(mu)
-                sigmas.append(sigma)
-                directions.append(direction)
-            return np.array(mus), np.array(sigmas), np.array(directions)
+        # Accept only lists/sets as collections of node IDs
+        if isinstance(node_id, (list, set)):
+            mus, sigmas, directions, priors = [], [], [], []
+            for nid in node_id:
+                node = self.graph.nodes[nid]
+                mus.append(node['mean'])
+                sigmas.append(node['covariance'])
+                directions.append(node['direction'])
+                priors.append(node['prior'])
+            return (np.array(mus), np.array(sigmas), np.array(directions), np.array(priors))
         else:
-            mu = self.graph.nodes[node_id]['mean']
-            sigma = self.graph.nodes[node_id]['covariance']
-            direction = self.graph.nodes[node_id]['direction']
-            return mu, sigma, direction
+            node = self.graph.nodes[node_id]
+            return node['mean'], node['covariance'], node['direction'], node['prior']
 
     def plot(self, ax=None):
         """Plots a GaussianGraph.
@@ -352,7 +349,7 @@ class GaussianGraph:
         shortest_path_sigmas = []
         shortest_path_directions = []
         for node_id in self.shortest_path[1:-1]:
-            mu, sigma, direction = self.get_gaussians(node_id)
+            mu, sigma, direction = self.get_gaussian(node_id)
             shortest_path_mus.append(mu)
             shortest_path_sigmas.append(sigma)
             shortest_path_directions.append(direction)

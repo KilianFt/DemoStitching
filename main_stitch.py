@@ -72,7 +72,8 @@ def main():
     plot_demonstration_set(demo_set, config)
 
     # Fit a DS to each demonstration
-    ds_set = apply_lpvds_demowise(demo_set)
+    ds_set, norm_demo_set = apply_lpvds_demowise(demo_set)
+    plot_demonstration_set(norm_demo_set, config, file_name='Demonstrations_Normalized')
     plot_ds_set_gaussians(ds_set, config)
 
     # Determine iteration strategy based on config
@@ -84,7 +85,8 @@ def main():
 
         # Construct Gaussian Graph and Stitched DS
         print('Constructing Gaussian Graph and Stitched DS...')
-        stitched_ds, gg, ds_stats = construct_stitched_ds(config, ds_set, initial, attractor)
+        stitched_ds, gg, ds_stats = construct_stitched_ds(config, norm_demo_set, ds_set, initial, attractor)
+        plot_ds_set_gaussians([stitched_ds], config, file_name='stitched_ds')
 
         # Simulate trajectories
         print('Simulating trajectories...')

@@ -5,14 +5,16 @@ from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
 from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A
+from src.util.ds_tools import convert_lpvds_to_ds
 import graph_utils as gu
 
-def construct_stitched_ds(config, ds_set, initial, attractor):
+def construct_stitched_ds(config, demo_set, ds_set, initial, attractor):
     """Constructs a stitched dynamical system based on configuration method.
 
     Args:
         config: Configuration object with ds_method attribute.
-        ds_set: Dataset for dynamical system construction.
+        demo_set: List of Demonstrations (normalized).
+        ds_set: List of DSs, one for each demonstration in demo_set.
         initial: Initial point for the system.
         attractor: Target attractor point.
 
@@ -23,7 +25,7 @@ def construct_stitched_ds(config, ds_set, initial, attractor):
         NotImplementedError: For unsupported or invalid ds_method values.
     """
     if config.ds_method == 'recompute_all':
-        return NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=True)
+        return NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gaussians=True)
     elif config.ds_method == 'recompute_ds':
         return NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=False)
     elif config.ds_method == 'reuse':
@@ -33,11 +35,12 @@ def construct_stitched_ds(config, ds_set, initial, attractor):
     else:
         raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
 
-def NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
+def NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gaussians):
     """Constructs a stitched dynamical system by recomputing components along shortest path.
 
     Args:
         ds_set: Dataset with trajectory data and gaussian assignments.
+        demo_set: List of Demonstrations (normalized).
         initial: Initial point for path planning.
         attractor: Target attractor point.
         config: Configuration object with DS parameters.
@@ -53,44 +56,53 @@ def NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     # ############## GAUSSIAN GRAPH ##############
     # Construct Gaussian Graph and compute the shortest path
     t0 = time.time()
-    gg = gu.GaussianGraph(ds_set["centers"],
-                          ds_set["sigmas"],
-                          ds_set["directions"],
+
+    gaussians = {(i,j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
+                 for i, ds in enumerate(ds_set)
+                 for j, (mu, sigma, direction, prior) in enumerate(zip(ds.mu, ds.sigma, ds.direction, ds.prior))}
+    gg = gu.GaussianGraph(gaussians,
                           attractor=attractor,
                           initial=initial,
                           reverse_gaussians=config.reverse_gaussians,
                           param_dist=config.param_dist,
                           param_cos=config.param_cos)
     gg.compute_shortest_path()
+
     stats['gg compute time'] = time.time() - t0
 
     # ############## DS ##############
     t0 = time.time()
 
-    # Collect the gaussians to keep and the assigned trajectory points
+    # Collect the gaussians along the shortest path
+    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg.shortest_path[1:-1]]
+    priors = [prior / sum(priors) for prior in priors]
     gaussians = []
-    filtered_x = []
-    filtered_x_dot = []
-    for node_id in gg.shortest_path[1:-1]:
-
-        # collect gaussian
-        mu, sigma, direction = gg.get_gaussians(node_id)
+    for i, node_id in enumerate(gg.shortest_path[1:-1]):
+        mu, sigma, direction, prior = gg.get_gaussian(node_id)
         gaussians.append({
-            'prior': 1 / len(gg.shortest_path[1:-1]),
+            'prior': priors[i],  # use normalized prior
             'mu': mu,
             'sigma': sigma,
             'rv': multivariate_normal(mu, sigma, allow_singular=True)
         })
 
-        # collect trajectory points (reversed if needed)
-        if node_id in gg.gaussian_reversal_map:
-            x_assigned = ds_set["x_sets"][ds_set["assignment_arrs"] == gg.gaussian_reversal_map[node_id]]
-            x_dot_assigned = -1 * ds_set["x_dot_sets"][ds_set["assignment_arrs"] == gg.gaussian_reversal_map[node_id]]
-        else:
-            x_assigned = ds_set["x_sets"][ds_set["assignment_arrs"] == node_id]
-            x_dot_assigned = ds_set["x_dot_sets"][ds_set["assignment_arrs"] == node_id]
-        filtered_x.append(x_assigned)
-        filtered_x_dot.append(x_dot_assigned)
+    # collect the trajectory points that are assigned to the gaussians along the shortest path
+    filtered_x = []
+    filtered_x_dot = []
+    for node_id in gg.shortest_path[1:-1]:
+
+        ds_idx = node_id[0]
+        gaussian_idx = node_id[1]
+
+        assigned_x = demo_set[ds_idx].x[ds_set[ds_idx].assignment == gaussian_idx]
+        assigned_x_dot = demo_set[ds_idx].x_dot[ds_set[ds_idx].assignment == gaussian_idx]
+
+        # reverse velocity if gaussian is reversed
+        assigned_x_dot = -assigned_x_dot if node_id in gg.gaussian_reversal_map else assigned_x_dot
+
+        filtered_x.append(assigned_x)
+        filtered_x_dot.append(assigned_x_dot)
+
     filtered_x = np.vstack(filtered_x)
     filtered_x_dot = np.vstack(filtered_x_dot)
 
@@ -103,6 +115,8 @@ def NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
         else:                       # compute only linear systems (As)
             stitched_ds.init_cluster(gaussians)
             stitched_ds._optimize()
+        stitched_ds = convert_lpvds_to_ds(stitched_ds)
+
     except Exception as e:
         print(f'Failed to construct Stitched DS: {e}')
         stitched_ds = None
@@ -139,7 +153,7 @@ def NEW_reuse_ds(gg, ds_set, attractor, reverse_gaussians):
     for node_id in gg.shortest_path[1:-1]:
 
         # Get Gaussian, determine if reverse gaussians
-        mu, sigma, direction = gg.get_gaussians(node_id)
+        mu, sigma, direction = gg.get_gaussian(node_id)
         if reverse_gaussians and node_id >= gg.n_gaussians:
             assign_id = node_id - gg.n_gaussians
             x_dot_direction = -1
@@ -184,7 +198,6 @@ def NEW_reuse_ds(gg, ds_set, attractor, reverse_gaussians):
 
     return lpvds
 
-
 def build_ds(gg, ds_set, attractor, ds_method, reverse_gaussians):
     if ds_method == "recompute_all":
         lpvds = recompute_ds(gg, ds_set, attractor, reverse_gaussians, rebuild_lpvds=True)
@@ -226,7 +239,7 @@ def reuse_ds(gg, ds_set, attractor, reverse_gaussians):
     for node_id in gg.shortest_path[1:-1]:
 
         # Get Gaussian, determine if reverse gaussians
-        mu, sigma, direction = gg.get_gaussians(node_id)
+        mu, sigma, direction = gg.get_gaussian(node_id)
         if reverse_gaussians and node_id >= gg.n_gaussians:
             assign_id = node_id - gg.n_gaussians
             x_dot_direction = -1
@@ -285,7 +298,7 @@ def recompute_ds(gg, ds_set, attractor, reverse_gaussians, rebuild_lpvds):
     filtered_xs = []
     filtered_x_dots = []
     for node_id in gg.shortest_path[1:-1]:
-        mu, sigma, direction = gg.get_gaussians(node_id)
+        mu, sigma, direction = gg.get_gaussian(node_id)
 
         gaussian_list.append({   
             "prior" : 1 / path_len,

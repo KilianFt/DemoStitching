@@ -16,7 +16,7 @@ plt.rcParams.update({
 
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
-    mus, sigmas, directions = gg.get_gaussians(gg.shortest_path[1:-1])
+    mus, sigmas, directions, _ = gg.get_gaussian(gg.shortest_path[1:-1])
     plot_gaussians(mus, sigmas, directions, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
     # gg.plot_shortest_path_gaussians(ax=axs[0])
     axs.set_xlim(config.x_min, config.x_max)
@@ -36,6 +36,7 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     plt.close()
 
     # Plot updates gaussians from lpvds if they were updated
+    """
     if hasattr(lpvds.damm, "Mu"):
         fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
         centers = lpvds.damm.Mu
@@ -50,6 +51,7 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
         plt.tight_layout()
         plt.savefig(save_folder + "updated_gaussians_{}.png".format(i), dpi=300)
         plt.close()
+    """
 
 def save_initial_plots(gg, data, save_folder, config):
     # initial plots that only need to be computed once
@@ -64,6 +66,7 @@ def save_initial_plots(gg, data, save_folder, config):
     plt.savefig(save_folder + "graph.png", dpi=300)
     plt.close()
 
+    """
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
     plot_gaussians(data["centers"], data["sigmas"], data["directions"], ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
     axs.set_xlim(config.x_min, config.x_max)
@@ -71,6 +74,7 @@ def save_initial_plots(gg, data, save_folder, config):
     axs.set_aspect('equal')
     plt.savefig(save_folder + "gaussians.png", dpi=300)
     plt.close()
+    """
 
 def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax=None):
     """Plot heatmap of summed 2D Gaussian evaluations on a grid with 2-sigma ellipses and direction arrows.
@@ -329,7 +333,7 @@ def plot_gmm(x_train, label, damm, ax = None):
 def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
-    att = lpvds.x_att
+    att = lpvds.attractor
 
     if ax is None:
         fig = plt.figure(figsize=(16, 10))
@@ -346,7 +350,7 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
     plot_sample = 50
     x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))
     X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
-    gamma = lpvds.damm.logProb(X.T)
+    gamma = lpvds.logProb(X.T)
     for k in np.arange(len(A)):
         if k == 0:
             dx = gamma[k].reshape(1, -1) * (A[k] @ (X - att.T))  # gamma[k].reshape(1, -1): [1, num] dim x num

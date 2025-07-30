@@ -5,7 +5,8 @@ from collections import namedtuple
 
 Demoset = namedtuple('Demoset', ['x', 'x_dot'])
 Trajectory = namedtuple('Trajectory', ['x', 'x_dot'])
-DS = namedtuple('DS', ['mu', 'sigma', 'prior', 'A', 'P', 'direction', 'attractor', 'pdfs'])
+# TODO at this point, we might as well just use the default lpvds_class
+DS = namedtuple('DS', ['mu', 'sigma', 'prior', 'assignment', 'A', 'P', 'direction', 'x', 'x_dot', 'attractor', 'pdfs', 'sim', 'logProb'])
 
 class Demonstration:
     """Class representing a set of trajectories in a demonstration."""
@@ -25,92 +26,57 @@ class Demonstration:
         return f'Demonstration with {len(self.trajectories)} trajectories, total points: {self.x.shape[0]}'
 
 def apply_lpvds_demowise(demo_set):
-    """Applies LPV-DS to each demonstration in the set.
+    """Fits an LPV-DS to each demonstration in the set after aligning to a common attractor.
 
     Args:
-        demo_set: List of Demonstration objects containing trajectory data.
+        demo_set: List of Demonstration objects with trajectory data.
 
     Returns:
-        list: List of DS objects containing LPV-DS parameters for each demonstration.
+        tuple: (ds_set, norm_demo_set) where ds_set contains LPV-DS parameter
+            objects for each demonstration, and norm_demo_set is the corresponding
+            set with trajectories shifted to a common attractor.
     """
-    # Normalize each demonstration to an attractor position
-    # TODO the damm_class expects trajectories are not shifted, but performance is better if they are shifted...
-    # normalized_demo_set, attractors = normalize_demo_set(demo_set)
-
-    # Get attractors
-    attractors = []
-    for demo in demo_set:
-        end_points = [traj.x[-1] for traj in demo.trajectories]
-        attractors.append(np.mean(end_points, axis=0))
-
+    # Normalize each demonstration to a common attractor
+    norm_demo_set, attractors = normalize_demo_set(demo_set)
 
     # Apply LPV-DS to each normalized demonstration
     ds_set = []
-    for demo, attractor in zip(demo_set, attractors):
+    for demo, attractor in zip(norm_demo_set, attractors):
 
         # Apply LPV-DS
-        ds = lpvds_class(demo.x, demo.x_dot, attractor)
-        ds.begin()
-
-        # get each gaussian's directionality
-        direction = []
-        for i, gaussian in enumerate(ds.damm.gaussian_list):
-            dir = ds.A[i] @ gaussian['mu']
-            dir = dir / np.linalg.norm(dir)
-            direction.append(dir)
-        direction = np.array(direction)
+        lpvds = lpvds_class(demo.x, demo.x_dot, attractor)
+        lpvds.begin()
 
         ds_set.append(
-            DS(
-                mu=ds.damm.Mu,
-                sigma=ds.damm.Sigma,
-                prior=ds.damm.Prior,
-                A = ds.A,
-                P = ds.ds_opt.P,
-                direction=direction,
-                attractor=attractor,
-                pdfs=[g['rv'].pdf for g in ds.damm.gaussian_list]
-            )
+            convert_lpvds_to_ds(lpvds)
         )
 
-    # Shift the demonstration trajectories to the attractor position
-    """
-    unnormalized_demo_set = []
-    for i, demo in enumerate(demo_set):
-
-        trajectories = []
-        for traj in demo.trajectories:
-            trajectories.append(Trajectory(traj.x + attractors[i], traj.x_dot))
-        unnormalized_demo_set.append(Demonstration(trajectories))
-    """
-
-    return ds_set #, unnormalized_demo_set
-
+    return ds_set, norm_demo_set
 
 def normalize_demo_set(demo_set):
-    """Normalizes demonstration trajectories to end at origin. Collects the attractor position (mean of end points).
+    """Shifts demonstration trajectories so their endpoints coincide at a common mean attractor.
 
     Args:
-        demo_set: List of Demonstration objects containing trajectory data.
+        demo_set: List of Demonstration objects, each with trajectory data.
 
     Returns:
-        tuple: (normalized_demonstrations, attractors) where normalized
-            Demonstration objects have trajectories centered at origin.
+        tuple: (normalized_demonstrations, attractors), where each normalized
+            Demonstration has trajectories ending at the shared attractor.
     """
-
     normalized_demonstrations = []
     attractors = []
     for demo in demo_set:
 
         # Get the demonstration's attractor (mean of end points)
         end_points = [traj.x[-1] for traj in demo.trajectories]
-        attractors.append(np.mean(end_points, axis=0))
+        attractor = np.mean(end_points, axis=0)
+        attractors.append(attractor)
 
-        # Normalize each trajectory in the demonstration
+        # Normalize each trajectory to end at the attractor position
         normalized_trajectories = []
         for trajectory in demo.trajectories:
 
-            normalized_x = trajectory.x - trajectory.x[-1]
+            normalized_x = trajectory.x - trajectory.x[-1] + attractor
             normalized_trajectories.append(
                 Trajectory(x=normalized_x, x_dot=trajectory.x_dot)
             )
@@ -119,8 +85,35 @@ def normalize_demo_set(demo_set):
         normalized_demo = Demonstration(normalized_trajectories)
         normalized_demonstrations.append(normalized_demo)
 
-
     return normalized_demonstrations, attractors
+
+def convert_lpvds_to_ds(lpvds):
+
+    # get each gaussian's directionality
+    directions = []
+    for i, gaussian in enumerate(lpvds.damm.gaussian_list):
+        d = lpvds.A[i] @ gaussian['mu']
+        d = d / np.linalg.norm(d)
+        directions.append(d)
+    directions = np.array(directions)
+
+    ds = DS(
+            mu=lpvds.damm.Mu,
+            sigma=lpvds.damm.Sigma,
+            prior=lpvds.damm.Prior,
+            assignment=lpvds.assignment_arr,
+            A=lpvds.A,
+            P=lpvds.ds_opt.P,
+            direction=directions,
+            x=lpvds.x,
+            x_dot=lpvds.x_dot,
+            attractor=lpvds.x_att,
+            pdfs=[g['rv'].pdf for g in lpvds.damm.gaussian_list],
+            sim=lpvds.sim,
+            logProb=lpvds.damm.logProb
+        )
+
+    return ds
 
 
 def compute_weighted_average(x, x_dot, centers, sigmas, assignment_arr):
@@ -249,11 +242,11 @@ def _pre_process(x, x_dot):
     x_init = []
     x_shifted = []
 
+    # get mean end point of all trajectories
     x_att  = [x[l][-1, :]  for l in range(L)]  
     x_att_mean  =  np.mean(np.array(x_att), axis=0, keepdims=True)
     for l in range(L):
         x_init.append(x[l][0].reshape(1, -1))
-
         x_diff = x_att_mean - x_att[l]
         x_shifted.append(x_diff.reshape(1, -1) + x[l])
 
