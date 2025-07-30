@@ -5,7 +5,7 @@ from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
 from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A
-from src.util.ds_tools import convert_lpvds_to_ds
+from src.util.ds_tools import get_guassian_directions
 import graph_utils as gu
 
 def construct_stitched_ds(config, demo_set, ds_set, initial, attractor):
@@ -59,7 +59,7 @@ def NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gau
 
     gaussians = {(i,j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
                  for i, ds in enumerate(ds_set)
-                 for j, (mu, sigma, direction, prior) in enumerate(zip(ds.mu, ds.sigma, ds.direction, ds.prior))}
+                 for j, (mu, sigma, direction, prior) in enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_guassian_directions(ds), ds.damm.Prior))}
     gg = gu.GaussianGraph(gaussians,
                           attractor=attractor,
                           initial=initial,
@@ -94,8 +94,8 @@ def NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gau
         ds_idx = node_id[0]
         gaussian_idx = node_id[1]
 
-        assigned_x = demo_set[ds_idx].x[ds_set[ds_idx].assignment == gaussian_idx]
-        assigned_x_dot = demo_set[ds_idx].x_dot[ds_set[ds_idx].assignment == gaussian_idx]
+        assigned_x = ds_set[ds_idx].x[ds_set[ds_idx].assignment_arr == gaussian_idx]
+        assigned_x_dot = ds_set[ds_idx].x_dot[ds_set[ds_idx].assignment_arr == gaussian_idx]
 
         # reverse velocity if gaussian is reversed
         assigned_x_dot = -assigned_x_dot if node_id in gg.gaussian_reversal_map else assigned_x_dot
@@ -115,7 +115,6 @@ def NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gau
         else:                       # compute only linear systems (As)
             stitched_ds.init_cluster(gaussians)
             stitched_ds._optimize()
-        stitched_ds = convert_lpvds_to_ds(stitched_ds)
 
     except Exception as e:
         print(f'Failed to construct Stitched DS: {e}')

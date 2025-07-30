@@ -5,6 +5,7 @@ import matplotlib.lines as mlines
 from matplotlib.ticker import MaxNLocator
 from matplotlib.patches import Ellipse
 from scipy.stats import multivariate_normal
+from src.util.ds_tools import get_guassian_directions
 import random
 import os
 
@@ -36,7 +37,6 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     plt.close()
 
     # Plot updates gaussians from lpvds if they were updated
-    """
     if hasattr(lpvds.damm, "Mu"):
         fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
         centers = lpvds.damm.Mu
@@ -51,7 +51,6 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
         plt.tight_layout()
         plt.savefig(save_folder + "updated_gaussians_{}.png".format(i), dpi=300)
         plt.close()
-    """
 
 def save_initial_plots(gg, data, save_folder, config):
     # initial plots that only need to be computed once
@@ -192,9 +191,9 @@ def plot_ds_set_gaussians(ds_set, config, file_name='ds_set_gaussians'):
     sigma = []
     directions = []
     for ds in ds_set:
-        mu.append(ds.mu)
-        sigma.append(ds.sigma)
-        directions.append(ds.direction)
+        mu.append(ds.damm.Mu)
+        sigma.append(ds.damm.Sigma)
+        directions.append(get_guassian_directions(ds))
     mu = np.vstack(mu)
     sigma = np.vstack(sigma)
     directions = np.vstack(directions)
@@ -333,7 +332,7 @@ def plot_gmm(x_train, label, damm, ax = None):
 def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
-    att = lpvds.attractor
+    att = lpvds.x_att
 
     if ax is None:
         fig = plt.figure(figsize=(16, 10))
@@ -350,7 +349,7 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
     plot_sample = 50
     x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))
     X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
-    gamma = lpvds.logProb(X.T)
+    gamma = lpvds.damm.logProb(X.T)
     for k in np.arange(len(A)):
         if k == 0:
             dx = gamma[k].reshape(1, -1) * (A[k] @ (X - att.T))  # gamma[k].reshape(1, -1): [1, num] dim x num

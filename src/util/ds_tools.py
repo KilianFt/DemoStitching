@@ -5,8 +5,6 @@ from collections import namedtuple
 
 Demoset = namedtuple('Demoset', ['x', 'x_dot'])
 Trajectory = namedtuple('Trajectory', ['x', 'x_dot'])
-# TODO at this point, we might as well just use the default lpvds_class
-DS = namedtuple('DS', ['mu', 'sigma', 'prior', 'assignment', 'A', 'P', 'direction', 'x', 'x_dot', 'attractor', 'pdfs', 'sim', 'logProb'])
 
 class Demonstration:
     """Class representing a set of trajectories in a demonstration."""
@@ -46,10 +44,7 @@ def apply_lpvds_demowise(demo_set):
         # Apply LPV-DS
         lpvds = lpvds_class(demo.x, demo.x_dot, attractor)
         lpvds.begin()
-
-        ds_set.append(
-            convert_lpvds_to_ds(lpvds)
-        )
+        ds_set.append(lpvds)
 
     return ds_set, norm_demo_set
 
@@ -87,9 +82,15 @@ def normalize_demo_set(demo_set):
 
     return normalized_demonstrations, attractors
 
-def convert_lpvds_to_ds(lpvds):
+def get_guassian_directions(lpvds):
+    """Computes normalized direction vectors for each Gaussian in an LPV-DS.
 
-    # get each gaussian's directionality
+    Args:
+        lpvds: LPV-DS object with damm.gaussian_list (with 'mu') and A matrices.
+
+    Returns:
+        np.ndarray: Array of normalized direction vectors for all Gaussians.
+    """
     directions = []
     for i, gaussian in enumerate(lpvds.damm.gaussian_list):
         d = lpvds.A[i] @ gaussian['mu']
@@ -97,24 +98,7 @@ def convert_lpvds_to_ds(lpvds):
         directions.append(d)
     directions = np.array(directions)
 
-    ds = DS(
-            mu=lpvds.damm.Mu,
-            sigma=lpvds.damm.Sigma,
-            prior=lpvds.damm.Prior,
-            assignment=lpvds.assignment_arr,
-            A=lpvds.A,
-            P=lpvds.ds_opt.P,
-            direction=directions,
-            x=lpvds.x,
-            x_dot=lpvds.x_dot,
-            attractor=lpvds.x_att,
-            pdfs=[g['rv'].pdf for g in lpvds.damm.gaussian_list],
-            sim=lpvds.sim,
-            logProb=lpvds.damm.logProb
-        )
-
-    return ds
-
+    return directions
 
 def compute_weighted_average(x, x_dot, centers, sigmas, assignment_arr):
     mean_xdot = np.zeros((centers.shape[0], x.shape[1]))
