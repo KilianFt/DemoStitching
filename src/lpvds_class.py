@@ -64,7 +64,7 @@ class lpvds_class():
         self.damm.gaussian_list = gaussian_list
         self.gamma = self.damm.logProb(self.x)
         self.assignment_arr = np.argmax(self.gamma, axis=0)
-        self.K     = self.damm.K
+        self.K = self.damm.K
 
 
     def begin(self):
@@ -105,9 +105,7 @@ class lpvds_class():
         return np.vstack(x_test)
 
 
-
-
-    def _logOut(self, *args): 
+    def _logOut(self, *args):
             Prior = self.damm.Prior
             Mu    = self.damm.Mu
             Sigma = self.damm.Sigma
@@ -131,8 +129,6 @@ class lpvds_class():
                 write_json(json_output, self.output_path)
             else:
                 write_json(json_output, os.path.join(args[0], '0.json'))
-
-
 
 
     def begin_next(self, x_new, x_dot_new, x_att_new):

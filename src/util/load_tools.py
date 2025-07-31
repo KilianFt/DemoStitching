@@ -4,7 +4,6 @@ import pickle
 import numpy as np
 import pyLasaDataset as lasa
 from scipy.io import loadmat
-from src.util.plot_tools import plot_trajectories, plot_demonstration_set
 from src.util.ds_tools import lpvds_per_demo, _pre_process, _process_bag, Demonstration, Demoset, Trajectory
 from src.util.generate_data import generate_data
 

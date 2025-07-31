@@ -1,13 +1,17 @@
 from typing import List
+
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.lines as mlines
 from matplotlib.ticker import MaxNLocator
 from matplotlib.patches import Ellipse
+from matplotlib.colors import LinearSegmentedColormap
 from scipy.stats import multivariate_normal
 from src.util.ds_tools import get_guassian_directions
 import random
 import os
+import networkx as nx
 
 plt.rcParams.update({
     "text.usetex": False,
@@ -18,25 +22,26 @@ plt.rcParams.update({
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
     mus, sigmas, directions, _ = gg.get_gaussian(gg.shortest_path[1:-1])
-    plot_gaussians(mus, sigmas, directions, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
+    plot_gaussians(config, mus, sigmas, directions, ax=axs, resolution=1000)
     # gg.plot_shortest_path_gaussians(ax=axs[0])
-    axs.set_xlim(config.x_min, config.x_max)
-    axs.set_ylim(config.y_min, config.y_max)
+    axs.set_xlim(config.plot_extent[0], config.plot_extent[1])
+    axs.set_ylim(config.plot_extent[2], config.plot_extent[3])
     axs.set_aspect('equal')
     plt.tight_layout()
-    plt.savefig(save_folder + "shortest_path_{}.png".format(i), dpi=300)
+    plt.savefig(save_folder + "stitched_pre_gaussians_{}.png".format(i), dpi=300)
     plt.close()
 
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
-    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs, x_min=config.x_min, x_max=config.x_max, y_min=config.y_min, y_max=config.y_max)
-    axs.set_xlim(config.x_min, config.x_max)
-    axs.set_ylim(config.y_min, config.y_max)
+    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs, x_min=config.plot_extent[0], x_max=config.plot_extent[1], y_min=config.plot_extent[2], y_max=config.plot_extent[3])
+    axs.set_xlim(config.plot_extent[0], config.plot_extent[1])
+    axs.set_ylim(config.plot_extent[2], config.plot_extent[3])
     axs.set_aspect('equal')
     plt.tight_layout()
-    plt.savefig(save_folder + "ds_{}.png".format(i), dpi=300)
+    plt.savefig(save_folder + "stitched_ds_{}.png".format(i), dpi=300)
     plt.close()
 
     # Plot updates gaussians from lpvds if they were updated
+    """
     if hasattr(lpvds.damm, "Mu"):
         fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
         centers = lpvds.damm.Mu
@@ -44,52 +49,37 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
         mean_xdot = np.zeros((lpvds.damm.K, lpvds.x.shape[1]))
         for k in range(lpvds.damm.K):
             mean_xdot[k] = np.mean(lpvds.x_dot[assignment_arr==k], axis=0)
-        plot_gaussians(centers, lpvds.damm.Sigma, mean_xdot, ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
-        axs.set_xlim(config.x_min, config.x_max)
-        axs.set_ylim(config.y_min, config.y_max)
+        plot_gaussians(config, centers, lpvds.damm.Sigma, mean_xdot, ax=axs, resolution=1000)
+        axs.set_xlim(config.plot_extent[0], config.plot_extent[1])
+        axs.set_ylim(config.plot_extent[2], config.plot_extent[3])
         axs.set_aspect('equal')
         plt.tight_layout()
-        plt.savefig(save_folder + "updated_gaussians_{}.png".format(i), dpi=300)
+        plt.savefig(save_folder + "stitched_updated_gaussians_{}.png".format(i), dpi=300)
         plt.close()
-
-def save_initial_plots(gg, data, save_folder, config):
-    # initial plots that only need to be computed once
-    fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
-    axs = gg.plot(ax=axs)
-    # Override the grid setting from gg.plot() and set proper limits
-    axs.grid(False)
-    axs.axis("off")
-    axs.set_xlim(config.x_min, config.x_max)
-    axs.set_ylim(config.y_min, config.y_max)
-    axs.set_aspect('equal')
-    plt.savefig(save_folder + "graph.png", dpi=300)
-    plt.close()
-
-    """
-    fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
-    plot_gaussians(data["centers"], data["sigmas"], data["directions"], ax=axs, extent=((config.x_min, config.x_max), (config.y_min, config.y_max)), resolution=1000)
-    axs.set_xlim(config.x_min, config.x_max)
-    axs.set_ylim(config.y_min, config.y_max)
-    axs.set_aspect('equal')
-    plt.savefig(save_folder + "gaussians.png", dpi=300)
-    plt.close()
     """
 
-def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax=None):
-    """Plot heatmap of summed 2D Gaussian evaluations on a grid with 2-sigma ellipses and direction arrows.
+def plot_gaussians(config, mus, sigmas, directions=None, resolution=800, ax=None):
+    """Plots a heatmap of summed 2D Gaussians, their 2-sigma ellipses, and optional direction arrows.
 
     Args:
-        mus: Array of Gaussian means (N x 2)
-        sigmas: Array of covariance matrices (N x 2 x 2)
-        directions: Array of direction vectors (N x 2) - optional for arrows
-        resolution: Grid resolution, int or tuple (width, height). Default 100.
-        extent: Optional ((xmin, xmax), (ymin, ymax)) for plot bounds. If None, inferred from means.
-        scaling: Scaling method for visualization. Options: 'linear', 'log', 'exponential', 'sqrt'
-        ax: Optional matplotlib axis
+        config: Configuration object with plotting extent (plot_extent).
+        mus: Array-like of shape (N, 2), mean vectors for each Gaussian.
+        sigmas: Array-like of shape (N, 2, 2), covariance matrices for each Gaussian.
+        directions: Optional array-like of (N, 2), direction vectors for each Gaussian.
+        resolution: Int or tuple, grid resolution for the density heatmap (default 400).
+        ax: Optional matplotlib axis. If None, a new figure and axis are created.
 
     Returns:
-        matplotlib axis object with heatmap
+        matplotlib.axes.Axes: The axis containing the plotted Gaussians and ellipses.
     """
+
+    # create color pallet
+    colors = ['#ffffff', '#00a7c4']
+    cmap = LinearSegmentedColormap.from_list('custom_heatmap', colors)
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
     # initialize lists for means and covariances
     N = len(mus)
     mus = np.array(mus)
@@ -100,21 +90,20 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax
         mus = mus.reshape(1, -1)
         sigmas = sigmas.reshape(1, 2, 2)
 
-    # Determine plot extent
-    if extent is None:
-        buffer = 3 * np.sqrt(np.max([np.trace(sigma) for sigma in sigmas]))
-        xmin, ymin = mus.min(axis=0) - buffer
-        xmax, ymax = mus.max(axis=0) + buffer
-    else:
-        (xmin, xmax), (ymin, ymax) = extent
-
     # Handle resolution parameter
     if isinstance(resolution, int):
         resolution = (resolution, resolution)
 
     # Create coordinate grid
-    x = np.linspace(xmin, xmax, resolution[0])
-    y = np.linspace(ymin, ymax, resolution[1])
+    if hasattr(config, 'plot_extent') is None:
+        buffer = 3 * np.sqrt(np.max([np.trace(sigma) for sigma in sigmas]))
+        xmin, ymin = mus.min(axis=0) - buffer
+        xmax, ymax = mus.max(axis=0) + buffer
+        extent = (xmin, xmax, ymin, ymax)
+    else:
+        extent = config.plot_extent
+    x = np.linspace(extent[0], extent[1], resolution[0])
+    y = np.linspace(extent[2], extent[3], resolution[1])
     X, Y = np.meshgrid(x, y)
     grid_points = np.column_stack([X.ravel(), Y.ravel()])
 
@@ -132,16 +121,9 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax
     # aggregate evaluations
     total_values = np.max(gaussian_evaluations, axis=0)
 
-    # Reshape back to grid
+    # create heatmap
     heatmap = total_values.reshape(resolution[1], resolution[0])
-
-    # Create plot
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
-        plt.tight_layout()
-
-
-    im = ax.imshow(heatmap, extent=[xmin, xmax, ymin, ymax], origin='lower', cmap='GnBu', aspect='equal')
+    im = ax.imshow(heatmap, extent=extent, origin='lower', cmap=cmap, aspect='equal')
 
     # Add 2-sigma ellipses for each Gaussian
     for mu, sigma in zip(mus, sigmas):
@@ -168,9 +150,7 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax
             directions = directions.reshape(1, -1)
 
         directions_norm = directions / (np.linalg.norm(directions, axis=1, keepdims=True) + 1e-10)
-
-        # FIXED: Use ymin instead of ymax, and scale appropriately
-        arrow_scale = min(xmax - xmin, ymax - ymin) * 0.01
+        arrow_scale = min(extent[1] - extent[0], extent[3] - extent[2]) * 0.01
 
         for mu, dir_vec in zip(mus, directions_norm):
             ax.arrow(mu[0], mu[1],
@@ -178,15 +158,26 @@ def plot_gaussians(mus, sigmas, directions=None, resolution=400, extent=None, ax
                      head_width=arrow_scale*0.2, head_length=arrow_scale*0.15,
                      fc='white', ec='white', linewidth=2, alpha=0.8)
 
-    # plt.colorbar(im, ax=ax, label='Scaled Gaussian Density')
-
     # set tight layout
     ax.set_aspect('equal')
+    plt.tight_layout()
     return ax
 
-def plot_ds_set_gaussians(ds_set, config, file_name='ds_set_gaussians'):
+def plot_ds_set_gaussians(ds_set, config, include_points=False, ax=None, file_name=None):
+    """Plots means, covariances, and directions for all Gaussians in the DS set, with optional data point arrows.
 
-    # Collect means, covariances, and directions from the ds_set
+    Args:
+        ds_set: List of DS objects, each containing fitted Gaussian parameters and data assignments.
+        config: Configuration object providing plotting and dataset settings.
+        include_points: If True, overlays trajectory points and velocity arrows assigned to Gaussians.
+        ax: Optional matplotlib axis. If None, creates a new figure and axis.
+        file_name: Optional filename (without extension) to save the plot as PNG.
+
+    Returns:
+        matplotlib.axes.Axes: The axis with the plotted Gaussians and any optional data points.
+    """
+
+    # Collect the gaussians from all DS'
     mu = []
     sigma = []
     directions = []
@@ -199,48 +190,48 @@ def plot_ds_set_gaussians(ds_set, config, file_name='ds_set_gaussians'):
     directions = np.vstack(directions)
 
     # Plot the Gaussians
-    fig, ax = plt.subplots(figsize=(8, 6))
-    extent = [(config.x_min, config.x_max), (config.y_min, config.y_max)]
+    ax = plot_gaussians(config, mu, sigma, directions, ax=ax)
 
-    plot_gaussians(mu, sigma, directions, extent=extent, ax=ax)
+    # Add trajectory points if requested
+    if include_points:
+
+        # get color map (one color for each gaussian from each ds)
+        num_gaussians = mu.shape[0]
+        colors = plt.cm.hsv(np.linspace(0, 1, num_gaussians))
+        random.shuffle(colors)
+
+        # plot points assigned to each gaussian with the corresponding color (k)
+        k = 0
+        for i in range(len(ds_set)):
+            for j in range(ds_set[i].K):
+
+                # get the points assigned to the j-th gaussian of the i-th ds
+                assigned_x = ds_set[i].x[ds_set[i].assignment_arr == j]
+                assigned_x_dot = ds_set[i].x_dot[ds_set[i].assignment_arr == j]
+                for p in range(len(assigned_x)):
+                    ax.arrow(assigned_x[p, 0], assigned_x[p, 1], assigned_x_dot[p, 0] * 0.1, assigned_x_dot[p, 1] * 0.1,
+                             head_width=0.05, head_length=0.05, fc=colors[k], ec=colors[k], alpha=0.5)
+                k += 1
 
     # save the figure
-    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
-    os.makedirs(save_folder, exist_ok=True)
-    plt.savefig(save_folder + file_name + '.png', dpi=300)
+    if file_name is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        plt.savefig(save_folder + file_name + '.png', dpi=800)
 
-def plot_trajectories(trajectories: List[np.ndarray], title: str = "Trajectories", save_folder: str = "", config = None, ax = None):
-    """Plot trajectories."""
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6), sharex=True, sharey=True)
-    
-    colors = plt.cm.tab10(np.linspace(0, 1, len(trajectories)))
-    
-    for i, traj in enumerate(trajectories):
-        ax.plot(traj[:, 0], traj[:, 1], color=colors[i], linewidth=2, alpha=0.7, label=f'Traj {i+1}')
-        ax.plot(traj[0, 0], traj[0, 1], 'go', markersize=8)
-        ax.plot(traj[-1, 0], traj[-1, 1], 'ro', markersize=8)
-        
-    # ax.grid(True, alpha=0.3)
-    if config is not None:
-        ax.set_xlim(config.x_min, config.x_max)
-        ax.set_ylim(config.y_min, config.y_max)
+    return ax
 
-    ax.set_aspect('equal')
-    plt.tight_layout()
-    plt.savefig(save_folder + "trajectories.png", dpi=300)
-    plt.close()
-
-def plot_demonstration_set(demo_set, config, ax=None, file_name="Demonstrations"):
-    """Plots demonstration trajectories grouped by demonstration.
+def plot_demonstration_set(demo_set, config, ax=None, file_name=None):
+    """Plots grouped demonstration trajectories with start and end points, optionally saving the figure.
 
     Args:
-        demo_set (Demoset): Namedtuple containing demonstration trajectory data.
-        config: Configuration object with dataset_path, ds_method, and axis limit attributes.
-        ax: Optional matplotlib axis.
+        demo_set: List of Demonstration objects, each containing Trajectory objects to plot.
+        config: Configuration object specifying plot extent, dataset path, and ds_method.
+        ax: Optional matplotlib axis. If None, a new figure and axis are created.
+        file_name: Optional filename (without extension) to save the plot as PNG.
 
     Returns:
-        None: Saves trajectory plots to configured directory.
+        matplotlib.axes.Axes: The axis containing the plotted demonstration set.
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -264,23 +255,105 @@ def plot_demonstration_set(demo_set, config, ax=None, file_name="Demonstrations"
             # End point (red)
             ax.plot(traj.x[-1, 0], traj.x[-1, 1], 'ro', markersize=8)
 
+    # Plot settings
+    if hasattr(config, 'plot_extent'):
+        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
+        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    ax.set_aspect('equal')
+    plt.tight_layout()
+
+    # Save the figure if file_name is provided
+    if file_name is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        plt.savefig(save_folder + file_name + '.png', dpi=600)
+
+    # Close the figure if we created it
+    if ax is None:
+        plt.close()
+
+    return ax
+
+def plot_gaussian_graph(gg, config, bare=False, ax=None, save_as=None):
+    """Plots a GaussianGraph.
+
+    Args:
+        gg: a GaussianGraph
+    """
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    nxgraph = gg.graph
+
+    # Draw nodes (gaussians, attractor, initial)
+    pos = {node: nxgraph.nodes[node]['mean'] for node in gg.gaussian_ids}
+    if gg.attractor_id:
+        pos[gg.attractor_id] = nxgraph.nodes[gg.attractor_id]['pos']
+    if gg.initial_id:
+        pos[gg.initial_id] = nxgraph.nodes[gg.initial_id]['pos']
+
+    colormap = []
+    for node in nxgraph.nodes:
+        if node is gg.attractor_id and not bare:
+            colormap.append('red')
+        elif node is gg.initial_id and not bare:
+            colormap.append('green')
+        else:
+            colormap.append('teal')
+
+    nx.draw_networkx_nodes(nxgraph, pos, node_color=colormap, node_size=100, ax=ax)
+    # nx.draw_networkx_labels(gg, pos, font_size=8, font_weight='bold', ax=ax)
+
+    # Extract edge weights
+    edges = nxgraph.edges(data=True)
+    weights = [edata['weight'] for _, _, edata in edges]
+
+    # Normalize weights for alpha values (higher weight = lower alpha)
+    norm_param = 10
+    normalize_weights = weights / min(weights)
+    normalize_weights = normalize_weights - 1
+    normalize_weights = normalize_weights * norm_param / np.median(normalize_weights)
+    normalize_weights = normalize_weights + 1
+    alphas = [np.exp(1-w) for w in normalize_weights]
+
+    # Draw edges
+    for (u, v, edata), alpha in zip(edges, alphas):
+        nx.draw_networkx_edges(nxgraph, pos, edgelist=[(u, v)],
+                               alpha=alpha, edge_color='black',
+                               arrows=True, arrowsize=8, ax=ax)
+
+    # Draw shortest path
+    if gg.shortest_path is not None and not bare:
+
+        path_edges = [(gg.shortest_path[i], gg.shortest_path[i+1]) for i in range(len(gg.shortest_path) - 1)]
+        nx.draw_networkx_edges(nxgraph, pos, edgelist=path_edges, alpha=0.25, edge_color='magenta',
+                               arrows=True, width=10, arrowsize=30, ax=ax)
+
     # Apply config settings if provided
     if config is not None:
         if hasattr(config, 'x_min') and hasattr(config, 'x_max'):
             ax.set_xlim(config.x_min, config.x_max)
         if hasattr(config, 'y_min') and hasattr(config, 'y_max'):
             ax.set_ylim(config.y_min, config.y_max)
-
-    ax.set_aspect('equal')
+    ax.axis('equal')
     plt.tight_layout()
 
-    # Save the figure
-    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
-    os.makedirs(save_folder, exist_ok=True)
-    plt.savefig(save_folder + file_name + '.png', dpi=600)
-
-    if ax is None:  # Only close if we created the figure
+    if save_as is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        plt.savefig(save_folder + save_as + '.png', dpi=300)
         plt.close()
+
+    return ax
+
+def plot_trajectory_points(x, x_dot, ax):
+
+    # plot an arrow at each x point with direction x_dot
+    for i in range(len(x)):
+        ax.arrow(x[i, 0], x[i, 1], x_dot[i, 0] * 0.1, x_dot[i, 1] * 0.1,
+                 head_width=0.05, head_length=0.05, fc='blue', ec='blue', alpha=0.5)
+
 
 def plot_gmm(x_train, label, damm, ax = None):
     """ passing damm object to plot the ellipsoids of clustering results"""
@@ -352,14 +425,14 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
     gamma = lpvds.damm.logProb(X.T)
     for k in np.arange(len(A)):
         if k == 0:
-            dx = gamma[k].reshape(1, -1) * (A[k] @ (X - att.T))  # gamma[k].reshape(1, -1): [1, num] dim x num
+            dx = gamma[k].reshape(1, -1) * (A[k] @ (X - att.reshape(1,-1).T))  # gamma[k].reshape(1, -1): [1, num] dim x num
         else:
-            dx +=  gamma[k].reshape(1, -1) * (A[k] @ (X - att.T)) 
+            dx +=  gamma[k].reshape(1, -1) * (A[k] @ (X - att.reshape(1,-1).T))
     u = dx[0,:].reshape((plot_sample,plot_sample))
     v = dx[1,:].reshape((plot_sample,plot_sample))
 
     ax.streamplot(x_mesh,y_mesh,u,v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
-    ax.scatter(att[:,0], att[:,1], color='g', s=100, alpha=0.7)
+    ax.scatter(att[0], att[1], color='g', s=100, alpha=0.7)
     ax.set_aspect('equal')
 
     if title is not None:

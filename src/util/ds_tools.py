@@ -93,7 +93,10 @@ def get_guassian_directions(lpvds):
     """
     directions = []
     for i, gaussian in enumerate(lpvds.damm.gaussian_list):
-        d = lpvds.A[i] @ gaussian['mu']
+        try:
+            d = lpvds.A[i] @ (gaussian['mu'] - lpvds.x_att)
+        except:
+            print('Hummm..')
         d = d / np.linalg.norm(d)
         directions.append(d)
     directions = np.array(directions)

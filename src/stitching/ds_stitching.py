@@ -6,6 +6,7 @@ from src.dsopt.dsopt_class import dsopt_class
 from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A
 from src.util.ds_tools import get_guassian_directions
+from src.util.plot_tools import plot_trajectory_points
 import graph_utils as gu
 
 def construct_stitched_ds(config, demo_set, ds_set, initial, attractor):
@@ -25,9 +26,11 @@ def construct_stitched_ds(config, demo_set, ds_set, initial, attractor):
         NotImplementedError: For unsupported or invalid ds_method values.
     """
     if config.ds_method == 'recompute_all':
-        return NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gaussians=True)
+        return NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=True)
     elif config.ds_method == 'recompute_ds':
         return NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=False)
+    elif config.ds_method == 'recompute_ds_with_demo_separation':
+        return NEW_recompute_ds_with_demo_separation(ds_set, demo_set, initial, attractor, config)
     elif config.ds_method == 'reuse':
         raise NotImplementedError(f"Reuse method is not implemented yet.")
     elif config.ds_method == 'chain':
@@ -35,28 +38,27 @@ def construct_stitched_ds(config, demo_set, ds_set, initial, attractor):
     else:
         raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
 
-def NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gaussians):
-    """Constructs a stitched dynamical system by recomputing components along shortest path.
+def NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
+    """Builds a stitched dynamical system by following the shortest path through a Gaussian graph.
 
     Args:
-        ds_set: Dataset with trajectory data and gaussian assignments.
-        demo_set: List of Demonstrations (normalized).
-        initial: Initial point for path planning.
+        ds_set: List of DS objects, each with Gaussian mixture parameters and trajectory data.
+        initial: Initial point for the system.
         attractor: Target attractor point.
-        config: Configuration object with DS parameters.
-        recompute_gaussians: If True, recomputes gaussians and linear systems;
-            if False, only recomputes linear systems.
+        config: Configuration object specifying parameters for graph construction and DS computation.
+        recompute_gaussians: If True, re-estimates both Gaussians and dynamics; if False, only dynamics.
 
     Returns:
-        tuple: (stitched_ds, gaussian_graph, timing_stats)
+        tuple: (stitched_ds, gg, stats) where
+            - stitched_ds: Learned stitched DS object, or None on failure.
+            - gg: Constructed GaussianGraph object along the path.
+            - stats: Dictionary with timing information for major steps.
     """
     # Initialize stats dictionary
     stats = dict()
 
     # ############## GAUSSIAN GRAPH ##############
-    # Construct Gaussian Graph and compute the shortest path
     t0 = time.time()
-
     gaussians = {(i,j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_guassian_directions(ds), ds.damm.Prior))}
@@ -67,7 +69,6 @@ def NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gau
                           param_dist=config.param_dist,
                           param_cos=config.param_cos)
     gg.compute_shortest_path()
-
     stats['gg compute time'] = time.time() - t0
 
     # ############## DS ##############
@@ -107,7 +108,7 @@ def NEW_recompute_ds(ds_set, demo_set, initial, attractor, config, recompute_gau
     filtered_x_dot = np.vstack(filtered_x_dot)
 
     # compute DS
-    x_att = attractor[None,:]
+    x_att = attractor
     try:
         stitched_ds = lpvds_class(filtered_x, filtered_x_dot, x_att)
         if recompute_gaussians:     # compute new gaussians and linear systems (As)

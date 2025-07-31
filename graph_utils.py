@@ -181,9 +181,6 @@ class GaussianGraph:
         Note:
             Requires self.attractor_id to be set. No-op if attractor_id is None.
         """
-        def path_length(path):
-            """Calculate the length of a path based on edge weights."""
-            return sum(self.graph[u][v]['weight'] for u, v in zip(path[:-1], path[1:]))
 
         if self.attractor_id is None:
             print("Attractor node not set. Cannot compute node-wise shortest path.")
@@ -200,7 +197,7 @@ class GaussianGraph:
                     if np.allclose(self.graph.nodes[node]['mean'], self.graph.nodes[other_node]['mean']) and node != other_node:
 
                         # compare path lengths
-                        if path_length(path) > path_length(other_path):
+                        if self.path_length(path) > self.path_length(other_path):
                             nodes_to_remove.add(node)
                             break
                         else:
@@ -209,6 +206,10 @@ class GaussianGraph:
 
         nodes_to_keep = list(set(all_paths_to_target.keys()) - nodes_to_remove)
         self.node_wise_shortest_path = nodes_to_keep
+
+    def path_length(self, path):
+        """Calculate the length of a path based on edge weights."""
+        return sum(self.graph[u][v]['weight'] for u, v in zip(path[:-1], path[1:]))
 
     @staticmethod
     def _rotation_matrix_between_vectors(a, b, tol=1e-8):

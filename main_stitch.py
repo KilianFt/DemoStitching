@@ -8,7 +8,7 @@ from src.util.load_tools import get_demonstration_set
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.ds_tools import apply_lpvds_demowise
-from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians
+from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph
 
 # TODO
 # - implement recalculating P?
@@ -31,10 +31,7 @@ class Config:
     param_cos: int = 3
     n_demos: int = 5 # number of demonstrations to generate
     noise_std: float = 0.05 # standard deviation of noise added to demonstrations
-    x_min: float = -2
-    x_max: float = 20
-    y_min: float = -2
-    y_max: float = 20
+    plot_extent = (-2, 20, -2, 20) # (x_min, x_max, y_min, y_max)
     n_test_simulations: int = 2 # number of test simulations for metrics
     save_fig: bool = True
 
@@ -69,12 +66,12 @@ def main():
 
     # Load/create a set of demonstrations
     demo_set = get_demonstration_set(config.dataset_path)
-    plot_demonstration_set(demo_set, config)
+    plot_demonstration_set(demo_set, config, file_name='Demonstrations_Raw')
 
     # Fit a DS to each demonstration
     ds_set, norm_demo_set = apply_lpvds_demowise(demo_set)
-    plot_demonstration_set(norm_demo_set, config, file_name='Demonstrations_Normalized')
-    plot_ds_set_gaussians(ds_set, config)
+    plot_demonstration_set(norm_demo_set, config, file_name='Demonstrations_Norm')
+    plot_ds_set_gaussians(ds_set, config, include_points=True, file_name='Demonstrations_Gaussians')
 
     # Determine iteration strategy based on config
     combinations = initialize_iter_strategy(config, demo_set)
@@ -86,7 +83,7 @@ def main():
         # Construct Gaussian Graph and Stitched DS
         print('Constructing Gaussian Graph and Stitched DS...')
         stitched_ds, gg, ds_stats = construct_stitched_ds(config, norm_demo_set, ds_set, initial, attractor)
-        plot_ds_set_gaussians([stitched_ds], config, file_name='stitched_ds')
+        plot_ds_set_gaussians([stitched_ds], config, include_points=True, file_name=f'stitched_gaussians_{i}')
 
         # Simulate trajectories
         print('Simulating trajectories...')
@@ -109,9 +106,10 @@ def main():
 
         # Plot
         if i == 0 and config.save_fig:
-            plot_tools.save_initial_plots(gg, ds_set, save_folder, config)
+            plot_gaussian_graph(gg, config, bare=True, save_as='Gaussian_Graph')
         if config.save_fig:
             plot_tools.plot_gaussians_with_ds(gg, stitched_ds, simulated_trajectories, save_folder, i, config)
+            plot_gaussian_graph(gg, config, save_as=f'gg_path_{i}')
 
         # Print
         if stitched_ds is not None:
