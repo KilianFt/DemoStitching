@@ -62,6 +62,9 @@ class lpvds_class():
         self.damm  = damm_class(self.x, self.x_dot, self.param)
         self.damm.K = len(gaussian_list)
         self.damm.gaussian_list = gaussian_list
+        self.damm.Mu = np.array([g['mu'] for g in gaussian_list])
+        self.damm.Sigma = np.array([g['sigma'] for g in gaussian_list])
+        self.damm.Prior = np.array([g['prior'] for g in gaussian_list])
         self.gamma = self.damm.logProb(self.x)
         self.assignment_arr = np.argmax(self.gamma, axis=0)
         self.K = self.damm.K

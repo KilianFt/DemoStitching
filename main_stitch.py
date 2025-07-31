@@ -25,7 +25,7 @@ class Config:
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None #np.array([4,15])
     attractor: Optional[np.ndarray] = None #np.array([14,2])
-    ds_method: str = "recompute_all" # ["recompute_all", "recompute_ds", "reuse", "chain"]
+    ds_method: str = "all_paths_ds" # ["recompute_all", "recompute_ds", "reuse", "all_paths_all", "all_paths_ds", "chain"]
     reverse_gaussians: bool = True
     param_dist: int = 3
     param_cos: int = 3

@@ -21,7 +21,12 @@ plt.rcParams.update({
 
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
-    mus, sigmas, directions, _ = gg.get_gaussian(gg.shortest_path[1:-1])
+    if gg.shortest_path is not None:
+        mus, sigmas, directions, _ = gg.get_gaussian(gg.shortest_path[1:-1])
+    elif gg.node_wise_shortest_path is not None:
+        mus, sigmas, directions, _ = gg.get_gaussian(gg.node_wise_shortest_path)
+    else:
+        raise Exception("No shortest path computed before plotting.")
     plot_gaussians(config, mus, sigmas, directions, ax=axs, resolution=1000)
     # gg.plot_shortest_path_gaussians(ax=axs[0])
     axs.set_xlim(config.plot_extent[0], config.plot_extent[1])

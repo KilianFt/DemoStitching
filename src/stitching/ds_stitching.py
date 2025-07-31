@@ -29,10 +29,13 @@ def construct_stitched_ds(config, demo_set, ds_set, initial, attractor):
         return NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=True)
     elif config.ds_method == 'recompute_ds':
         return NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=False)
-    elif config.ds_method == 'recompute_ds_with_demo_separation':
-        return NEW_recompute_ds_with_demo_separation(ds_set, demo_set, initial, attractor, config)
     elif config.ds_method == 'reuse':
-        raise NotImplementedError(f"Reuse method is not implemented yet.")
+        raise NotImplementedError('Reuse not implemented.')
+        #return NEW_reuse_ds(ds_set, initial, attractor, config)
+    elif config.ds_method == 'all_paths_all':
+        return NEW_all_paths(ds_set, attractor, config, recompute_gaussians=True)
+    elif config.ds_method == 'all_paths_ds':
+        return NEW_all_paths(ds_set, attractor, config, recompute_gaussians=False)
     elif config.ds_method == 'chain':
         raise NotImplementedError(f"Chain method is not implemented yet.")
     else:
@@ -126,14 +129,38 @@ def NEW_recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
 
     return stitched_ds, gg, stats
 
-def NEW_reuse_ds(gg, ds_set, attractor, reverse_gaussians):
+def NEW_reuse_ds(ds_set, initial, attractor, config):
+
+
+    # Initialize stats dictionary
+    stats = dict()
+
+    # ############## GAUSSIAN GRAPH ##############
+    t0 = time.time()
+    gaussians = {(i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
+                 for i, ds in enumerate(ds_set)
+                 for j, (mu, sigma, direction, prior) in
+                 enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_guassian_directions(ds), ds.damm.Prior))}
+    gg = gu.GaussianGraph(gaussians,
+                          attractor=attractor,
+                          initial=initial,
+                          reverse_gaussians=config.reverse_gaussians,
+                          param_dist=config.param_dist,
+                          param_cos=config.param_cos)
+    gg.compute_shortest_path()
+    stats['gg compute time'] = time.time() - t0
+
+    # ############## DS ##############
+    t0 = time.time()
 
     # Collect useful data
+    """
     path_len = len(gg.shortest_path)
     x_att = attractor[None,:]
     all_x = ds_set["x_sets"] # [D, M, N]
     all_x_dot = ds_set["x_dot_sets"] # [D, M, N]
     all_assignment_arr = ds_set["assignment_arrs"] # [D, M]
+    """
 
     # Select P from demo with closest attractor to current attractor
     # TODO is this fine? why not negative P?
@@ -197,6 +224,94 @@ def NEW_reuse_ds(gg, ds_set, attractor, reverse_gaussians):
     lpvds.ds_opt.P = P
 
     return lpvds
+
+def NEW_all_paths(ds_set, attractor, config, recompute_gaussians):
+    """Constructs a stitched dynamical system by aggregating all node-wise shortest paths in a Gaussian graph.
+
+    Args:
+        ds_set: List of DS objects, each with Gaussian mixture parameters and trajectory data.
+        attractor: Target attractor point for the system.
+        config: Configuration object specifying parameters for graph construction and DS computation.
+        recompute_gaussians: If True, re-estimates both Gaussians and dynamics; if False, only linear dynamics.
+
+    Returns:
+        tuple: (stitched_ds, gg, stats) where
+            - stitched_ds: Learned stitched DS object, or None on failure.
+            - gg: Constructed GaussianGraph object (with node-wise shortest paths).
+            - stats: Dictionary with timing information for major steps.
+    """
+
+    # Initialize stats dictionary
+    stats = dict()
+
+    # ############## GAUSSIAN GRAPH ##############
+    t0 = time.time()
+    gaussians = {(i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
+                 for i, ds in enumerate(ds_set)
+                 for j, (mu, sigma, direction, prior) in
+                 enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_guassian_directions(ds), ds.damm.Prior))}
+    gg = gu.GaussianGraph(gaussians,
+                          attractor=attractor,
+                          reverse_gaussians=config.reverse_gaussians,
+                          param_dist=config.param_dist,
+                          param_cos=config.param_cos)
+    gg.compute_node_wise_shortest_path()
+    stats['gg compute time'] = time.time() - t0
+
+    # ############## DS ##############
+    t0 = time.time()
+
+    # Collect the gaussians that eventually lead to the target
+    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg.node_wise_shortest_path]
+    priors = [prior / sum(priors) for prior in priors]
+    gaussians = []
+    for i, node_id in enumerate(gg.node_wise_shortest_path):
+        mu, sigma, direction, prior = gg.get_gaussian(node_id)
+        gaussians.append({
+            'prior': priors[i],  # use normalized prior
+            'mu': mu,
+            'sigma': sigma,
+            'rv': multivariate_normal(mu, sigma, allow_singular=True)
+        })
+
+    # Collect the trajectory points that are assigned to each gaussian
+    filtered_x = []
+    filtered_x_dot = []
+    for node_id in gg.node_wise_shortest_path:
+
+        ds_idx = node_id[0]
+        gaussian_idx = node_id[1]
+
+        assigned_x = ds_set[ds_idx].x[ds_set[ds_idx].assignment_arr == gaussian_idx]
+        assigned_x_dot = ds_set[ds_idx].x_dot[ds_set[ds_idx].assignment_arr == gaussian_idx]
+
+        # reverse velocity if gaussian is reversed
+        assigned_x_dot = -assigned_x_dot if node_id in gg.gaussian_reversal_map else assigned_x_dot
+
+        filtered_x.append(assigned_x)
+        filtered_x_dot.append(assigned_x_dot)
+
+    filtered_x = np.vstack(filtered_x)
+    filtered_x_dot = np.vstack(filtered_x_dot)
+
+    # compute DS
+    x_att = attractor
+    try:
+        stitched_ds = lpvds_class(filtered_x, filtered_x_dot, x_att)
+        if recompute_gaussians:  # compute new gaussians and linear systems (As)
+            stitched_ds.begin()
+        else:  # compute only linear systems (As)
+            stitched_ds.init_cluster(gaussians)
+            stitched_ds._optimize()
+
+    except Exception as e:
+        print(f'Failed to construct Stitched DS: {e}')
+        stitched_ds = None
+
+    stats['ds compute time'] = time.time() - t0
+    stats['total compute time'] = time.time() - t0
+
+    return stitched_ds, gg, stats
 
 def build_ds(gg, ds_set, attractor, ds_method, reverse_gaussians):
     if ds_method == "recompute_all":

@@ -186,23 +186,19 @@ class GaussianGraph:
             print("Attractor node not set. Cannot compute node-wise shortest path.")
 
         all_paths_to_target = nx.shortest_path(self.graph, target=self.attractor_id, weight='weight')
+        del all_paths_to_target[self.attractor_id]
 
-        # compare gaussians at the same location, remove the one with the longer path
+        # If two reversed nodes of each other both have a path to the target, remove the one with the longer path.
         nodes_to_remove = set()
-        for node, path in all_paths_to_target.items():
-            if node not in nodes_to_remove:
+        for node in all_paths_to_target.keys():
 
-                # find all other nodes with the same mean
-                for other_node, other_path in all_paths_to_target.items():
-                    if np.allclose(self.graph.nodes[node]['mean'], self.graph.nodes[other_node]['mean']) and node != other_node:
-
-                        # compare path lengths
-                        if self.path_length(path) > self.path_length(other_path):
-                            nodes_to_remove.add(node)
-                            break
-                        else:
-                            nodes_to_remove.add(other_node)
-                            continue
+            if node in self.gaussian_reversal_map:
+                original_node = self.gaussian_reversal_map[node]
+                if original_node in all_paths_to_target:
+                    if self.path_length(all_paths_to_target[node]) < self.path_length(all_paths_to_target[original_node]):
+                        nodes_to_remove.add(original_node)
+                    else:
+                        nodes_to_remove.add(node)
 
         nodes_to_keep = list(set(all_paths_to_target.keys()) - nodes_to_remove)
         self.node_wise_shortest_path = nodes_to_keep
