@@ -8,7 +8,7 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.patches import Ellipse
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.stats import multivariate_normal
-from src.util.ds_tools import get_guassian_directions
+from src.util.ds_tools import get_gaussian_directions
 import random
 import os
 import networkx as nx
@@ -20,7 +20,7 @@ plt.rcParams.update({
 })
 
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
-    fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
+    fig, axs = plt.subplots(1, 1, figsize=(8,8), sharex=True, sharey=True)
     if gg.shortest_path is not None:
         mus, sigmas, directions, _ = gg.get_gaussian(gg.shortest_path[1:-1])
     elif gg.node_wise_shortest_path is not None:
@@ -36,7 +36,7 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     plt.savefig(save_folder + "stitched_pre_gaussians_{}.png".format(i), dpi=300)
     plt.close()
 
-    fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
+    fig, axs = plt.subplots(1, 1, figsize=(8,8), sharex=True, sharey=True)
     plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs, x_min=config.plot_extent[0], x_max=config.plot_extent[1], y_min=config.plot_extent[2], y_max=config.plot_extent[3])
     axs.set_xlim(config.plot_extent[0], config.plot_extent[1])
     axs.set_ylim(config.plot_extent[2], config.plot_extent[3])
@@ -48,7 +48,7 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     # Plot updates gaussians from lpvds if they were updated
     """
     if hasattr(lpvds.damm, "Mu"):
-        fig, axs = plt.subplots(1, 1, figsize=(8,6), sharex=True, sharey=True)
+        fig, axs = plt.subplots(1, 1, figsize=(8,8), sharex=True, sharey=True)
         centers = lpvds.damm.Mu
         assignment_arr = lpvds.assignment_arr
         mean_xdot = np.zeros((lpvds.damm.K, lpvds.x.shape[1]))
@@ -189,7 +189,7 @@ def plot_ds_set_gaussians(ds_set, config, include_points=False, ax=None, file_na
     for ds in ds_set:
         mu.append(ds.damm.Mu)
         sigma.append(ds.damm.Sigma)
-        directions.append(get_guassian_directions(ds))
+        directions.append(get_gaussian_directions(ds))
     mu = np.vstack(mu)
     sigma = np.vstack(sigma)
     directions = np.vstack(directions)

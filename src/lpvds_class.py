@@ -12,10 +12,11 @@ def write_json(data, path):
         json.dump(data, json_file, indent=4)
 
 class lpvds_class():
-    def __init__(self, x, x_dot, x_att) -> None:
+    def __init__(self, x, x_dot, x_att, x_init=None) -> None:
         self.x      = x
         self.x_dot  = x_dot
         self.x_att  = x_att
+        self.x_init = x_init
         self.dim    = 2*x.shape[1]  # either 4 or 6
 
         # simulation parameters
@@ -39,9 +40,15 @@ class lpvds_class():
         
         self.damm  = damm_class(self.x, self.x_dot, self.param)
         self.gamma = self.damm.begin()
+        
+        # Handle case where damm executable failed
+        if self.gamma is None:
+            print("Error: DAMM clustering failed")
+            return False
 
         self.assignment_arr = np.argmax(self.gamma, axis=0)
         self.K     = self.gamma.shape[0]
+        return True
 
 
     def _optimize(self):
@@ -71,9 +78,11 @@ class lpvds_class():
 
 
     def begin(self):
-        self._cluster()
+        if not self._cluster():
+            return False
         self._optimize()
         # self._logOut()
+        return True
 
 
     def _step(self, x, dt):
