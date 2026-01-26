@@ -1,6 +1,7 @@
 from scipy.stats import multivariate_normal
 import numpy as np
 import time
+import threading
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
@@ -134,6 +135,12 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
 
     stats['ds compute time'] = time.time() - t_ds
     stats['total compute time'] = time.time() - t0
+
+    # Additional safety check: ensure stitched_ds has properly initialized damm with Mu attribute
+    if stitched_ds is not None and hasattr(stitched_ds, 'damm') and stitched_ds.damm is not None:
+        if not hasattr(stitched_ds.damm, 'Mu'):
+            print('WARN: stitched_ds.damm does not have Mu attribute')
+            stitched_ds = None
 
     return stitched_ds, gg, stats
 

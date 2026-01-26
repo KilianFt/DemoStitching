@@ -41,9 +41,8 @@ def apply_lpvds_demowise(demo_set):
     ds_set = []
     reversed_ds_set = []
     for demo, attractor, initial_point in zip(norm_demo_set, attractors, initial_points):
-
         # Apply LPV-DS normal direction
-        for i in range(10):
+        for i in range(3):
             try:
                 lpvds = lpvds_class(demo.x, demo.x_dot, x_att=attractor, x_init=initial_point)
                 result = lpvds.begin()
@@ -55,19 +54,18 @@ def apply_lpvds_demowise(demo_set):
             except:
                 print("Failed to fit LPV-DS, retrying...")
 
-
         # Apply LPV-DS reverse direction
-        for i in range(10):
+        for i in range(3):
             try:
                 lpvds = lpvds_class(demo.x, -demo.x_dot, x_att=initial_point, x_init=attractor)
                 result = lpvds.begin()
                 if not result:
-                    print('Failed to fit LPV-DS, retrying...')
+                    print('Failed to fit reverse LPV-DS, retrying...')
                 else:
                     reversed_ds_set.append(lpvds)
                     break
             except:
-                print("Failed to fit LPV-DS, retrying...")
+                print("Failed to fit reverse LPV-DS, retrying...")
 
     return ds_set, reversed_ds_set, norm_demo_set
 

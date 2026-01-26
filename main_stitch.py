@@ -2,7 +2,6 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 from src.util import plot_tools
-from src.stitching import build_ds
 from src.stitching.metrics import save_results_dataframe, calculate_ds_metrics
 from src.util.load_tools import get_demonstration_set
 from src.util.benchmarking_tools import initialize_iter_strategy
@@ -11,13 +10,15 @@ from src.util.ds_tools import apply_lpvds_demowise
 from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph
 
 # TODO
-# - implement recalculating P?
+# - all_paths_all
 
 # ds_method options:
 # - ["recompute_all"] Recompute using shortest path
 # - ["recompute_ds"] Recompute only DS
 # - ["reuse"] Reuse A's from step 1 and only recompute them if they are invalid wrt P
-# - ["chain"] Fit DS to each node and switch between attractors to reach goal
+# - ["all_paths_all"] Fit DS to each node and use all paths
+# - ["all_paths_ds"] Fit DS to each node and use all paths for DS
+# - ["all_paths_reuse"] Fit DS to each node and use all paths for DS and reuse A's from step 1
 
 @dataclass
 class Config:
@@ -25,15 +26,16 @@ class Config:
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None #np.array([4,15])
     attractor: Optional[np.ndarray] = None #np.array([14,2])
-    ds_method: str = "all_paths_ds" # ["recompute_all", "recompute_ds", "reuse", "all_paths_all", "all_paths_ds", "chain"]
+    ds_method: str = "recompute_ds"
     reverse_gaussians: bool = True
     param_dist: int = 3
     param_cos: int = 3
     n_demos: int = 5 # number of demonstrations to generate
     noise_std: float = 0.05 # standard deviation of noise added to demonstrations
-    plot_extent = (-2, 20, -2, 20) # (x_min, x_max, y_min, y_max)
+    plot_extent = (0, 15, 0, 15) # (x_min, x_max, y_min, y_max)
     n_test_simulations: int = 2 # number of test simulations for metrics
     save_fig: bool = True
+    seed: int = 42 # 42, 100, 3215, 21
 
 def simulate_trajectories(ds, initial, config):
     """Simulates multiple trajectories from noisy initial conditions.
@@ -59,9 +61,11 @@ def simulate_trajectories(ds, initial, config):
 
     return simulated_trajectories
 
-def main():
+def main(seed):
 
-    config = Config()
+    config = Config(seed=seed)
+    np.random.seed(config.seed)
+
     save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
 
     # Load/create a set of demonstrations
@@ -69,10 +73,9 @@ def main():
     plot_demonstration_set(demo_set, config, file_name='Demonstrations_Raw')
 
     # Fit a DS to each demonstration
-    ds_set, norm_demo_set = apply_lpvds_demowise(demo_set)
+    ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set)
     plot_demonstration_set(norm_demo_set, config, file_name='Demonstrations_Norm')
     plot_ds_set_gaussians(ds_set, config, include_points=True, file_name='Demonstrations_Gaussians')
-
     # Determine iteration strategy based on config
     combinations = initialize_iter_strategy(config, demo_set)
 
@@ -82,34 +85,49 @@ def main():
 
         # Construct Gaussian Graph and Stitched DS
         print('Constructing Gaussian Graph and Stitched DS...')
-        stitched_ds, gg, ds_stats = construct_stitched_ds(config, norm_demo_set, ds_set, initial, attractor)
-        plot_ds_set_gaussians([stitched_ds], config, include_points=True, file_name=f'stitched_gaussians_{i}')
+        stitched_ds, gg, ds_stats = construct_stitched_ds(config, norm_demo_set, ds_set, reversed_ds_set, initial, attractor)
+        
+        if stitched_ds is None or not hasattr(stitched_ds, 'damm') or stitched_ds.damm is None or not hasattr(stitched_ds.damm, 'Mu'):
+            print(f"Warning: Skipping Stitched DS object with incomplete DAMM clustering")
+            stitched_ds = None
+        
+        if stitched_ds is None:
+            ds_metrics = calculate_ds_metrics(
+                x_ref=None,
+                x_dot_ref=None,
+                ds=stitched_ds,
+                sim_trajectories=None,
+                initial=initial,
+                attractor=attractor
+            )
+        else:
+            plot_ds_set_gaussians([stitched_ds], config, include_points=True, file_name=f'stitched_gaussians_{i}')
 
-        # Simulate trajectories
-        print('Simulating trajectories...')
-        simulated_trajectories = simulate_trajectories(stitched_ds, initial, config)
+            # Simulate trajectories
+            print('Simulating trajectories...')
+            simulated_trajectories = simulate_trajectories(stitched_ds, initial, config)
 
-        # Calculate DS metrics
-        print('Calculating DS metrics...')
-        ds_metrics = calculate_ds_metrics(
-            x_ref=stitched_ds.x,
-            x_dot_ref=stitched_ds.x_dot,
-            ds=stitched_ds,
-            sim_trajectories=simulated_trajectories,
-            initial=initial,
-            attractor=attractor
-        )
+            # Calculate DS metrics
+            print('Calculating DS metrics...')
+            ds_metrics = calculate_ds_metrics(
+                x_ref=stitched_ds.x,
+                x_dot_ref=stitched_ds.x_dot,
+                ds=stitched_ds,
+                sim_trajectories=simulated_trajectories,
+                initial=initial,
+                attractor=attractor
+            )
+
+            # Plot
+            if i == 0 and config.save_fig:
+                plot_gaussian_graph(gg, config, bare=True, save_as='Gaussian_Graph')
+            if config.save_fig:
+                plot_tools.plot_gaussians_with_ds(gg, stitched_ds, simulated_trajectories, save_folder, i, config)
+                plot_gaussian_graph(gg, config, save_as=f'gg_path_{i}')
 
         # Compile and append results
         results = {'combination_id': i, 'ds_method': config.ds_method,} | ds_stats | ds_metrics
         all_results.append(results)
-
-        # Plot
-        if i == 0 and config.save_fig:
-            plot_gaussian_graph(gg, config, bare=True, save_as='Gaussian_Graph')
-        if config.save_fig:
-            plot_tools.plot_gaussians_with_ds(gg, stitched_ds, simulated_trajectories, save_folder, i, config)
-            plot_gaussian_graph(gg, config, save_as=f'gg_path_{i}')
 
         # Print
         if stitched_ds is not None:
@@ -125,12 +143,14 @@ def main():
 
     # Save Results to CSV
     if all_results:
-        results_path = save_folder + "results.csv"
+        results_path = save_folder + f"results_{config.seed}.csv"
         save_results_dataframe(all_results, results_path)
     else:
         print("No results to save.")
 
 
 if __name__ == "__main__":
-    main()
+    # for seed in [42, 100, 3215, 21]:
+    for seed in [3215]: #3215
+        main(seed)
     

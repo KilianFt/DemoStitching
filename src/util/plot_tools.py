@@ -15,7 +15,7 @@ import networkx as nx
 
 plt.rcParams.update({
     "text.usetex": False,
-    "font.family": "Times New Roman",
+    # "font.family": "Times New Roman",
     "font.size": 20
 })
 
@@ -27,7 +27,21 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
         mus, sigmas, directions, _ = gg.get_gaussian(gg.node_wise_shortest_path)
     else:
         raise Exception("No shortest path computed before plotting.")
-    plot_gaussians(config, mus, sigmas, directions, ax=axs, resolution=1000)
+    # Support both 2D and 3D Gaussians by projecting to the XY-plane for 3D
+    mus = np.array(mus)
+    sigmas = np.array(sigmas)
+    directions = np.array(directions) if directions is not None else None
+
+    if mus.ndim == 2 and mus.shape[1] > 2:
+        mus_plot = mus[:, :2]
+        sigmas_plot = sigmas[:, :2, :2]
+        directions_plot = directions[:, :2] if directions is not None else None
+    else:
+        mus_plot = mus
+        sigmas_plot = sigmas
+        directions_plot = directions
+
+    plot_gaussians(config, mus_plot, sigmas_plot, directions_plot, ax=axs, resolution=1000)
     # gg.plot_shortest_path_gaussians(ax=axs[0])
     axs.set_xlim(config.plot_extent[0], config.plot_extent[1])
     axs.set_ylim(config.plot_extent[2], config.plot_extent[3])
@@ -36,8 +50,12 @@ def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     plt.savefig(save_folder + "stitched_pre_gaussians_{}.png".format(i), dpi=300)
     plt.close()
 
+    # Plot DS streamlines in the XY plane. For 3D systems, ignore Z visually
+    # but evaluate the full 3D DS on a fixed Z slice.
     fig, axs = plt.subplots(1, 1, figsize=(8,8), sharex=True, sharey=True)
-    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs, x_min=config.plot_extent[0], x_max=config.plot_extent[1], y_min=config.plot_extent[2], y_max=config.plot_extent[3])
+    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=axs,
+               x_min=config.plot_extent[0], x_max=config.plot_extent[1],
+               y_min=config.plot_extent[2], y_max=config.plot_extent[3])
     axs.set_xlim(config.plot_extent[0], config.plot_extent[1])
     axs.set_ylim(config.plot_extent[2], config.plot_extent[3])
     axs.set_aspect('equal')
@@ -187,15 +205,36 @@ def plot_ds_set_gaussians(ds_set, config, include_points=False, ax=None, file_na
     sigma = []
     directions = []
     for ds in ds_set:
+        # Skip DS objects that don't have properly initialized DAMM clustering
+        if ds is None or not hasattr(ds, 'damm') or ds.damm is None or not hasattr(ds.damm, 'Mu'):
+            print(f"Warning: Skipping DS object with incomplete DAMM clustering")
+            continue
+            
         mu.append(ds.damm.Mu)
         sigma.append(ds.damm.Sigma)
         directions.append(get_gaussian_directions(ds))
+    
+    # Check if we have any valid DS objects to plot
+    if len(mu) == 0:
+        print("Warning: No valid DS objects found for plotting. Skipping plot.")
+        return ax
+        
     mu = np.vstack(mu)
     sigma = np.vstack(sigma)
     directions = np.vstack(directions)
 
+    # If Gaussians are 3D, project them to XY-plane for 2D visualization
+    if mu.ndim == 2 and mu.shape[1] > 2:
+        mu_plot = mu[:, :2]
+        sigma_plot = sigma[:, :2, :2]
+        directions_plot = directions[:, :2]
+    else:
+        mu_plot = mu
+        sigma_plot = sigma
+        directions_plot = directions
+
     # Plot the Gaussians
-    ax = plot_gaussians(config, mu, sigma, directions, ax=ax)
+    ax = plot_gaussians(config, mu_plot, sigma_plot, directions_plot, ax=ax)
 
     # Add trajectory points if requested
     if include_points:
@@ -465,7 +504,11 @@ def plot_gmm(x_train, label, damm, ax = None):
         ax.tick_params(axis='z', which='major', pad=15)
 
 def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
-    """ passing lpvds object to plot the streamline of DS (only in 2D)"""
+    """Plot DS streamlines in XY plane for 2D or 3D LPV-DS.
+
+    For 3D systems, Z is ignored in the visualization, but a fixed Z slice
+    (taken from the attractor) is used when evaluating the dynamics.
+    """
     A = lpvds.A
     att = lpvds.x_att
 
@@ -473,27 +516,46 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
         fig = plt.figure(figsize=(16, 10))
         ax = fig.add_subplot()
 
+    # Always scatter and plot trajectories in XY only
     ax.scatter(x_train[:, 0], x_train[:, 1], color='k', s=5, label='original data')
     for idx, x_test in enumerate(x_test_list):
-        ax.plot(x_test[:, 0], x_test[:, 1], color= 'r', linewidth=2)
+        if x_test.shape[1] >= 2:
+            ax.plot(x_test[:, 0], x_test[:, 1], color='r', linewidth=2)
 
     if x_min is None or x_max is None or y_min is None or y_max is None:
         x_min, x_max = ax.get_xlim()
         y_min, y_max = ax.get_ylim()
 
     plot_sample = 50
-    x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))
-    X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
-    gamma = lpvds.damm.logProb(X.T)
-    for k in np.arange(len(A)):
-        if k == 0:
-            dx = gamma[k].reshape(1, -1) * (A[k] @ (X - att.reshape(1,-1).T))  # gamma[k].reshape(1, -1): [1, num] dim x num
-        else:
-            dx +=  gamma[k].reshape(1, -1) * (A[k] @ (X - att.reshape(1,-1).T))
-    u = dx[0,:].reshape((plot_sample,plot_sample))
-    v = dx[1,:].reshape((plot_sample,plot_sample))
+    x_mesh, y_mesh = np.meshgrid(np.linspace(x_min, x_max, plot_sample),
+                                 np.linspace(y_min, y_max, plot_sample))
 
-    ax.streamplot(x_mesh,y_mesh,u,v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
+    # Build evaluation grid in full state dimension
+    if lpvds.x.shape[1] == 2:
+        X_full = np.vstack([x_mesh.ravel(), y_mesh.ravel()])  # (2, N)
+    else:
+        # 3D: use a fixed Z slice (attractor Z) for evaluation
+        z_plane = att[2] if att.shape[0] >= 3 else 0.0
+        X_full = np.vstack([
+            x_mesh.ravel(),
+            y_mesh.ravel(),
+            np.full_like(x_mesh.ravel(), z_plane),
+        ])  # (3, N)
+
+    gamma = lpvds.damm.logProb(X_full.T)
+
+    dx = None
+    for k in np.arange(len(A)):
+        # A[k] @ (X_full - att.reshape(1, -1).T) -> (dim, N)
+        term = A[k] @ (X_full - att.reshape(-1, 1))
+        weighted = gamma[k].reshape(1, -1) * term
+        dx = weighted if dx is None else dx + weighted
+
+    # Use only XY components for the vector field
+    u = dx[0, :].reshape((plot_sample, plot_sample))
+    v = dx[1, :].reshape((plot_sample, plot_sample))
+
+    ax.streamplot(x_mesh, y_mesh, u, v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
     ax.scatter(att[0], att[1], color='g', s=100, alpha=0.7)
     ax.set_aspect('equal')
 
