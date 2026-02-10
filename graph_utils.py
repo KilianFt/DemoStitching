@@ -72,6 +72,23 @@ class GaussianGraph:
                 if edge_weight is not None:
                     self.graph.add_edge(id1, id2, weight=edge_weight)
 
+        # Prune edges (if shortest path is n1 -> n2 -> n3, remove direct edge n1 -> n3 if it exists)
+        edges_to_check = set(self.graph.edges)
+        while edges_to_check:
+            n1, n2 = edges_to_check.pop()
+
+            try:
+                shortest_path = nx.shortest_path(self.graph, source=n1, target=n2, weight='weight')
+            except:
+                continue  # no path exists, skip
+
+            # Remove edges if not part of shortest path
+            for i in range(len(shortest_path) - 2):
+                for j in range(i + 2, len(shortest_path)):
+                    edges_to_check -= {(shortest_path[i], shortest_path[j])}  # no need to check them later
+                    if self.graph.has_edge(shortest_path[i], shortest_path[j]):
+                        self.graph.remove_edge(shortest_path[i], shortest_path[j])
+
     def set_attractor(self, attractor):
         """ Updates/creates an attractor node and adds it to the graph.
 
@@ -313,20 +330,35 @@ class GaussianGraph:
 
         # Extract edge weights
         edges = gg.edges(data=True)
-        weights = [edata['weight'] for _, _, edata in edges]
 
         # Normalize weights for alpha values (higher weight = lower alpha)
-        norm_param = 10
+        """
+        weights = [edata['weight'] for _, _, edata in edges]
+        norm_param = 1
         normalize_weights = weights / min(weights)
         normalize_weights = normalize_weights - 1
         normalize_weights = normalize_weights * norm_param / np.median(normalize_weights)
         normalize_weights = normalize_weights + 1
         alphas = [np.exp(1-w) for w in normalize_weights]
+        """
+        alphas = []
+        colors = []
+        for e in edges:
+            if e[0] == self.initial_id:
+                colors.append('green')
+                alphas.append(0.5)
+            elif e[1] == self.attractor_id:
+                colors.append('red')
+                alphas.append(0.5)
+            else:
+                colors.append('black')
+                alphas.append(1)
+
 
         # Draw edges
-        for (u, v, edata), alpha in zip(edges, alphas):
+        for (u, v, edata), alpha, color in zip(edges, alphas, colors):
             nx.draw_networkx_edges(gg, pos, edgelist=[(u, v)],
-                                   alpha=alpha, edge_color='black',
+                                   alpha=alpha, edge_color=color,
                                    arrows=True, arrowsize=8, ax=ax)
 
         # Draw shortest path
