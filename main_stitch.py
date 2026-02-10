@@ -40,7 +40,7 @@ class Config:
     # DAMM settings
     rel_scale: float = 0.2 # 0.7
     total_scale: float = 1.0 # 1.5
-    nu_0: int = 4
+    nu_0: int = 4 # 5
     kappa_0: int = 0.1 # 1.0
     psi_dir_0: int = 0.1 # 1.0
 
@@ -64,7 +64,7 @@ def simulate_trajectories(ds, initial, config):
                range(config.n_test_simulations)]
     simulated_trajectories = []
     for x_0 in x_inits:
-        simulated_trajectories.append(ds.sim(x_0[None, :], dt=0.01))
+        simulated_trajectories.append(ds.sim(x_0[None, :], dt=0.01)[0])
 
     return simulated_trajectories
 
@@ -81,10 +81,7 @@ def main():
     # Fit a DS to each demonstration
     ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config)
     plot_demonstration_set(norm_demo_set, config, file_name='Demonstrations_Norm')
-    print("gauss")
-    print(ds_set)
     plot_ds_set_gaussians(ds_set, config, include_points=True, file_name='Demonstrations_Gaussians')
-    return
 
     # Determine iteration strategy based on config
     combinations = initialize_iter_strategy(config, demo_set)

@@ -126,13 +126,13 @@ def get_gaussian_directions(lpvds):
     """Computes normalized direction vectors for each Gaussian in an LPV-DS.
 
     Args:
-        lpvds: LPV-DS object with damm.gaussian_list (with 'mu') and A matrices.
+        lpvds: LPV-DS object with damm.gaussian_lists (with 'mu') and A matrices.
 
     Returns:
         np.ndarray: Array of normalized direction vectors for all Gaussians.
     """
     directions = []
-    for i, gaussian in enumerate(lpvds.damm.gaussian_list):
+    for i, gaussian in enumerate(lpvds.damm.gaussian_lists):
         try:
             d = lpvds.A[i] @ (gaussian['mu'] - lpvds.x_att)
         except:

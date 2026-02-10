@@ -22,7 +22,7 @@ def predict_velocities(x_positions, lpvds):
         
         # Use the same logic as in _step method
         x_dot = np.zeros(x_positions[i].shape[0])
-        gamma = lpvds.damm.logProb(x_positions[i])
+        gamma = lpvds.damm.compute_gamma(x_positions[i])
         
         for k in range(lpvds.A.shape[0]):
             x_dot += gamma[k, 0] * lpvds.A[k] @ (x_positions[i] - lpvds.x_att)
@@ -212,6 +212,13 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
     trajectory_lengths = []
     final_positions = []
     for trajectory in sim_trajectories:
+
+        if np.any(np.isnan(trajectory)):
+            print(f"Warning: Skipping trajectory with NaNs")
+            dtw_distances.append(np.nan)
+            final_distances_to_attractor.append(np.nan)
+            trajectory_lengths.append(len(trajectory))
+            continue
 
         # Calculate DTW distance to reference trajectory
         dtw_distance = calculate_dtw_distance(x_ref, trajectory)

@@ -43,9 +43,9 @@ class lpvds_class():
         #     "sigma_dir_0":    0.001,
         #     "min_thold":      0
         # }
-        self.x, self.x_dot, x_dir = damm_class.pre_process(self.x, self.x_dot)
+        self.x, self.x_dot, self.x_dir = damm_class.pre_process(self.x, self.x_dot)
         
-        self.damm  = damm_class(self.x, x_dir, nu_0=self.nu_0, kappa_0=self.kappa_0, psi_dir_0=self.psi_dir_0, rel_scale=self.rel_scale, total_scale=self.total_scale)
+        self.damm  = damm_class(self.x, self.x_dir, nu_0=self.nu_0, kappa_0=self.kappa_0, psi_dir_0=self.psi_dir_0, rel_scale=self.rel_scale, total_scale=self.total_scale)
 
 
     def _cluster(self):
@@ -73,14 +73,14 @@ class lpvds_class():
         self.K = int(self.damm.K)
 
 
-    def init_cluster(self, gaussian_list):
-        self.damm  = damm_class(self.x, self.x_dot)
-        self.damm.K = len(gaussian_list)
-        self.damm.gaussian_list = gaussian_list
-        self.damm.Mu = np.array([g['mu'] for g in gaussian_list])
-        self.damm.Sigma = np.array([g['sigma'] for g in gaussian_list])
-        self.damm.Prior = np.array([g['prior'] for g in gaussian_list])
-        self.gamma = self.damm.logProb(self.x)
+    def init_cluster(self, gaussian_lists):
+        self.damm  = damm_class(self.x, self.x_dir, nu_0=self.nu_0, kappa_0=self.kappa_0, psi_dir_0=self.psi_dir_0, rel_scale=self.rel_scale, total_scale=self.total_scale)
+        self.damm.K = len(gaussian_lists)
+        self.damm.gaussian_lists = gaussian_lists
+        self.damm.Mu = np.array([g['mu'] for g in gaussian_lists])
+        self.damm.Sigma = np.array([g['sigma'] for g in gaussian_lists])
+        self.damm.Prior = np.array([g['prior'] for g in gaussian_lists])
+        self.gamma = self.damm.compute_gamma(self.x)
         self.assignment_arr = np.argmax(self.gamma, axis=0)
         self.K = self.damm.K
 
@@ -94,6 +94,7 @@ class lpvds_class():
         self._cluster()
         self._optimize()
         # self._logOut()
+        return True
 
 
     def elasticUpdate(self, new_x, new_x_dot, new_gmm_struct, new_att):
@@ -213,7 +214,7 @@ class lpvds_class():
         x_dot = self.x_dot
 
         x_dot_pred     = np.zeros((x.shape)).T
-        gamma = self.damm.logProb(x)
+        gamma = self.damm.compute_gamma(x)
         for k in range(self.K):
             x_dot_pred  += gamma[k, :].reshape(1, -1) * (self.A[k] @ (x - self.x_att).T)
 
