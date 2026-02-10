@@ -1,9 +1,19 @@
-# Linear Parameter Varying Dynamical Systems (LPV-DS)
+# Demonstration stitching
+This code builds on top of the following repositories:
+- [LPVDS](https://github.com/sunan-sun/lpvds)
+- [DAMM](https://github.com/SunannnSun/damm)
+- [DSOPT](https://github.com/sunan-sun/dsopt)
 
-Boiler plate code of LPV-DS framework, compatible with any customizing clustering and optimization methods. Providing utilies functions from loading_tools, process_tools, plot_tools, and evaluation_tool to test on any variant of LPV-DS framework.
+with following references
 
 
-<!-- ![Picture1](https://github.com/SunannnSun/damm_lpvds/assets/97807687/5a72467b-c771-4e8a-a0e0-7828efa59952) -->
+> [1] Billard, A., Mirrazavi, S., & Figueroa, N. (2022). Learning for adaptive and reactive robot control: a dynamical systems approach. Mit Press.
+
+> [2] Sun, S., Gao, H., Li, T., & Figueroa, N. (2024). "Directionality-aware mixture model parallel sampling for efficient linear parameter varying dynamical system learning". IEEE Robotics and Automation Letters, 9(7), 6248-6255.
+
+> [3] Li, T., Sun, S., Aditya, S. S., & Figueroa, N. (2025). Elastic Motion Policy: An Adaptive Dynamical System for Robust and Efficient One-Shot Imitation Learning. arXiv preprint arXiv:2503.08029.
+
+Thanks for open sourcing your work!
 
 
 ## Stitching
@@ -12,7 +22,7 @@ The stitching framework allows you to connect multiple trajectory demonstrations
 
 ### Quick Start
 ```bash
-python main_stitch.py
+uv run main_stitch.py
 ```
 
 ### How It Works

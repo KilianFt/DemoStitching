@@ -22,7 +22,7 @@ from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, p
 
 @dataclass
 class Config:
-    dataset_path: str = "./dataset/stitching/presentation2"
+    dataset_path: str = "./dataset/stitching/nodes_1"
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None#np.array([4,15])
     attractor: Optional[np.ndarray] = None#np.array([14,2])
@@ -36,6 +36,13 @@ class Config:
     n_test_simulations: int = 2 # number of test simulations for metrics
     save_fig: bool = True
     seed: int = 42 # 42, 100, 3215, 21
+
+    # DAMM settings
+    rel_scale: float = 0.2 # 0.7
+    total_scale: float = 1.0 # 1.5
+    nu_0: int = 4
+    kappa_0: int = 0.1 # 1.0
+    psi_dir_0: int = 0.1 # 1.0
 
 def simulate_trajectories(ds, initial, config):
     """Simulates multiple trajectories from noisy initial conditions.
@@ -72,7 +79,7 @@ def main():
     plot_demonstration_set(demo_set, config, file_name='Demonstrations_Raw')
 
     # Fit a DS to each demonstration
-    ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set)
+    ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config)
     plot_demonstration_set(norm_demo_set, config, file_name='Demonstrations_Norm')
     print("gauss")
     print(ds_set)
