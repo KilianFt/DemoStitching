@@ -40,7 +40,7 @@ def load_demonstration_set(demoset_path):
     # Collect all demonstration folders
     demonstration_folders = []
     for folder_name in os.listdir(demoset_path):
-       if 'demonstration' in folder_name:
+       if 'demonstration' in folder_name or 'dataset' in folder_name:
            demonstration_folders.append(folder_name)
 
     # Return if the folder does not contain any demonstrations

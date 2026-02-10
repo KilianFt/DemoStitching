@@ -23,11 +23,12 @@ class Demonstration:
     def __str__(self):
         return f'Demonstration with {len(self.trajectories)} trajectories, total points: {self.x.shape[0]}'
 
-def apply_lpvds_demowise(demo_set):
+def apply_lpvds_demowise(demo_set, config=None):
     """Fits an LPV-DS to each demonstration in the set after aligning to a common attractor.
 
     Args:
         demo_set: List of Demonstration objects with trajectory data.
+        config: Configuration object with DAMM settings.
 
     Returns:
         tuple: (ds_set, norm_demo_set) where ds_set contains LPV-DS parameter
@@ -37,6 +38,12 @@ def apply_lpvds_demowise(demo_set):
     # Normalize each demonstration to a common attractor
     norm_demo_set, attractors, initial_points = normalize_demo_set(demo_set)
 
+    rel_scale = getattr(config, 'rel_scale', 0.7)
+    total_scale = getattr(config, 'total_scale', 1.5)
+    nu_0 = getattr(config, 'nu_0', 5)
+    kappa_0 = getattr(config, 'kappa_0', 1)
+    psi_dir_0 = getattr(config, 'psi_dir_0', 1)
+
     # Apply LPV-DS to each normalized demonstration
     ds_set = []
     reversed_ds_set = []
@@ -45,29 +52,33 @@ def apply_lpvds_demowise(demo_set):
         # Apply LPV-DS normal direction
         for i in range(10):
             try:
-                lpvds = lpvds_class(demo.x, demo.x_dot, x_att=attractor, x_init=initial_point)
+                lpvds = lpvds_class(demo.x, demo.x_dot, x_att=attractor, 
+                                    rel_scale=rel_scale, total_scale=total_scale,
+                                    nu_0=nu_0, kappa_0=kappa_0, psi_dir_0=psi_dir_0)
                 result = lpvds.begin()
                 if not result:
                     print('Failed to fit LPV-DS, retrying...')
                 else:
                     ds_set.append(lpvds)
                     break
-            except:
-                print("Failed to fit LPV-DS, retrying...")
+            except Exception as e:
+                print(f"Failed to fit LPV-DS, retrying... Error: {e}")
 
 
         # Apply LPV-DS reverse direction
         for i in range(10):
             try:
-                lpvds = lpvds_class(demo.x, -demo.x_dot, x_att=initial_point, x_init=attractor)
+                lpvds = lpvds_class(demo.x, -demo.x_dot, x_att=initial_point,
+                                    rel_scale=rel_scale, total_scale=total_scale,
+                                    nu_0=nu_0, kappa_0=kappa_0, psi_dir_0=psi_dir_0)
                 result = lpvds.begin()
                 if not result:
                     print('Failed to fit LPV-DS, retrying...')
                 else:
                     reversed_ds_set.append(lpvds)
                     break
-            except:
-                print("Failed to fit LPV-DS, retrying...")
+            except Exception as e:
+                print(f"Failed to fit LPV-DS, retrying... Error: {e}")
 
     return ds_set, reversed_ds_set, norm_demo_set
 
@@ -115,13 +126,13 @@ def get_gaussian_directions(lpvds):
     """Computes normalized direction vectors for each Gaussian in an LPV-DS.
 
     Args:
-        lpvds: LPV-DS object with damm.gaussian_list (with 'mu') and A matrices.
+        lpvds: LPV-DS object with damm.gaussian_lists (with 'mu') and A matrices.
 
     Returns:
         np.ndarray: Array of normalized direction vectors for all Gaussians.
     """
     directions = []
-    for i, gaussian in enumerate(lpvds.damm.gaussian_list):
+    for i, gaussian in enumerate(lpvds.damm.gaussian_lists):
         try:
             d = lpvds.A[i] @ (gaussian['mu'] - lpvds.x_att)
         except:

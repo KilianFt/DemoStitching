@@ -1,54 +1,88 @@
-import os, sys, json
+import os, sys, json, time
 import numpy as np
 
 """ uncomment the imports below if using DAMM; otherwise import your own methods """
-from .damm.damm_class import damm_class
+from .damm.src.damm_class import DAMM as damm_class
 from .dsopt.dsopt_class import dsopt_class
 
 
 
-def write_json(data, path):
+def _write_json(data, path):
     with open(path, "w") as json_file:
         json.dump(data, json_file, indent=4)
 
+
+
 class lpvds_class():
-    def __init__(self, x, x_dot, x_att, x_init=None) -> None:
+    def __init__(self, x, x_dot, x_att, rel_scale=0.7, total_scale=1.5, nu_0=5, kappa_0=1, psi_dir_0=1) -> None:
         self.x      = x
         self.x_dot  = x_dot
         self.x_att  = x_att
-        self.x_init = x_init
+        self.x_0    = x[0, :]
         self.dim    = 2*x.shape[1]  # either 4 or 6
+
+        self.rel_scale = rel_scale
+        self.total_scale = total_scale
+        self.nu_0 = nu_0
+        self.kappa_0 = kappa_0
+        self.psi_dir_0 = psi_dir_0
 
         # simulation parameters
         self.tol = 10E-3
-        self.max_iter = 30000
+        self.max_iter = 10000
 
         # define output path
         file_path           = os.path.dirname(os.path.realpath(__file__))  
         self.output_path    = os.path.join(os.path.dirname(file_path), 'output_pos.json')
 
+        # self.param ={
+        #     "mu_0":           np.zeros((self.dim, )), 
+        #     "sigma_0":        0.001 * np.eye(self.dim),
+        #     "nu_0":           self.dim,
+        #     "kappa_0":        0,
+        #     "sigma_dir_0":    0.001,
+        #     "min_thold":      0
+        # }
+        self.x, self.x_dot, self.x_dir = damm_class.pre_process(self.x, self.x_dot)
+        
+        self.damm  = damm_class(self.x, self.x_dir, nu_0=self.nu_0, kappa_0=self.kappa_0, psi_dir_0=self.psi_dir_0, rel_scale=self.rel_scale, total_scale=self.total_scale)
+
 
     def _cluster(self):
-        self.param ={
-            "mu_0":           np.zeros((self.dim, )), 
-            "sigma_0":        0.1 * np.eye(self.dim),
-            "nu_0":           self.dim,
-            "kappa_0":        0.1,
-            "sigma_dir_0":    0.1,
-            "min_thold":      10
-        }
-        
-        self.damm  = damm_class(self.x, self.x_dot, self.param)
-        self.gamma = self.damm.begin()
-        
-        # Handle case where damm executable failed
-        if self.gamma is None:
-            print("Error: DAMM clustering failed")
-            return False
+        self.gamma = self.damm.fit()
+        # self.gamma = self.damm.fit_scikit()
 
+        assignment_arr = np.argmax(self.gamma, axis=0) # this might result in some component being empty
+        unique_elements, counts = np.unique(assignment_arr, return_counts=True)
+        for element, count in zip(unique_elements, counts):
+            print("Current element", element)
+            print("has number", count)
+            if count == 0:
+                input("Elastic update gamma gives zero count")
+
+        # self.K     = self.gamma.shape[0] 
+
+        self.assignment_arr = self.damm.z
+        # unique_elements, counts = np.unique(self.assignment_arr, return_counts=True)
+        # for element, count in zip(unique_elements, counts):
+        #     print("Current element", element)
+        #     print("has number", count)
+        #     if count == 0:
+        #         input("Elastic update gamma gives zero count")
+
+        self.K = int(self.damm.K)
+
+
+    def init_cluster(self, gaussian_lists):
+        self.damm  = damm_class(self.x, self.x_dir, nu_0=self.nu_0, kappa_0=self.kappa_0, psi_dir_0=self.psi_dir_0, rel_scale=self.rel_scale, total_scale=self.total_scale)
+        self.damm.K = len(gaussian_lists)
+        self.damm.gaussian_lists = gaussian_lists
+        self.damm.Mu = np.array([g['mu'] for g in gaussian_lists])
+        self.damm.Sigma = np.array([g['sigma'] for g in gaussian_lists])
+        self.damm.Prior = np.array([g['prior'] for g in gaussian_lists])
+        self.gamma = self.damm.compute_gamma(self.x)
         self.assignment_arr = np.argmax(self.gamma, axis=0)
-        self.K     = self.gamma.shape[0]
-        return True
+        self.K = self.damm.K
 
 
     def _optimize(self):
@@ -56,39 +90,36 @@ class lpvds_class():
         self.A = self.ds_opt.begin()
 
 
-    def init_cluster(self, gaussian_list):
-        self.param ={
-            "mu_0":           np.zeros((self.dim, )), 
-            "sigma_0":        0.1 * np.eye(self.dim),
-            "nu_0":           self.dim,
-            "kappa_0":        0.1,
-            "sigma_dir_0":    0.1,
-            "min_thold":      10
-        }
-        
-        self.damm  = damm_class(self.x, self.x_dot, self.param)
-        self.damm.K = len(gaussian_list)
-        self.damm.gaussian_list = gaussian_list
-        self.damm.Mu = np.array([g['mu'] for g in gaussian_list])
-        self.damm.Sigma = np.array([g['sigma'] for g in gaussian_list])
-        self.damm.Prior = np.array([g['prior'] for g in gaussian_list])
-        self.gamma = self.damm.logProb(self.x)
-        self.assignment_arr = np.argmax(self.gamma, axis=0)
-        self.K = self.damm.K
-
-
     def begin(self):
-        if not self._cluster():
-            return False
+        self._cluster()
         self._optimize()
         # self._logOut()
         return True
 
 
+    def elasticUpdate(self, new_x, new_x_dot, new_gmm_struct, new_att):
+        new_gmm_struct, new_assignment_arr, new_gamma = self.damm.elasticUpdate(new_x, new_x_dot, new_gmm_struct)
+        self.x_att = new_att
+        self.x_0 = new_x[0, :]
+        self.K     = new_gamma.shape[0]
+        self.ds_opt = dsopt_class(new_x, new_x_dot, new_att, new_gamma, new_assignment_arr)
+        self.A = self.ds_opt.begin()
+
+        self.assignment_arr = new_assignment_arr
+
+        # self._logOut()
+
+        return new_x, new_x_dot, new_gmm_struct
+
+
     def _step(self, x, dt):
         x_dot     = np.zeros((x.shape[1], 1))
 
-        gamma = self.damm.logProb(x) 
+        if self.damm is None:
+            gamma = np.ones((self.K, 1))
+        else:
+            gamma = self.damm.compute_gamma(x)
+
         for k in range(self.K):
             x_dot  += gamma[k, 0] * self.A[k] @ (x - self.x_att).T
         x_next = x + x_dot.T * dt
@@ -114,10 +145,13 @@ class lpvds_class():
 
             i += 1
 
-        return np.vstack(x_test)
+        print("Converged within max iteration")
+        return np.vstack(x_test), np.array(gamma_test)
 
 
-    def _logOut(self, *args):
+
+
+    def _logOut(self, write_json=True, *args): 
             Prior = self.damm.Prior
             Mu    = self.damm.Mu
             Sigma = self.damm.Sigma
@@ -134,37 +168,91 @@ class lpvds_class():
                 'A': self.A.ravel().tolist(),
                 'attractor': self.x_att.ravel().tolist(),
                 'att_all': self.x_att.ravel().tolist(),
+                # 'x_0': self.x[0, :].ravel().tolist(),
+                'x_0': self.x_0.ravel().tolist(),
+
                 "gripper_open": 0
             }
+            if write_json:
+                if len(args) == 0:
+                    _write_json(json_output, self.output_path)
+                else:
+                    _write_json(json_output, os.path.join(args[0], '0.json'))
 
-            if len(args) == 0:
-                write_json(json_output, self.output_path)
-            else:
-                write_json(json_output, os.path.join(args[0], '0.json'))
+            return json_output
 
 
-    def begin_next(self, x_new, x_dot_new, x_att_new):
+    """ Legacy code for incremental learning """
+    # def begin_next(self, x_new, x_dot_new, x_att_new):
+    #     # shift new data
+    #     shift = self.x_att - x_att_new
+    #     x_new_shift = x_new + np.tile(shift, (x_new.shape[0], 1))
         
-        # shift new data
-        shift = self.x_att - x_att_new
-        x_new_shift = x_new + np.tile(shift, (x_new.shape[0], 1))
+    #     # combine batches
+    #     self.x = np.vstack((self.x, x_new_shift))
+    #     self.x_dot = np.vstack((self.x_dot, x_dot_new))
+
+    #     # construct assignment arr
+    #     comb_assignment_arr = np.concatenate((self.assignment_arr, -1 * np.ones((x_new.shape[0]), dtype=np.int32)))
         
-        # combine batches
-        self.x = np.vstack((self.x, x_new_shift))
-        self.x_dot = np.vstack((self.x_dot, x_dot_new))
+    #     # run damm
+    #     self.damm  = damm_class(self.x, self.x_dot, self.param)
+    #     self.gamma = self.damm.begin(comb_assignment_arr)
+    #     self.assignment_arr = np.argmax(self.gamma, axis=0)
+    #     self.K     = self.gamma.shape[0]
 
-        # construct assignment arr
-        comb_assignment_arr = np.concatenate((self.assignment_arr, -1 * np.ones((x_new.shape[0]), dtype=np.int32)))
+    #     # re-learn A
+    #     self._optimize()
+    #     self._logOut()
+
+    #     # store
+    #     self.x_new_shift = x_new_shift
+
+
+    def evaluate(self):
+        x = self.x
+        x_dot = self.x_dot
+
+        x_dot_pred     = np.zeros((x.shape)).T
+        gamma = self.damm.compute_gamma(x)
+        for k in range(self.K):
+            x_dot_pred  += gamma[k, :].reshape(1, -1) * (self.A[k] @ (x - self.x_att).T)
+
+        MSE = np.sum(np.linalg.norm(x_dot_pred-x_dot.T, axis=0))/x.shape[0]
         
-        # run damm
-        self.damm  = damm_class(self.x, self.x_dot, self.param)
-        self.gamma = self.damm.begin(comb_assignment_arr)
-        self.assignment_arr = np.argmax(self.gamma, axis=0)
-        self.K     = self.gamma.shape[0]
+        self.x_dot_pred = x_dot_pred
+        
+        return MSE
+    
 
-        # re-learn A
-        self._optimize()
-        self._logOut()
+    def predict(self, x):
+        """x has to be [M, N], M is number of points, N is dimension"""
+        x_dot_pred     = np.zeros((x.shape)).T
 
-        # store
-        self.x_new_shift = x_new_shift
+        gamma = self.damm.logProb(x)
+
+        for k in range(self.K):
+            x_dot_pred  += gamma[k, :].reshape(1, -1) * (self.A[k] @ (x - self.x_att).T)
+
+        return x_dot_pred
+    
+
+
+    @classmethod
+    def single_ds(cls, x_att: np.ndarray):
+        """
+        Returns an instance of lpvds_class initialized as a 
+        global linear stable system pointing towards x_att.
+        """
+        # Create instance without calling __init__ to avoid DAMM clustering
+        instance = cls.__new__(cls)
+        
+        instance.damm = None 
+        instance.x_att = x_att.reshape(1, -1)
+        instance.dim = instance.x_att.shape[1]
+        instance.K = 1
+        instance.tol = 10E-3
+        instance.max_iter = 10000
+        instance.A = np.tile(-1.0 * np.eye(instance.dim), (instance.K, 1, 1))
+        
+        return instance

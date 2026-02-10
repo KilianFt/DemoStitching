@@ -484,7 +484,7 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
     plot_sample = 50
     x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))
     X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
-    gamma = lpvds.damm.logProb(X.T)
+    gamma = lpvds.damm.compute_gamma(X.T)
     for k in np.arange(len(A)):
         if k == 0:
             dx = gamma[k].reshape(1, -1) * (A[k] @ (X - att.reshape(1,-1).T))  # gamma[k].reshape(1, -1): [1, num] dim x num
