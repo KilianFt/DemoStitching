@@ -4,6 +4,14 @@ import numpy as np
 from src.util.ds_tools import Demonstration, Trajectory
 from src.util.generate_data import generate_data
 
+
+def _numeric_suffix_sort_key(name):
+    stem = os.path.splitext(name)[0]
+    suffix = stem.split('_')[-1]
+    if suffix.isdigit():
+        return (stem[: -len(suffix)], int(suffix), name)
+    return (stem, float('inf'), name)
+
 def get_demonstration_set(demoset_path):
     """Loads demonstrations, or prompts user to generate new ones if none exist.
 
@@ -39,7 +47,7 @@ def load_demonstration_set(demoset_path):
 
     # Collect all demonstration folders
     demonstration_folders = []
-    for folder_name in os.listdir(demoset_path):
+    for folder_name in sorted(os.listdir(demoset_path), key=_numeric_suffix_sort_key):
        if 'demonstration' in folder_name or 'dataset' in folder_name:
            demonstration_folders.append(folder_name)
 
@@ -54,9 +62,10 @@ def load_demonstration_set(demoset_path):
         demo_path = os.path.join(demoset_path, demo_folder)
 
         trajectories = []
-        for trajectory_file in os.listdir(demo_path):
+        for trajectory_file in sorted(os.listdir(demo_path), key=_numeric_suffix_sort_key):
             trajectory_path = os.path.join(demo_path, trajectory_file)
-            trajectory = json.load(open(trajectory_path))
+            with open(trajectory_path, "r", encoding="utf-8") as f:
+                trajectory = json.load(f)
             trajectory = Trajectory(np.array(trajectory['x']), np.array(trajectory['x_dot']))
             trajectories.append(trajectory)
 

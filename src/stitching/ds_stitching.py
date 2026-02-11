@@ -6,6 +6,7 @@ from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
 from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A, find_lyapunov_function
+from src.stitching.chaining import build_chained_ds
 from src.util.ds_tools import get_gaussian_directions
 from src.util.plot_tools import plot_trajectory_points
 import graph_utils as gu
@@ -42,9 +43,46 @@ def construct_stitched_ds(config, norm_demo_set, ds_set, reversed_ds_set, initia
     elif config.ds_method == 'all_paths_reuse':
         return all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config)
     elif config.ds_method == 'chain':
-        raise NotImplementedError(f"Chain method is not implemented yet.")
+        return chain_ds(ds_set, initial, attractor, config)
     else:
         raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
+
+
+def chain_ds(ds_set, initial, attractor, config):
+    """Builds a chained DS that tracks a shortest Gaussian-graph path by switching targets."""
+    stats = dict()
+
+    # ############## GAUSSIAN GRAPH ##############
+    t0 = time.time()
+    gaussians = {
+        (i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
+        for i, ds in enumerate(ds_set)
+        for j, (mu, sigma, direction, prior) in enumerate(
+            zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior)
+        )
+    }
+    gg = gu.GaussianGraph(
+        gaussians,
+        attractor=attractor,
+        initial=initial,
+        reverse_gaussians=config.reverse_gaussians,
+        param_dist=config.param_dist,
+        param_cos=config.param_cos,
+    )
+    gg.compute_shortest_path()
+    stats['gg compute time'] = time.time() - t0
+
+    # ############## DS ##############
+    t_ds = time.time()
+    try:
+        stitched_ds = build_chained_ds(ds_set, gg, initial=initial, attractor=attractor, config=config)
+    except Exception as e:
+        print(f'Failed to construct Chained DS: {e}')
+        stitched_ds = None
+
+    stats['ds compute time'] = time.time() - t_ds
+    stats['total compute time'] = time.time() - t0
+    return stitched_ds, gg, stats
 
 def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     """Builds a stitched dynamical system by following the shortest path through a Gaussian graph.

@@ -19,14 +19,15 @@ from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, p
 # - ["all_paths_all"] Fit DS to each node and use all paths
 # - ["all_paths_ds"] Fit DS to each node and use all paths for DS
 # - ["all_paths_reuse"] Fit DS to each node and use all paths for DS and reuse A's from step 1
+# - ["chain"] Fit one linear DS per path node and switch/blend between them online
 
 @dataclass
 class Config:
-    dataset_path: str = "./dataset/stitching/nodes_1"
+    dataset_path: str = "./dataset/stitching/presentation2"
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None#np.array([4,15])
     attractor: Optional[np.ndarray] = None#np.array([14,2])
-    ds_method: str = "recompute_ds"
+    ds_method: str = "chain"
     reverse_gaussians: bool = True
     param_dist: int = 3
     param_cos: int = 3
@@ -38,11 +39,25 @@ class Config:
     seed: int = 42 # 42, 100, 3215, 21
 
     # DAMM settings
-    rel_scale: float = 0.2 # 0.7
+    rel_scale: float = 0.1 # 0.7
     total_scale: float = 1.0 # 1.5
-    nu_0: int = 4 # 5
+    nu_0: int = 5 # 5
     kappa_0: int = 0.1 # 1.0
     psi_dir_0: int = 0.1 # 1.0
+
+    # Chaining settings
+    chain_switch_threshold: float = 0.12
+    chain_blend_width: float = 0.18
+    chain_trigger_radius: float = 0.12
+    chain_trigger_radius_scale: float = 0.0
+    chain_trigger_radius_min: float = 0.05
+    chain_trigger_radius_max: float = 0.35
+    chain_transition_time: float = 0.18
+    chain_recovery_distance: float = 0.35
+    chain_enable_recovery: bool = True
+    chain_fit_regularization: float = 1e-4
+    chain_fit_blend: float = 0.0 # this determines if the "original" A matrix should be blended
+    chain_stabilization_margin: float = 1e-3
 
 def simulate_trajectories(ds, initial, config):
     """Simulates multiple trajectories from noisy initial conditions.

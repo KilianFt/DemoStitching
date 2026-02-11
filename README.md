@@ -104,7 +104,34 @@ The `ds_method` parameter controls how the dynamical system is computed:
 - **"recompute_all"**: Recompute the entire DS using the shortest path (most accurate)
 - **"recompute_ds"**: Only recompute the DS parameters, reuse Gaussian structure
 - **"reuse"**: Reuse pre-computed A matrices from individual Gaussians (fastest)
-- **"chain"**: Fit DS to each node and switch between attractors to reach goal
+- **"all_paths_all"**: Aggregate all node-wise shortest paths and relearn DS
+- **"all_paths_ds"**: Aggregate all node-wise shortest paths and relearn only linear maps
+- **"all_paths_reuse"**: Aggregate all node-wise shortest paths with A reuse
+- **"chain"**: One linear DS per path node, then online switch/blend to next node target
+
+For chaining, the main control parameters are:
+- `chain_trigger_radius`: state trigger radius `r_i` around `mu_{i+1}`
+- `chain_transition_time`: timer duration `T_i` for transition state `s_i'`
+- `chain_trigger_radius_scale`: optional radius scaling with edge length
+- `chain_switch_threshold`: backward-compatible alias for `chain_trigger_radius`
+- `chain_blend_width`: backward-compatible alias for `chain_transition_time`
+- `chain_recovery_distance`: if disturbed far from current node, reattach to nearest node
+- `chain_enable_recovery`: enable/disable disturbance recovery behavior
+
+### Composite Robot-Task Dataset
+
+Build the connected workspace dataset with `obstaclerotate` as the central corridor:
+- `pouring` starts at the obstacle start anchor,
+- `pan2stove` starts at the obstacle end anchor,
+- `openbox` branches from the obstacle midpoint.
+
+```bash
+uv run python build_workspace_dataset.py \
+  --output-dir dataset/stitching/robottasks_workspace_chain
+```
+
+This generates `demonstration_*` folders and `workspace_plan.json` in:
+- `dataset/stitching/robottasks_workspace_chain`
 
 ### Output and Visualization
 
