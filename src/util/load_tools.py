@@ -12,34 +12,69 @@ def _numeric_suffix_sort_key(name):
         return (stem[: -len(suffix)], int(suffix), name)
     return (stem, float('inf'), name)
 
-def get_demonstration_set(demoset_path):
+def _resolve_data_scales(position_scale=1.0, velocity_scale=None):
+    if position_scale is None:
+        position_scale = 1.0
+    if velocity_scale is None:
+        velocity_scale = position_scale
+    position_scale = float(position_scale)
+    velocity_scale = float(velocity_scale)
+    if not np.isfinite(position_scale) or position_scale <= 0.0:
+        position_scale = 1.0
+    if not np.isfinite(velocity_scale) or velocity_scale <= 0.0:
+        velocity_scale = position_scale
+    return position_scale, velocity_scale
+
+
+def resolve_data_scales(config=None):
+    if config is None:
+        return 1.0, 1.0
+    position_scale = getattr(config, "data_position_scale", getattr(config, "damm_position_scale", 1.0))
+    velocity_scale = getattr(config, "data_velocity_scale", getattr(config, "damm_velocity_scale", None))
+    return _resolve_data_scales(position_scale=position_scale, velocity_scale=velocity_scale)
+
+
+def get_demonstration_set(demoset_path, position_scale=1.0, velocity_scale=None):
     """Loads demonstrations, or prompts user to generate new ones if none exist.
 
     Args:
         demoset_path: Path to directory containing demonstration folders.
+        position_scale: Scalar multiplier applied to loaded positions.
+        velocity_scale: Scalar multiplier applied to loaded velocities.
 
     Returns:
         list: List (set of demonstrations) of lists (demonstrations) of Trajectory objects.
     """
-    demoset = load_demonstration_set(demoset_path)
+    demoset = load_demonstration_set(
+        demoset_path,
+        position_scale=position_scale,
+        velocity_scale=velocity_scale,
+    )
     if demoset is None:
         print(f'No demonstrations found in \"{demoset_path}\". Drawing new demonstrations.')
         generate_data(demoset_path)
-        demoset = load_demonstration_set(demoset_path)
+        demoset = load_demonstration_set(
+            demoset_path,
+            position_scale=position_scale,
+            velocity_scale=velocity_scale,
+        )
 
     return demoset
 
-def load_demonstration_set(demoset_path):
+def load_demonstration_set(demoset_path, position_scale=1.0, velocity_scale=None):
     """Loads demonstration trajectories from a folder of trajectory JSON files.
 
     Args:
         demoset_path: Path to folder containing demonstration subfolders.
+        position_scale: Scalar multiplier applied to loaded positions.
+        velocity_scale: Scalar multiplier applied to loaded velocities.
 
     Returns:
         list: List of Demonstration objects with concatenated trajectory data
             and individual Trajectory objects, or None if path doesn't exist
             or no demonstrations found.
     """
+    position_scale, velocity_scale = _resolve_data_scales(position_scale, velocity_scale)
 
     if not os.path.exists(demoset_path):
         print(f'Path \"{demoset_path}\" does not exist.')
@@ -66,7 +101,10 @@ def load_demonstration_set(demoset_path):
             trajectory_path = os.path.join(demo_path, trajectory_file)
             with open(trajectory_path, "r", encoding="utf-8") as f:
                 trajectory = json.load(f)
-            trajectory = Trajectory(np.array(trajectory['x']), np.array(trajectory['x_dot']))
+            trajectory = Trajectory(
+                np.asarray(trajectory['x'], dtype=float) * position_scale,
+                np.asarray(trajectory['x_dot'], dtype=float) * velocity_scale,
+            )
             trajectories.append(trajectory)
 
         demonstrations.append(

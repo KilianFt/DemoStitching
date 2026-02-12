@@ -4,51 +4,89 @@ from typing import Optional
 import numpy as np
 from scipy.stats import multivariate_normal
 from src.damm.src.damm_class import DAMM as damm_class
+from src.stitching.graph_paths import shortest_path_nodes as _safe_shortest_path_nodes
+import cvxpy as cp
 
 
-def _stable_matrix(A: np.ndarray, margin: float = 1e-3) -> np.ndarray:
-    """Project A so its symmetric part is strictly negative definite."""
-    symmetric = 0.5 * (A + A.T)
-    skew = 0.5 * (A - A.T)
-    eigvals, eigvecs = np.linalg.eigh(symmetric)
-    eigvals = np.minimum(eigvals, -abs(margin))
-    symmetric_stable = eigvecs @ np.diag(eigvals) @ eigvecs.T
-    return symmetric_stable + skew
+def _lyapunov_constraint_residual(
+    A: np.ndarray,
+    P: np.ndarray,
+    stabilization_margin: float,
+) -> float:
+    """Return max-eigenvalue residual of A^T P + P A + eps I <= 0 (<=0 means feasible)."""
+    eps = abs(float(stabilization_margin))
+    dim = A.shape[0]
+    lmi = A.T @ P + P @ A + eps * np.eye(dim)
+    lmi = 0.5 * (lmi + lmi.T)
+    try:
+        return float(np.max(np.linalg.eigvalsh(lmi)))
+    except np.linalg.LinAlgError:
+        return np.inf
 
 
 def _fit_linear_system(
     x: np.ndarray,
     x_dot: np.ndarray,
     target: np.ndarray,
-    regularization: float = 1e-4,
+    stabilization_margin: float = 1e-3,
+    lyapunov_P: Optional[np.ndarray] = None,
+    lmi_tolerance: float = 5e-5,
 ) -> Optional[np.ndarray]:
-    """Fit y = A (x - target) in least-squares sense."""
+    """LPV-DS-like fit: constrained MSE with Lyapunov stability."""
     if x.shape[0] < x.shape[1]:
         return None
 
     X = x - target.reshape(1, -1)
     Y = x_dot
-    lhs = X.T @ X + regularization * np.eye(X.shape[1])
-    rhs = X.T @ Y
+
+    dim = X.shape[1]
+    if lyapunov_P is None:
+        P = np.eye(dim)
+    else:
+        P = np.asarray(lyapunov_P, dtype=float)
+        if P.shape != (dim, dim) or not np.all(np.isfinite(P)):
+            P = np.eye(dim)
+        P = 0.5 * (P + P.T)
+        try:
+            if np.min(np.linalg.eigvalsh(P)) <= 1e-8:
+                P = np.eye(dim)
+        except np.linalg.LinAlgError:
+            P = np.eye(dim)
+
+    # Match lpvds objective shape: min ||A X - Y||_F with Lyapunov constraint.
+    A_var = cp.Variable((dim, dim))
+    eps = abs(float(stabilization_margin))
+    objective = cp.sum_squares(A_var @ X.T - Y.T)
+    constraints = [A_var.T @ P + P @ A_var << -eps * np.eye(dim)]
+    problem = cp.Problem(cp.Minimize(objective), constraints)
     try:
-        B = np.linalg.solve(lhs, rhs)
-    except np.linalg.LinAlgError:
+        problem.solve(solver=cp.SCS, warm_start=True, verbose=False)
+    except Exception:
+        try:
+            problem.solve(warm_start=True, verbose=False)
+        except Exception:
+            return None
+
+    if A_var.value is None:
         return None
-    return B.T
+    A_opt = np.asarray(A_var.value, dtype=float)
+    if not np.all(np.isfinite(A_opt)):
+        return None
+    residual = _lyapunov_constraint_residual(A_opt, P=P, stabilization_margin=eps)
+    if not np.isfinite(residual) or residual > float(lmi_tolerance):
+        return None
+    return A_opt
 
 
 @dataclass
 class _ChainConfig:
-    trigger_radius: float = 0.12
-    trigger_radius_scale: float = 0.0
-    trigger_radius_min: float = 0.05
-    trigger_radius_max: float = 0.35
+    trigger_radius_ratio: float = 0.10
     transition_time: float = 0.18
     recovery_distance: float = 0.35
     enable_recovery: bool = True
     stabilization_margin: float = 1e-3
-    fit_regularization: float = 1e-4
-    fit_blend: float = 0.0
+    lmi_tolerance: float = 5e-5
+    edge_data_mode: str = "both_all"
 
 
 class ChainedLinearDS:
@@ -86,7 +124,12 @@ class ChainedLinearDS:
         self.K = self.damm.K
         self.node_means = self.state_sequence[:-1]
         self.node_targets = self.state_sequence[1:]
-        self.A = self.A_seq[1:].copy() if self.n_systems > 1 else self.A_seq.copy()
+        if self.A_seq.shape[0] == self.K + 1:
+            # Legacy layout: first DS was initial->first_gaussian.
+            self.A = self.A_seq[1:].copy()
+        else:
+            # Current layout: one DS per path gaussian edge (+ final gaussian->goal edge).
+            self.A = self.A_seq[:self.K].copy()
         try:
             gamma = np.asarray(self.damm.compute_gamma(self.x), dtype=float)
             if gamma.ndim == 2 and gamma.shape[1] == self.x.shape[0]:
@@ -249,47 +292,201 @@ def _get_source_data_for_node(ds_set, gg, node_id):
     assigned_x = ds_set[ds_idx].x[ds_set[ds_idx].assignment_arr == gaussian_idx]
     assigned_x_dot = ds_set[ds_idx].x_dot[ds_set[ds_idx].assignment_arr == gaussian_idx] * reverse_sign
     base_A = ds_set[ds_idx].A[gaussian_idx] * reverse_sign
-    return assigned_x, assigned_x_dot, base_A
+    lyapunov_P = None
+    if hasattr(ds_set[ds_idx], "ds_opt") and hasattr(ds_set[ds_idx].ds_opt, "P"):
+        lyapunov_P = ds_set[ds_idx].ds_opt.P
+    return assigned_x, assigned_x_dot, base_A, lyapunov_P
+
+
+def _graph_gaussian_ids(gg):
+    return [
+        node_id
+        for node_id, node_data in gg.graph.nodes(data=True)
+        if "mean" in node_data and "covariance" in node_data and "prior" in node_data
+    ]
+
+
+def _stack_xy(x_parts, x_dot_parts):
+    valid = [
+        (np.asarray(xi, dtype=float), np.asarray(vi, dtype=float))
+        for xi, vi in zip(x_parts, x_dot_parts)
+        if xi is not None and vi is not None and len(xi) > 0 and len(vi) > 0
+    ]
+    if len(valid) == 0:
+        return np.zeros((0, 0), dtype=float), np.zeros((0, 0), dtype=float)
+    x = np.vstack([v[0] for v in valid])
+    x_dot = np.vstack([v[1] for v in valid])
+    return x, x_dot
+
+
+def _edge_fit_data(
+    source_x: np.ndarray,
+    source_x_dot: np.ndarray,
+    target_x: np.ndarray,
+    target_x_dot: np.ndarray,
+    source_state: np.ndarray,
+    target_state: np.ndarray,
+    mode: str,
+):
+    mode = str(mode).lower()
+    x_all, x_dot_all = _stack_xy([source_x, target_x], [source_x_dot, target_x_dot])
+    if x_all.size == 0:
+        return x_all, x_dot_all
+
+    if mode in {"both_all", "all"}:
+        return x_all, x_dot_all
+
+    if mode in {"between_orthogonals", "segment"}:
+        edge = np.asarray(target_state, dtype=float) - np.asarray(source_state, dtype=float)
+        edge_len = np.linalg.norm(edge)
+        if edge_len <= 1e-12:
+            return x_all, x_dot_all
+
+        edge_dir = edge / edge_len
+        proj_pos = (x_all - source_state.reshape(1, -1)) @ edge_dir
+        between_planes = (proj_pos >= 0.0) & (proj_pos <= edge_len)
+        # Prefer pointwise progress-to-target over raw edge-axis projection.
+        toward_next = np.sum((target_state.reshape(1, -1) - x_all) * x_dot_all, axis=1) > 0.0
+        mask = between_planes & toward_next
+
+        if np.any(mask):
+            return x_all[mask], x_dot_all[mask]
+        return np.zeros((0, x_all.shape[1]), dtype=float), np.zeros((0, x_dot_all.shape[1]), dtype=float)
+
+    raise ValueError(f"Unsupported chain edge_data_mode: {mode}")
+
+
+def _edge_fit_samples(
+    source_data,
+    target_data,
+    source_state: np.ndarray,
+    target_state: np.ndarray,
+    cfg: _ChainConfig,
+):
+    source_x, source_x_dot, _, _ = source_data
+    if target_data is None:
+        mode = str(cfg.edge_data_mode).lower()
+        if mode in {"between_orthogonals", "segment"}:
+            edge = np.asarray(target_state, dtype=float) - np.asarray(source_state, dtype=float)
+            edge_len = np.linalg.norm(edge)
+            if edge_len <= 1e-12:
+                # Degenerate segment: keep source-node data instead of dropping everything.
+                return source_x, source_x_dot
+            edge_dir = edge / edge_len
+            proj_pos = (source_x - np.asarray(source_state, dtype=float).reshape(1, -1)) @ edge_dir
+            between_planes = (proj_pos >= 0.0) & (proj_pos <= edge_len)
+            toward_next = np.sum((np.asarray(target_state, dtype=float).reshape(1, -1) - source_x) * source_x_dot, axis=1) > 0.0
+            mask = between_planes & toward_next
+            return source_x[mask], source_x_dot[mask]
+        return source_x, source_x_dot
+    target_x, target_x_dot, _, _ = target_data
+    return _edge_fit_data(
+        source_x=source_x,
+        source_x_dot=source_x_dot,
+        target_x=target_x,
+        target_x_dot=target_x_dot,
+        source_state=source_state,
+        target_state=target_state,
+        mode=cfg.edge_data_mode,
+    )
+
+
+def _fit_edge_matrix(
+    source_data,
+    target_data,
+    source_state: np.ndarray,
+    target_state: np.ndarray,
+    cfg: _ChainConfig,
+):
+    source_x, source_x_dot, _, _ = source_data
+    fit_x, fit_x_dot = _edge_fit_samples(
+        source_data=source_data,
+        target_data=target_data,
+        source_state=source_state,
+        target_state=target_state,
+        cfg=cfg,
+    )
+    fitted_A = _fit_linear_system(
+        fit_x,
+        fit_x_dot,
+        target=target_state,
+        stabilization_margin=cfg.stabilization_margin,
+        lmi_tolerance=cfg.lmi_tolerance,
+    )
+    if fitted_A is None:
+        return None, fit_x, fit_x_dot
+    return fitted_A, fit_x, fit_x_dot
+
+
+def _direction_consistency_stats(
+    A: np.ndarray,
+    fit_x: np.ndarray,
+    source_state: np.ndarray,
+    target_state: np.ndarray,
+):
+    fit_x = np.asarray(fit_x, dtype=float)
+    n_points = int(fit_x.shape[0]) if fit_x.ndim == 2 else 0
+    if n_points == 0:
+        return {"n_points": 0, "frac_forward": np.nan, "min_proj": np.nan, "mean_proj": np.nan}
+
+    edge = np.asarray(target_state, dtype=float) - np.asarray(source_state, dtype=float)
+    edge_len = np.linalg.norm(edge)
+    if edge_len <= 1e-12:
+        return {"n_points": n_points, "frac_forward": np.nan, "min_proj": np.nan, "mean_proj": np.nan}
+
+    edge_dir = edge / edge_len
+    target_state = np.asarray(target_state, dtype=float)
+    pred_vel = (np.asarray(A, dtype=float) @ (fit_x - target_state.reshape(1, -1)).T).T
+    proj = pred_vel @ edge_dir
+    return {
+        "n_points": n_points,
+        "frac_forward": float(np.mean(proj > 0.0)),
+        "min_proj": float(np.min(proj)),
+        "mean_proj": float(np.mean(proj)),
+    }
 
 
 def _build_edge_lookup(ds_set, gg, cfg: _ChainConfig):
     """Pre-compute DS matrices for gaussian->gaussian edges (path-independent cache)."""
     edge_lookup = {}
-    gaussian_id_set = set(gg.gaussian_ids)
+    gaussian_ids = _graph_gaussian_ids(gg)
+    gaussian_id_set = set(gaussian_ids)
     source_cache = {}
 
-    for source in gg.gaussian_ids:
+    for source in gaussian_ids:
         source_cache[source] = _get_source_data_for_node(ds_set, gg, source)
 
-    for source in gg.gaussian_ids:
-        source_x, source_x_dot, base_A = source_cache[source]
+    for source in gaussian_ids:
+        source_data = source_cache[source]
+        source_state = np.asarray(gg.graph.nodes[source]["mean"], dtype=float)
         for target in gg.graph.successors(source):
             if target not in gaussian_id_set:
                 continue
+            target_data = source_cache[target]
             target_state = np.asarray(gg.graph.nodes[target]["mean"], dtype=float)
-            fitted_A = _fit_linear_system(
-                source_x,
-                source_x_dot,
-                target=target_state,
-                regularization=cfg.fit_regularization,
+            A_edge, _, _ = _fit_edge_matrix(
+                source_data=source_data,
+                target_data=target_data,
+                source_state=source_state,
+                target_state=target_state,
+                cfg=cfg,
             )
-            if fitted_A is None:
-                A_edge = base_A
-            else:
-                A_edge = cfg.fit_blend * base_A + (1.0 - cfg.fit_blend) * fitted_A
-            edge_lookup[(source, target)] = _stable_matrix(A_edge, margin=cfg.stabilization_margin)
+            if A_edge is not None:
+                edge_lookup[(source, target)] = A_edge
     return edge_lookup
 
 
 def _resolve_chain_config(config) -> _ChainConfig:
-    # Backward compatible field mapping.
-    trigger_radius = float(
+    # chain_trigger_radius is interpreted as percentage of edge length.
+    trigger_radius_ratio = float(
         getattr(
             config,
             "chain_trigger_radius",
-            getattr(config, "chain_switch_threshold", 0.12),
+            getattr(config, "chain_switch_threshold", 0.10),
         )
     )
+    if not np.isfinite(trigger_radius_ratio) or trigger_radius_ratio <= 0.0:
+        trigger_radius_ratio = 0.10
     transition_time = float(
         getattr(
             config,
@@ -298,16 +495,13 @@ def _resolve_chain_config(config) -> _ChainConfig:
         )
     )
     return _ChainConfig(
-        trigger_radius=trigger_radius,
-        trigger_radius_scale=float(getattr(config, "chain_trigger_radius_scale", 0.0)),
-        trigger_radius_min=float(getattr(config, "chain_trigger_radius_min", 0.05)),
-        trigger_radius_max=float(getattr(config, "chain_trigger_radius_max", 0.35)),
+        trigger_radius_ratio=trigger_radius_ratio,
         transition_time=transition_time,
         recovery_distance=float(getattr(config, "chain_recovery_distance", 0.35)),
         enable_recovery=bool(getattr(config, "chain_enable_recovery", True)),
         stabilization_margin=float(getattr(config, "chain_stabilization_margin", 1e-3)),
-        fit_regularization=float(getattr(config, "chain_fit_regularization", 1e-4)),
-        fit_blend=float(getattr(config, "chain_fit_blend", 0.0)),
+        lmi_tolerance=float(getattr(config, "chain_lmi_tolerance", 5e-5)),
+        edge_data_mode=str(getattr(config, "chain_edge_data_mode", "both_all")),
     )
 
 
@@ -325,36 +519,76 @@ def _resolve_state_sequence(gg, path_nodes, initial: np.ndarray, attractor: np.n
 
 def _resolve_trigger_radii(state_sequence: np.ndarray, cfg: _ChainConfig) -> np.ndarray:
     edge_lengths = np.linalg.norm(np.diff(state_sequence, axis=0), axis=1)
-    radii = cfg.trigger_radius + cfg.trigger_radius_scale * edge_lengths
-    radii = np.clip(radii, cfg.trigger_radius_min, cfg.trigger_radius_max)
+    radii = cfg.trigger_radius_ratio * edge_lengths
+    radii = np.maximum(radii, 1e-12)
     return radii
 
 
-def build_chained_ds(ds_set, gg, gg_solution_nodes, initial: np.ndarray, attractor: np.ndarray, config) -> Optional[ChainedLinearDS]:
-
-    path_nodes = gg_solution_nodes
-    if len(path_nodes) < 2:
-        return None
-
+def prepare_chaining_edge_lookup(ds_set, gg, config):
+    """Prepare reusable chain config + edge lookup for repeated replanning."""
     cfg = _resolve_chain_config(config)
+    edge_lookup = _build_edge_lookup(ds_set, gg, cfg=cfg)
+    return cfg, edge_lookup
+
+
+def build_chained_ds(
+    ds_set,
+    gg,
+    initial: np.ndarray,
+    attractor: np.ndarray,
+    config,
+    precomputed_chain_cfg: Optional[_ChainConfig] = None,
+    precomputed_edge_lookup: Optional[dict] = None,
+    shortest_path_nodes: Optional[list] = None,
+) -> Optional[ChainedLinearDS]:
+    if shortest_path_nodes is None:
+        shortest_path_attr = getattr(gg, "shortest_path", None)
+        if callable(shortest_path_attr):
+            shortest_path_nodes = _safe_shortest_path_nodes(gg, initial_state=initial, target_state=attractor)
+        elif shortest_path_attr is not None:
+            shortest_path_nodes = list(shortest_path_attr)
+            if len(shortest_path_nodes) > 0 and shortest_path_nodes[0] == "initial":
+                shortest_path_nodes = shortest_path_nodes[1:-1]
+        else:
+            shortest_path_nodes = None
+    if shortest_path_nodes is None or len(shortest_path_nodes) == 0:
+        return None
+    shortest_path_nodes = list(shortest_path_nodes)
+    # Build DSs over graph nodes directly so the first fitted edge uses start-node gaussian data.
+    path_nodes = [*shortest_path_nodes, "attractor"]
+
+    cfg = precomputed_chain_cfg if precomputed_chain_cfg is not None else _resolve_chain_config(config)
     state_sequence = _resolve_state_sequence(gg, path_nodes, initial=initial, attractor=attractor)
     n_systems = state_sequence.shape[0] - 1
     if n_systems <= 0:
         return None
 
-    edge_lookup = _build_edge_lookup(ds_set, gg, cfg=cfg)
-    gaussian_id_set = set(gg.gaussian_ids)
+    edge_lookup = precomputed_edge_lookup if precomputed_edge_lookup is not None else _build_edge_lookup(ds_set, gg, cfg=cfg)
+    gaussian_ids = _graph_gaussian_ids(gg)
+    gaussian_id_set = set(gaussian_ids)
 
     # Build f_1 ... f_N, each stabilizing towards mu_{i+1}.
     A_seq = []
+    fit_points_seq = []
+    fit_velocities_seq = []
+    direction_stats_seq = []
     source_cache = {}
-    for node in gg.gaussian_ids:
+    for node in gaussian_ids:
         source_cache[node] = _get_source_data_for_node(ds_set, gg, node)
 
     for i in range(n_systems):
         current_node = path_nodes[i]
         next_node = path_nodes[i + 1]
+        source_state = state_sequence[i]
         target_state = state_sequence[i + 1]
+        fit_source_state = source_state
+        fit_target_state = target_state
+        if i == 0:
+            # First edge should span from the actual initial state to the next node.
+            fit_source_state = np.asarray(initial, dtype=float)
+        dim = state_sequence.shape[1]
+        fit_x = np.zeros((0, dim), dtype=float)
+        fit_x_dot = np.zeros((0, dim), dtype=float)
 
         use_lookup = (
             i > 0
@@ -364,6 +598,13 @@ def build_chained_ds(ds_set, gg, gg_solution_nodes, initial: np.ndarray, attract
             and (current_node, next_node) in edge_lookup
         )
         if use_lookup:
+            fit_x, fit_x_dot = _edge_fit_samples(
+                source_data=source_cache[current_node],
+                target_data=source_cache[next_node],
+                source_state=fit_source_state,
+                target_state=fit_target_state,
+                cfg=cfg,
+            )
             A_i = edge_lookup[(current_node, next_node)]
         else:
             if current_node in gaussian_id_set:
@@ -374,29 +615,36 @@ def build_chained_ds(ds_set, gg, gg_solution_nodes, initial: np.ndarray, attract
                 source_node = None
 
             if source_node is None:
-                dim = state_sequence.shape[1]
-                A_i = -np.eye(dim)
-            else:
-                assigned_x, assigned_x_dot, base_A = source_cache[source_node]
-                fitted_A = _fit_linear_system(
-                    assigned_x,
-                    assigned_x_dot,
-                    target=target_state,
-                    regularization=cfg.fit_regularization,
-                )
-                if fitted_A is None:
-                    A_i = base_A
-                else:
-                    A_i = cfg.fit_blend * base_A + (1.0 - cfg.fit_blend) * fitted_A
-                A_i = _stable_matrix(A_i, margin=cfg.stabilization_margin)
+                return None
+
+            target_data = source_cache[next_node] if (current_node in gaussian_id_set and next_node in gaussian_id_set) else None
+            A_i, fit_x, fit_x_dot = _fit_edge_matrix(
+                source_data=source_cache[source_node],
+                target_data=target_data,
+                source_state=fit_source_state,
+                target_state=fit_target_state,
+                cfg=cfg,
+            )
+            if A_i is None:
+                return None
 
         A_seq.append(A_i)
+        fit_points_seq.append(np.asarray(fit_x, dtype=float).copy())
+        fit_velocities_seq.append(np.asarray(fit_x_dot, dtype=float).copy())
+        direction_stats_seq.append(
+            _direction_consistency_stats(
+                A=A_i,
+                fit_x=fit_x,
+                source_state=source_state,
+                target_state=target_state,
+            )
+        )
     A_seq = np.array(A_seq)
 
     trigger_radii = _resolve_trigger_radii(state_sequence, cfg=cfg)
     transition_times = np.full(max(n_systems - 1, 0), cfg.transition_time, dtype=float)
 
-    gaussian_path_nodes = [n for n in path_nodes if n in gaussian_id_set]
+    gaussian_path_nodes = [n for n in shortest_path_nodes if n in gaussian_id_set]
     if len(gaussian_path_nodes) == 0:
         # Fallback for degenerate graphs.
         gaussian_lists = [{
@@ -423,7 +671,7 @@ def build_chained_ds(ds_set, gg, gg_solution_nodes, initial: np.ndarray, attract
                     "rv": multivariate_normal(mu, sigma, allow_singular=True),
                 }
             )
-            assigned_x, assigned_x_dot, _ = source_cache[node_id]
+            assigned_x, assigned_x_dot, _, _ = source_cache[node_id]
             filtered_x.append(assigned_x)
             filtered_x_dot.append(assigned_x_dot)
         filtered_x = np.vstack(filtered_x)
@@ -462,5 +710,16 @@ def build_chained_ds(ds_set, gg, gg_solution_nodes, initial: np.ndarray, attract
         trigger_radii=trigger_radii,
         transition_times=transition_times,
         chain_cfg=cfg,
+    )
+    chained_ds.edge_fit_points = fit_points_seq
+    chained_ds.edge_fit_velocities = fit_velocities_seq
+    chained_ds.edge_direction_stats = direction_stats_seq
+    chained_ds.edge_forward_fraction = np.array(
+        [s.get("frac_forward", np.nan) for s in direction_stats_seq],
+        dtype=float,
+    )
+    chained_ds.edge_forward_min_proj = np.array(
+        [s.get("min_proj", np.nan) for s in direction_stats_seq],
+        dtype=float,
     )
     return chained_ds

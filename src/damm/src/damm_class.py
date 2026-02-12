@@ -191,10 +191,15 @@ class DAMM:
             self._sample_parameters()
             self._sample_label()
             if t % 10 == 0 and t > 50:
-                for idx in self.index_lists:
+                for idx in list(self.index_lists):
                     self._split_proposal(idx)
-        self.Prior, self.Mu, self.Sigma, self.gaussian_lists = DAMM.extract_gaussian(self.z, self.x, rel_scale=self.rel_scale, total_scale=self.total_scale)
 
+        self.Prior, self.Mu, self.Sigma, self.gaussian_lists = DAMM.extract_gaussian(
+            self.z,
+            self.x,
+            rel_scale=self.rel_scale,
+            total_scale=self.total_scale,
+        )
         return self.compute_gamma(self.x)
     
 
@@ -328,5 +333,3 @@ if __name__ == "__main__":
     plot_tools.plot_gmm(x, damm.z)
     plot_tools.plot_gamma(gamma)
     plt.show()
-
-

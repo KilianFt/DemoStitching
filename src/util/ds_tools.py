@@ -142,4 +142,3 @@ def get_gaussian_directions(lpvds):
     directions = np.array(directions)
 
     return directions
-

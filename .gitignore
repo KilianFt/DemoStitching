@@ -5,3 +5,4 @@ figures/
 build/
 dist/
 *.egg-info/
+dataset/robottasks/plots

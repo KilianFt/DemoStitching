@@ -1,17 +1,19 @@
 # Demonstration stitching
 This code builds on top of the following repositories:
-- [LPVDS](https://github.com/sunan-sun/lpvds)
-- [DAMM](https://github.com/SunannnSun/damm)
-- [DSOPT](https://github.com/sunan-sun/dsopt)
+1. [LPVDS](https://github.com/sunan-sun/lpvds)
+2. [DAMM](https://github.com/SunannnSun/damm)
+3. [DSOPT](https://github.com/sunan-sun/dsopt)
+4. [Robottask dataset](https://github.com/sayantanauddy/clfd-snode)
 
 with following references
-
 
 > [1] Billard, A., Mirrazavi, S., & Figueroa, N. (2022). Learning for adaptive and reactive robot control: a dynamical systems approach. Mit Press.
 
 > [2] Sun, S., Gao, H., Li, T., & Figueroa, N. (2024). "Directionality-aware mixture model parallel sampling for efficient linear parameter varying dynamical system learning". IEEE Robotics and Automation Letters, 9(7), 6248-6255.
 
 > [3] Li, T., Sun, S., Aditya, S. S., & Figueroa, N. (2025). Elastic Motion Policy: An Adaptive Dynamical System for Robust and Efficient One-Shot Imitation Learning. arXiv preprint arXiv:2503.08029.
+
+> [4] Auddy, S.*, Hollenstein, J.*, Saveriano, M., Rodríguez-Sánchez, A., & Piater, J. (2025). Scalable and Efficient Continual Learning from Demonstration via a Hypernetwork-generated Stable Dynamics Model. arXiv preprint arXiv:2311.03600.
 
 Thanks for open sourcing your work!
 
@@ -110,13 +112,15 @@ The `ds_method` parameter controls how the dynamical system is computed:
 - **"chain"**: One linear DS per path node, then online switch/blend to next node target
 
 For chaining, the main control parameters are:
-- `chain_trigger_radius`: state trigger radius `r_i` around `mu_{i+1}`
+- `chain_trigger_radius`: trigger radius as edge percentage (e.g. `0.10` means last 10% of edge length)
 - `chain_transition_time`: timer duration `T_i` for transition state `s_i'`
-- `chain_trigger_radius_scale`: optional radius scaling with edge length
+- `chain_start_node_candidates`: number of closest start-node candidates used for chain path search (`1` enforces local starts)
+- `chain_goal_node_candidates`: number of closest goal-node candidates used for chain path search (`1` enforces local goal-side final edge)
 - `chain_switch_threshold`: backward-compatible alias for `chain_trigger_radius`
 - `chain_blend_width`: backward-compatible alias for `chain_transition_time`
 - `chain_recovery_distance`: if disturbed far from current node, reattach to nearest node
 - `chain_enable_recovery`: enable/disable disturbance recovery behavior
+- `chain_edge_data_mode`: edge-fit samples for chaining (`both_all` or `between_orthogonals`)
 
 ### Composite Robot-Task Dataset
 
