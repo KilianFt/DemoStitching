@@ -27,19 +27,19 @@ def construct_stitched_ds(config, norm_demo_set, ds_set, reversed_ds_set, initia
     Raises:
         NotImplementedError: For unsupported or invalid ds_method values.
     """
-    if config.ds_method == 'recompute_all':
+    if config.ds_method == 'sp_recompute_all':
         return recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=True)
-    elif config.ds_method == 'recompute_ds':
+    elif config.ds_method == 'sp_recompute_ds':
         return recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=False)
-    elif config.ds_method == 'reuse':
+    elif config.ds_method == 'sp_recompute_invalid_As':
         return reuse_ds(ds_set, reversed_ds_set, initial, attractor, config)
-    elif config.ds_method == 'reuse_A':
+    elif config.ds_method == 'sp_recompute_P':
         return reuse_A(ds_set, initial, attractor, config)
-    elif config.ds_method == 'all_paths_all':
+    elif config.ds_method == 'spt_recompute_all':
         return all_paths(ds_set, attractor, config, recompute_gaussians=True)
-    elif config.ds_method == 'all_paths_ds':
+    elif config.ds_method == 'spt_recompute_ds':
         return all_paths(ds_set, attractor, config, recompute_gaussians=False)
-    elif config.ds_method == 'all_paths_reuse':
+    elif config.ds_method == 'spt_recompute_invalid_As':
         return all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config)
     elif config.ds_method == 'chain':
         return chain_ds(ds_set, initial, attractor, config)

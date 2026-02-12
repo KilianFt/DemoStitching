@@ -13,13 +13,14 @@ from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, p
 # - all_paths_all
 
 # ds_method options:
-# - ["recompute_all"] Recompute using shortest path
-# - ["recompute_ds"] Recompute only DS
-# - ["reuse"] Reuse A's from step 1 and only recompute them if they are invalid wrt P
-# - ["all_paths_all"] Fit DS to each node and use all paths
-# - ["all_paths_ds"] Fit DS to each node and use all paths for DS
-# - ["all_paths_reuse"] Fit DS to each node and use all paths for DS and reuse A's from step 1
-# - ["chain"] Fit one linear DS per path node and switch/blend between them online
+# - ["sp_recompute_all"]            Uses shortest path, extracts raw traj. points, recomputes Gaussians and DS.
+# - ["sp_recompute_ds"]             Uses shortest path, keeps Gaussians but recomputes DS.
+# - ["sp_recompute_invalid_As"]     Uses shortest path, selects a P near the attractor, recomputes any incompatible As.
+# - ["sp_recompute_P"]              Uses shortest path, keeps Gaussians and As, tries to find a P.
+# - ["spt_recompute_all"]           Uses shortest path tree, otherwise same as corresponding "sp" method.
+# - ["spt_recompute_ds"]            Uses shortest path tree, otherwise same as corresponding "sp" method.
+# - ["spt_recompute_invalid_As"]    Uses shortest path tree, otherwise same as corresponding "sp" method.
+# - ["chain"]                       Fit one linear DS per path node and switch/blend between them online.
 
 @dataclass
 class Config:
