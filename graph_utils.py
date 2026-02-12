@@ -21,10 +21,10 @@ class GaussianGraph:
         self.param_cos = param_cos
 
         self.graph = nx.DiGraph()
-        self.n_gaussians = 0
         self.gaussian_reversal_map = dict()  # keys = reversed node ids, values = original node ids
         self.gaussian_ids = list(self.graph.nodes.keys())
 
+        self.n_gaussians = 0  # TODO fix or remove
         """
         self.n_gaussians = len(gaussians)
         self.create_gaussian_graph(gaussians, reverse_gaussians=reverse_gaussians)
@@ -249,8 +249,82 @@ class GaussianGraph:
             node = self.graph.nodes[node_id]
             return node['mean'], node['covariance'], node['direction'], node['prior']
 
+    def plot(self, ax=None):
+        """Plots the basic gaussian graph.
+
+        Intended to be used as a base for more complex plots that overlay additional info (e.g. DS vector field,
+        trajectories, etc.)
+
+        Args:
+            ax: Optional matplotlib axis to plot on. If None, a new figure and axis will be created.
+        """
+
+        # Params
+        node_size = 100
+        node_color = 'teal'
+
+        edge_color = 'black'
+        min_edge_alpha = 0.3
+        edge_start_space = 0.2
+        edge_end_space = 0.2
+        edge_width = 0.5
+        arrow_head_size = 8
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 6))
+
+        # Get positions for nodes
+        pos = nx.get_node_attributes(self.graph, 'mean')
+
+        # Draw nodes using scatter plot
+        pos_np = np.array([p for p in pos.values()])
+        ax.scatter(pos_np[:, 0], pos_np[:, 1], c=node_color, s=node_size, zorder=3)
+
+        # Extract edge weights and normalize for alpha values
+        weights = nx.get_edge_attributes(self.graph, 'weight')
+        weights_np = np.array([weights[edge] for edge in self.graph.edges])
+        alphas = np.minimum(1/weights_np + min_edge_alpha, 1)
+
+        # Draw edges
+        for (u, v), alpha in zip(self.graph.edges, alphas):
+            start_pos = pos[u]
+            end_pos = pos[v]
+
+            dx = end_pos[0] - start_pos[0]
+            dy = end_pos[1] - start_pos[1]
+            length = np.sqrt(dx ** 2 + dy ** 2)
+
+            if length > 0:
+                # Normalize direction vector
+                dx_norm = dx / length
+                dy_norm = dy / length
+
+                # Calculate adjusted start and end points based on buffer distances
+                adjusted_start_x = start_pos[0] + dx_norm * edge_start_space
+                adjusted_start_y = start_pos[1] + dy_norm * edge_start_space
+                adjusted_end_x = end_pos[0] - dx_norm * edge_end_space
+                adjusted_end_y = end_pos[1] - dy_norm * edge_end_space
+
+                # Draw the line between adjusted points
+                ax.plot([adjusted_start_x, adjusted_end_x], [adjusted_start_y, adjusted_end_y],
+                        color=edge_color, alpha=alpha, zorder=1, linewidth=edge_width)
+
+                # Draw arrow head at the end of the adjusted line
+                # Position arrow slightly before the adjusted end point
+                arrow_tail_x = adjusted_end_x - dx_norm * 0.05
+                arrow_tail_y = adjusted_end_y - dy_norm * 0.05
+
+                ax.annotate('', xy=(adjusted_end_x, adjusted_end_y),
+                            xytext=(arrow_tail_x, arrow_tail_y),
+                            arrowprops=dict(arrowstyle='->', color=edge_color,
+                                            alpha=alpha, lw=edge_width,
+                                            mutation_scale=arrow_head_size),
+                            zorder=2)
+
+        return ax
 
 
+    # Old functions to be removed
     def create_gaussian_graph(self, gaussians, reverse_gaussians=False):
         """Builds a directed graph where nodes represent Gaussians with direction and prior.
 
@@ -345,7 +419,6 @@ class GaussianGraph:
                                                    self.graph.nodes[gaussian_id]['mean'])
             if edge_weight is not None:
                 self.graph.add_edge(self.initial_id, gaussian_id, weight=edge_weight)
-
 
     def compute_shortest_path(self):
         """Compute the shortest path from initial to attractor and configure initial node.
@@ -459,7 +532,7 @@ class GaussianGraph:
             raise ValueError(f"Only 2D and 3D vectors supported, got {dim}D")
 
 
-    def plot(self, ax=None):
+    def _plot(self, ax=None):
         """Plots a GaussianGraph.
 
         Args:

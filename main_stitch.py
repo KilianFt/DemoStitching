@@ -142,7 +142,7 @@ def main():
 
             # Plot
             if i == 0 and config.save_fig:
-                plot_gaussian_graph(gg, config, bare=True, save_as='Gaussian_Graph')
+                plot_gaussian_graph(gg, config, save_as='Gaussian_Graph')
             if config.save_fig:
                 plot_tools.plot_gaussians_with_ds(gg, stitched_ds, simulated_trajectories, save_folder, i, config)
                 plot_gaussian_graph(gg, config, save_as=f'gg_path_{i}')

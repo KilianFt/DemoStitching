@@ -279,7 +279,7 @@ def plot_demonstration_set(demo_set, config, ax=None, file_name=None):
 
     return ax
 
-def plot_gaussian_graph(gg, config, bare=False, ax=None, save_as=None):
+def plot_gaussian_graph(gg, config, ax=None, save_as=None):
     """Plots a GaussianGraph.
 
     Args:
@@ -287,112 +287,7 @@ def plot_gaussian_graph(gg, config, bare=False, ax=None, save_as=None):
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
-
-    nxgraph = gg.graph
-
-    # Get positions for nodes
-    pos = {node: nxgraph.nodes[node]['mean'] for node in gg.gaussian_ids}
-    if gg.attractor_id:
-        pos[gg.attractor_id] = nxgraph.nodes[gg.attractor_id]['pos']
-    if gg.initial_id:
-        pos[gg.initial_id] = nxgraph.nodes[gg.initial_id]['pos']
-
-    # Create colormap for nodes
-    colormap = []
-    for node in nxgraph.nodes:
-        if node is gg.attractor_id and not bare:
-            colormap.append('red')
-        elif node is gg.initial_id and not bare:
-            colormap.append('green')
-        else:
-            colormap.append('teal')
-
-    # Draw nodes manually using scatter plot
-    node_positions = np.array([pos[node] for node in nxgraph.nodes])
-    ax.scatter(node_positions[:, 0], node_positions[:, 1],
-               c=colormap, s=100, zorder=3)
-
-    # Extract edge weights and normalize for alpha values
-    edges = nxgraph.edges(data=True)
-    weights = [edata['weight'] for _, _, edata in edges]
-
-    # Normalize weights for alpha values (higher weight = lower alpha)
-    norm_param = 10
-    normalize_weights = np.array(weights) / min(weights)
-    normalize_weights = normalize_weights - 1
-    normalize_weights = normalize_weights * norm_param / np.median(normalize_weights)
-    normalize_weights = normalize_weights + 1
-    alphas = [np.exp(1 - w) for w in normalize_weights]
-
-    # Draw edges manually
-    node_buffer_start = 0.3
-    node_buffer_end = 0.3
-    line_width = 0.5
-    arrow_head_size = 8
-
-    for (u, v, edata), alpha in zip(edges, alphas):
-        start_pos = pos[u]
-        end_pos = pos[v]
-
-        dx = end_pos[0] - start_pos[0]
-        dy = end_pos[1] - start_pos[1]
-        length = np.sqrt(dx ** 2 + dy ** 2)
-
-        if length > 0:
-            # Normalize direction vector
-            dx_norm = dx / length
-            dy_norm = dy / length
-
-            # Calculate adjusted start and end points based on buffer distances
-            adjusted_start_x = start_pos[0] + dx_norm * node_buffer_start
-            adjusted_start_y = start_pos[1] + dy_norm * node_buffer_start
-            adjusted_end_x = end_pos[0] - dx_norm * node_buffer_end
-            adjusted_end_y = end_pos[1] - dy_norm * node_buffer_end
-
-            # Draw the line between adjusted points
-            ax.plot([adjusted_start_x, adjusted_end_x], [adjusted_start_y, adjusted_end_y],
-                    'k-', alpha=alpha, zorder=1, linewidth=line_width)
-
-            # Draw arrow head at the end of the adjusted line
-            # Position arrow slightly before the adjusted end point
-            arrow_tail_x = adjusted_end_x - dx_norm * 0.05
-            arrow_tail_y = adjusted_end_y - dy_norm * 0.05
-
-            ax.annotate('', xy=(adjusted_end_x, adjusted_end_y),
-                        xytext=(arrow_tail_x, arrow_tail_y),
-                        arrowprops=dict(arrowstyle='->', color='black',
-                                        alpha=alpha, lw=line_width,
-                                        mutation_scale=arrow_head_size),
-                        zorder=2)
-
-    # Draw shortest path manually
-    if gg.shortest_path is not None and not bare:
-        path_edges = [(gg.shortest_path[i], gg.shortest_path[i + 1])
-                      for i in range(len(gg.shortest_path) - 1)]
-
-        for u, v in path_edges:
-            start_pos = pos[u]
-            end_pos = pos[v]
-
-            # Draw thick path line
-            ax.plot([start_pos[0], end_pos[0]], [start_pos[1], end_pos[1]],
-                    'magenta', alpha=0.25, linewidth=10, zorder=0)
-
-            # Draw large arrow for path
-            dx = end_pos[0] - start_pos[0]
-            dy = end_pos[1] - start_pos[1]
-            length = np.sqrt(dx ** 2 + dy ** 2)
-
-            if length > 0:
-                dx_norm = dx / length
-                dy_norm = dy / length
-                arrow_start_x = end_pos[0] - dx_norm * 0.15
-                arrow_start_y = end_pos[1] - dy_norm * 0.15
-
-                ax.annotate('', xy=(end_pos[0], end_pos[1]),
-                            xytext=(arrow_start_x, arrow_start_y),
-                            arrowprops=dict(arrowstyle='->', color='magenta',
-                                            alpha=0.25, lw=10), zorder=0)
+    ax = gg.plot(ax=ax)
 
     # Apply config settings if provided
     if hasattr(config, 'plot_extent'):
@@ -404,7 +299,7 @@ def plot_gaussian_graph(gg, config, bare=False, ax=None, save_as=None):
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + save_as + '.png', dpi=300)
+        plt.savefig(save_folder + save_as + '.pdf')
         plt.close()
 
     return ax
