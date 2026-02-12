@@ -7,19 +7,20 @@ from src.util.load_tools import get_demonstration_set, resolve_data_scales
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.ds_tools import apply_lpvds_demowise
-from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph
+from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph, plot_gg_solution, plot_ds
 
 # TODO
 # - all_paths_all
 
 # ds_method options:
-# - ["recompute_all"] Recompute using shortest path
-# - ["recompute_ds"] Recompute only DS
-# - ["reuse"] Reuse A's from step 1 and only recompute them if they are invalid wrt P
-# - ["all_paths_all"] Fit DS to each node and use all paths
-# - ["all_paths_ds"] Fit DS to each node and use all paths for DS
-# - ["all_paths_reuse"] Fit DS to each node and use all paths for DS and reuse A's from step 1
-# - ["chain"] Fit one linear DS per path node and switch/blend between them online
+# - ["sp_recompute_all"]            Uses shortest path, extracts raw traj. points, recomputes Gaussians and DS.
+# - ["sp_recompute_ds"]             Uses shortest path, keeps Gaussians but recomputes DS.
+# - ["sp_recompute_invalid_As"]     Uses shortest path, selects a P near the attractor, recomputes any incompatible As.
+# - ["sp_recompute_P"]              Uses shortest path, keeps Gaussians and As, tries to find a P.
+# - ["spt_recompute_all"]           Uses shortest path tree, otherwise same as corresponding "sp" method.
+# - ["spt_recompute_ds"]            Uses shortest path tree, otherwise same as corresponding "sp" method.
+# - ["spt_recompute_invalid_As"]    Uses shortest path tree, otherwise same as corresponding "sp" method.
+# - ["chain"]                       Fit one linear DS per path node and switch/blend between them online.
 
 @dataclass
 class Config:
@@ -97,23 +98,25 @@ def main():
         position_scale=data_position_scale,
         velocity_scale=data_velocity_scale,
     )
-    plot_demonstration_set(demo_set, config, file_name='Demonstrations_Raw')
+    plot_demonstration_set(demo_set, config, save_as='Demonstrations_Raw', hide_axis=True)
 
     # Fit a DS to each demonstration
     ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config)
-    plot_demonstration_set(norm_demo_set, config, file_name='Demonstrations_Norm')
-    plot_ds_set_gaussians(ds_set, config, include_points=True, file_name='Demonstrations_Gaussians')
+    plot_demonstration_set(norm_demo_set, config, save_as='Demonstrations_Norm', hide_axis=True)
+    plot_ds_set_gaussians(ds_set, config, include_trajectory=True, save_as='Demonstrations_Gaussians', hide_axis=True)
 
     # Determine iteration strategy based on config
-    combinations = initialize_iter_strategy(config, demo_set)
+    init_attr_combinations = initialize_iter_strategy(config, demo_set)
 
     all_results = []
-    for i, (initial, attractor) in enumerate(combinations):
-        print(f"Processing combination {i+1} of {len(combinations)} #######################################")
+    for i, (initial, attractor) in enumerate(init_attr_combinations):
+        print(f"Processing combination {i+1} of {len(init_attr_combinations)} #######################################")
 
         # Construct Gaussian Graph and Stitched DS
         print('Constructing Gaussian Graph and Stitched DS...')
-        stitched_ds, gg, ds_stats = construct_stitched_ds(config, norm_demo_set, ds_set, reversed_ds_set, initial, attractor)
+        stitched_ds, gg, gg_solution_nodes, ds_stats = construct_stitched_ds(
+            config, norm_demo_set, ds_set, reversed_ds_set, initial, attractor
+        )
         
         if stitched_ds is None or not hasattr(stitched_ds, 'damm') or stitched_ds.damm is None or not hasattr(stitched_ds.damm, 'Mu'):
             print(f"Warning: Skipping Stitched DS object with incomplete DAMM clustering")
@@ -129,7 +132,7 @@ def main():
                 attractor=attractor
             )
         else:
-            plot_ds_set_gaussians([stitched_ds], config, include_points=True, file_name=f'stitched_gaussians_{i}')
+            plot_ds_set_gaussians([stitched_ds], config, include_trajectory=True, save_as=f'stitched_gaussians_{i}', hide_axis=True)
 
             # Simulate trajectories
             print('Simulating trajectories...')
@@ -148,10 +151,11 @@ def main():
 
             # Plot
             if i == 0 and config.save_fig:
-                plot_gaussian_graph(gg, config, save_as='Gaussian_Graph')
+                plot_gaussian_graph(gg, config, save_as='Gaussian_Graph', hide_axis=True)
             if config.save_fig:
-                plot_tools.plot_gaussians_with_ds(gg, stitched_ds, simulated_trajectories, save_folder, i, config)
-                plot_gaussian_graph(gg, config, save_as=f'gg_path_{i}')
+                plot_gg_solution(gg, gg_solution_nodes, config, save_as=f'{i}_Gaussian_Graph_Solution', hide_axis=True)
+                plot_ds_set_gaussians([stitched_ds], config, include_trajectory=True, save_as=f'{i}_Stitched_DS_Gaussians', hide_axis=True)
+                plot_ds(stitched_ds, simulated_trajectories, config, save_as=f'{i}_Stitched_DS_Simulation', hide_axis=True)
 
         # Compile and append results
         results = {'combination_id': i, 'ds_method': config.ds_method,} | ds_stats | ds_metrics

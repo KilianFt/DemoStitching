@@ -4,7 +4,6 @@ from typing import Optional
 import numpy as np
 from scipy.stats import multivariate_normal
 from src.damm.src.damm_class import DAMM as damm_class
-from src.stitching.graph_paths import shortest_path_nodes as _safe_shortest_path_nodes
 import cvxpy as cp
 
 
@@ -534,17 +533,45 @@ def prepare_chaining_edge_lookup(ds_set, gg, config):
 def build_chained_ds(
     ds_set,
     gg,
-    initial: np.ndarray,
-    attractor: np.ndarray,
-    config,
+    *args,
+    initial: Optional[np.ndarray] = None,
+    attractor: Optional[np.ndarray] = None,
+    config=None,
     precomputed_chain_cfg: Optional[_ChainConfig] = None,
     precomputed_edge_lookup: Optional[dict] = None,
     shortest_path_nodes: Optional[list] = None,
 ) -> Optional[ChainedLinearDS]:
+    # TODO remove legacy
+    # Accept both signatures:
+    # 1) build_chained_ds(ds_set, gg, initial=..., attractor=..., config=..., shortest_path_nodes=...)
+    # 2) legacy: build_chained_ds(ds_set, gg, path_nodes, initial=..., attractor=..., config=...)
+    extra_args = list(args)
+    if len(extra_args) > 0:
+        first = extra_args.pop(0)
+        if shortest_path_nodes is None:
+            if isinstance(first, (list, tuple)) and (
+                len(first) == 0
+                or isinstance(first[0], tuple)
+                or first[0] in {"initial", "attractor"}
+            ):
+                shortest_path_nodes = list(first)
+            elif initial is None:
+                initial = np.asarray(first, dtype=float)
+    if len(extra_args) > 0 and attractor is None:
+        attractor = np.asarray(extra_args.pop(0), dtype=float)
+    if len(extra_args) > 0 and config is None:
+        config = extra_args.pop(0)
+    if len(extra_args) > 0:
+        raise TypeError("Unexpected extra positional arguments in build_chained_ds.")
+    if initial is None or attractor is None or config is None:
+        raise TypeError("build_chained_ds requires initial, attractor, and config.")
+    initial = np.asarray(initial, dtype=float)
+    attractor = np.asarray(attractor, dtype=float)
+
     if shortest_path_nodes is None:
         shortest_path_attr = getattr(gg, "shortest_path", None)
         if callable(shortest_path_attr):
-            shortest_path_nodes = _safe_shortest_path_nodes(gg, initial_state=initial, target_state=attractor)
+            shortest_path_nodes = shortest_path_attr(initial, attractor)
         elif shortest_path_attr is not None:
             shortest_path_nodes = list(shortest_path_attr)
             if len(shortest_path_nodes) > 0 and shortest_path_nodes[0] == "initial":

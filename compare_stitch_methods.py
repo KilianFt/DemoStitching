@@ -15,7 +15,7 @@ from src.util.ds_tools import apply_lpvds_demowise
 from src.util.load_tools import get_demonstration_set
 
 
-DEFAULT_METHODS = ("recompute_all", "recompute_ds", "reuse", "chain")
+DEFAULT_METHODS = ("sp_recompute_all", "sp_recompute_ds", "sp_recompute_invalid_As", "chain")
 
 
 @dataclass
@@ -191,10 +191,10 @@ def run_comparison(cfg: CompareConfig) -> Tuple[pd.DataFrame, pd.DataFrame]:
         print(f"\n=== Dataset: {dataset_path} ===")
         dataset_name = os.path.basename(dataset_path.rstrip("/"))
         demo_set = get_demonstration_set(dataset_path)
-        fit_cfg = _method_config(method="recompute_ds", seed=cfg.seed)
+        fit_cfg = _method_config(method="sp_recompute_ds", seed=cfg.seed)
         ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, fit_cfg)
 
-        combo_cfg = _method_config(method="recompute_ds", seed=cfg.seed)
+        combo_cfg = _method_config(method="sp_recompute_ds", seed=cfg.seed)
         all_combinations = initialize_iter_strategy(combo_cfg, demo_set)
         combinations = select_combinations(all_combinations, cfg.max_combinations)
         print(f"Using {len(combinations)} / {len(all_combinations)} start-goal combinations")
@@ -204,7 +204,7 @@ def run_comparison(cfg: CompareConfig) -> Tuple[pd.DataFrame, pd.DataFrame]:
             method_cfg = _method_config(method=method, seed=cfg.seed)
             for combo_id, (initial, attractor) in enumerate(combinations):
                 try:
-                    stitched_ds, gg, ds_stats = construct_stitched_ds(
+                    stitched_ds, gg, _, ds_stats = construct_stitched_ds(
                         method_cfg, norm_demo_set, ds_set, reversed_ds_set, initial, attractor
                     )
                 except Exception as e:

@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -134,6 +135,59 @@ class LiveStitchVelocityFieldTests(unittest.TestCase):
         self.assertEqual(len(ctrl.trajectory), 2)
         self.assertEqual(ctrl.current_path_nodes, [("n0",), ("n1",)])
         self.assertEqual(dummy_ds.reset_calls[-1][0], 0)
+
+    def test_build_chain_ds_uses_gaussian_graph_shortest_path(self):
+        class _FakeGG:
+            def __init__(self, param_dist=None, param_cos=None):
+                self.param_dist = param_dist
+                self.param_cos = param_cos
+                self.shortest_path_calls = []
+
+            def add_gaussians(self, gaussians, reverse_gaussians=False):
+                self.gaussians = gaussians
+                self.reverse_gaussians = reverse_gaussians
+
+            def shortest_path(self, initial, attractor):
+                self.shortest_path_calls.append(
+                    (np.asarray(initial, dtype=float).copy(), np.asarray(attractor, dtype=float).copy())
+                )
+                return [("n0",), ("n1",)]
+
+        ctrl = LiveStitchController.__new__(LiveStitchController)
+        ctrl.config = SimpleNamespace(
+            param_dist=3,
+            param_cos=2,
+            reverse_gaussians=False,
+        )
+        ctrl.gaussian_map = {
+            (0, 0): {
+                "mu": np.array([0.0, 0.0]),
+                "sigma": np.eye(2),
+                "direction": np.array([1.0, 0.0]),
+                "prior": 1.0,
+            }
+        }
+        ctrl.ds_set = [SimpleNamespace()]
+        ctrl.chain_cfg = object()
+        ctrl.chain_edge_lookup = {}
+
+        fake_ds = SimpleNamespace()
+        initial = np.array([0.0, 0.0])
+        attractor = np.array([2.0, 1.0])
+
+        with patch("main_stitch_live.gu.GaussianGraph", _FakeGG), patch(
+            "main_stitch_live.build_chained_ds",
+            return_value=fake_ds,
+        ) as mock_build:
+            ds, gg, path_nodes = LiveStitchController._build_chain_ds(ctrl, initial, attractor)
+
+        self.assertIs(ds, fake_ds)
+        self.assertEqual(path_nodes, [("n0",), ("n1",)])
+        self.assertEqual(len(gg.shortest_path_calls), 1)
+        np.testing.assert_allclose(gg.shortest_path_calls[0][0], initial)
+        np.testing.assert_allclose(gg.shortest_path_calls[0][1], attractor)
+        self.assertEqual(gg.shortest_path_nodes, [("n0",), ("n1",)])
+        self.assertEqual(mock_build.call_args.kwargs["shortest_path_nodes"], [("n0",), ("n1",)])
 
     def test_path_points_use_fixed_path_anchor_not_current_state(self):
         ctrl = LiveStitchController.__new__(LiveStitchController)

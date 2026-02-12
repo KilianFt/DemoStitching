@@ -252,6 +252,47 @@ class ChainingPolicyTests(unittest.TestCase):
         self.assertEqual(chained_default.A_seq.shape, chained_cached.A_seq.shape)
         self.assertEqual(chained_default.state_sequence.shape, chained_cached.state_sequence.shape)
 
+    def test_build_chained_ds_uses_graph_shortest_path_when_not_provided(self):
+        initial = np.array([-0.4, 0.0])
+        attractor = np.array([3.0, 0.0])
+
+        mus = [np.array([0.0, 0.0]), np.array([1.0, 0.0]), np.array([2.0, 0.0])]
+        targets = [np.array([1.0, 0.0]), np.array([2.0, 0.0]), attractor]
+        ds_set = [_MockDS(mu, target, seed=i + 31) for i, (mu, target) in enumerate(zip(mus, targets))]
+        gaussians = {
+            (i, 0): {
+                "mu": mu,
+                "sigma": 0.04 * np.eye(2),
+                "direction": np.array([1.0, 0.0]),
+                "prior": 1.0 / len(mus),
+            }
+            for i, mu in enumerate(mus)
+        }
+        gg = self._make_graph(gaussians)
+        expected_path = gg.shortest_path(initial, attractor)
+        self.assertIsNotNone(expected_path)
+
+        config = SimpleNamespace(
+            chain_trigger_radius=0.10,
+            chain_transition_time=0.20,
+            chain_recovery_distance=0.30,
+            chain_enable_recovery=False,
+            chain_stabilization_margin=1e-3,
+            chain_lmi_tolerance=5e-5,
+            chain_edge_data_mode="both_all",
+            chain_switch_threshold=0.10,
+            chain_blend_width=0.20,
+        )
+        chained = build_chained_ds(
+            ds_set,
+            gg,
+            initial=initial,
+            attractor=attractor,
+            config=config,
+        )
+        self.assertIsNotNone(chained)
+        self.assertEqual(chained.path_nodes[:-1], expected_path)
+
     def test_chain_exposes_edge_fit_points_and_direction_metrics(self):
         chained, _, _, _ = self._make_chain(enable_recovery=False)
         self.assertTrue(hasattr(chained, "edge_fit_points"))

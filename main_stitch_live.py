@@ -11,7 +11,6 @@ import graph_utils as gu
 from main_stitch import Config as StitchConfig
 from src.stitching.chaining import build_chained_ds, prepare_chaining_edge_lookup
 from src.stitching.ds_stitching import construct_stitched_ds
-from src.stitching.graph_paths import shortest_path_nodes
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.util.ds_tools import apply_lpvds_demowise, get_gaussian_directions
 from src.util.load_tools import get_demonstration_set, resolve_data_scales
@@ -170,13 +169,7 @@ class LiveStitchController:
     def _build_chain_ds(self, initial: np.ndarray, attractor: np.ndarray):
         gg = gu.GaussianGraph(param_dist=self.config.param_dist, param_cos=self.config.param_cos)
         gg.add_gaussians(self.gaussian_map, reverse_gaussians=self.config.reverse_gaussians)
-        path_nodes = shortest_path_nodes(
-            gg,
-            initial_state=initial,
-            target_state=attractor,
-            start_node_candidates=getattr(self.config, "chain_start_node_candidates", 1),
-            goal_node_candidates=getattr(self.config, "chain_goal_node_candidates", 1),
-        )
+        path_nodes = gg.shortest_path(initial, attractor)
         if path_nodes is None:
             print("Failed to find path nodes")
             return None, gg, None
@@ -195,7 +188,7 @@ class LiveStitchController:
 
     def _build_other_ds(self, initial: np.ndarray, attractor: np.ndarray):
         try:
-            ds, gg, _ = construct_stitched_ds(
+            ds, gg, path_nodes, _ = construct_stitched_ds(
                 self.config,
                 self.norm_demo_set,
                 self.ds_set,
@@ -207,6 +200,8 @@ class LiveStitchController:
             return None, None, None
         if ds is None or gg is None:
             return None, gg, None
+        if path_nodes is not None:
+            return ds, gg, list(path_nodes)
         if hasattr(gg, "shortest_path_nodes"):
             return ds, gg, list(gg.shortest_path_nodes)
         if hasattr(gg, "node_wise_shortest_path"):
