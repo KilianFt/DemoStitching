@@ -332,22 +332,19 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in
                  enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(gaussians,
-                          attractor=attractor,
-                          reverse_gaussians=config.reverse_gaussians,
-                          param_dist=config.param_dist,
-                          param_cos=config.param_cos)
-    gg.compute_node_wise_shortest_path()
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
+    spt_nodes = gg.shortest_path_tree(target_state=attractor)
     stats['gg compute time'] = time.time() - t0
 
     # ############## DS ##############
     t0 = time.time()
 
     # Collect the gaussians that eventually lead to the target
-    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg.node_wise_shortest_path]
+    priors = [gg.graph.nodes[node_id]['prior'] for node_id in spt_nodes]
     priors = [prior / sum(priors) for prior in priors]
     gaussians = []
-    for i, node_id in enumerate(gg.node_wise_shortest_path):
+    for i, node_id in enumerate(spt_nodes):
         mu, sigma, direction, prior = gg.get_gaussian(node_id)
         gaussians.append({
             'prior': priors[i],  # use normalized prior
@@ -359,7 +356,7 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
     # Collect the trajectory points that are assigned to each gaussian
     filtered_x = []
     filtered_x_dot = []
-    for node_id in gg.node_wise_shortest_path:
+    for node_id in spt_nodes:
 
         ds_idx = node_id[0]
         gaussian_idx = node_id[1]
