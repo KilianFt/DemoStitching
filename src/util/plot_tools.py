@@ -19,6 +19,157 @@ plt.rcParams.update({
     "font.size": 20
 })
 
+def plot_demonstration_set(demo_set, config, ax=None, save_as=None):
+    """Plots grouped demonstration trajectories with start and end points, optionally saving the figure.
+
+    Args:
+        demo_set: List of Demonstration objects, each containing Trajectory objects to plot.
+        config: Configuration object specifying plot extent, dataset path, and ds_method.
+        ax: Optional matplotlib axis. If None, a new figure and axis are created.
+        save_as: Optional filename (without extension) to save the plot as PNG.
+
+    Returns:
+        matplotlib.axes.Axes: The axis containing the plotted demonstration set.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Generate colors from colormap - one color per demonstration
+    colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
+
+    # Plot each demonstration with its assigned color
+    for i, demo in enumerate(demo_set):
+        ax = primitive_plot_demo(ax, demo, color=colors[i])
+
+    # Plot settings
+    if hasattr(config, 'plot_extent'):
+        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
+        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    ax.set_aspect('equal')
+    plt.tight_layout()
+
+    # Save the figure if file_name is provided
+    if save_as is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        plt.savefig(save_folder + save_as + '.pdf')
+
+    # Close the figure if we created it
+    if ax is None:
+        plt.close()
+
+    return ax
+
+def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, save_as=None):
+    """Plots means, covariances, and directions for all Gaussians in the DS set, with optional data point arrows.
+
+    Args:
+        ds_set: List of DS objects, each containing fitted Gaussian parameters and data assignments.
+        config: Configuration object providing plotting and dataset settings.
+        include_trajectory: If True, overlays trajectory points and velocity arrows assigned to Gaussians.
+        ax: Optional matplotlib axis. If None, creates a new figure and axis.
+        save_as: Optional filename (without extension) to save the plot as PNG.
+
+    Returns:
+        matplotlib.axes.Axes: The axis with the plotted Gaussians and any optional data points.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Plot the gaussians
+    colors = plt.cm.get_cmap('tab10', len(ds_set)).colors
+    for i, ds in enumerate(ds_set):
+        mus = ds.damm.Mu
+        sigmas = ds.damm.Sigma
+        directions = get_gaussian_directions(ds)
+
+        for mu, sigma, direction in zip(mus, sigmas, directions):
+            ax = primitive_plot_gaussian(ax, mu, sigma, color=colors[i], direction=direction, sigma_bound=2)
+
+    # Add trajectory points if requested
+    if include_trajectory:
+        for i, ds in enumerate(ds_set):
+            ax = primitive_plot_trajectory_points(ax, ds.x, ds.x_dot, color=colors[i])
+
+    # set limits
+    if hasattr(config, 'plot_extent'):
+        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
+        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    ax.set_aspect('equal')
+    plt.tight_layout()
+
+    # save the figure
+    if save_as is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        plt.savefig(save_folder + save_as + '.pdf')
+
+    return ax
+
+def plot_gg_solution(gg, solution_nodes, config, ax=None, save_as=None):
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax = gg.plot(ax=ax, nodes=solution_nodes)
+
+    # plot gaussians
+    for node in solution_nodes:
+        mu, sigma, direction, _ = gg.get_gaussian(node)
+        ax = primitive_plot_gaussian(ax, mu, sigma, color='orange', direction=direction)
+
+    # set limits
+    if hasattr(config, 'plot_extent'):
+        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
+        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    ax.set_aspect('equal')
+    plt.tight_layout()
+
+    if save_as is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        plt.savefig(save_folder + save_as + '.pdf')
+
+    return ax
+
+def plot_ds(lpvds, x_test_list, config, ax=None, save_as=None):
+    """Plots the DS vector field and simulated trajectories in 2D.
+
+    Args:
+        lpvds: The DS object containing the fitted model.
+        x_test_list: List of simulated trajectory arrays to plot.
+        config: Configuration object with plotting extent and dataset settings.
+        ax: Optional matplotlib axis. If None, creates a new figure and axis.
+        save_as: Optional filename (without extension) to save the plot as PNG.
+
+    Returns:
+        matplotlib.axes.Axes: The axis with the plotted DS vector field and trajectories.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=ax,
+               x_min=config.plot_extent[0], x_max=config.plot_extent[1],
+               y_min=config.plot_extent[2], y_max=config.plot_extent[3])
+
+    # set limits
+    if hasattr(config, 'plot_extent'):
+        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
+        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    ax.set_aspect('equal')
+    plt.tight_layout()
+
+    # save the figure
+    if save_as is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        plt.savefig(save_folder + save_as + '.pdf')
+
+    return ax
+
+
+
+
 def plot_gaussians_with_ds(gg, lpvds, x_test_list, save_folder, i, config):
     fig, axs = plt.subplots(1, 1, figsize=(8,8), sharex=True, sharey=True)
     if gg.shortest_path is not None:
@@ -168,117 +319,6 @@ def plot_gaussians(config, mus, sigmas, directions=None, resolution=800, ax=None
     plt.tight_layout()
     return ax
 
-def plot_ds_set_gaussians(ds_set, config, include_points=False, ax=None, file_name=None):
-    """Plots means, covariances, and directions for all Gaussians in the DS set, with optional data point arrows.
-
-    Args:
-        ds_set: List of DS objects, each containing fitted Gaussian parameters and data assignments.
-        config: Configuration object providing plotting and dataset settings.
-        include_points: If True, overlays trajectory points and velocity arrows assigned to Gaussians.
-        ax: Optional matplotlib axis. If None, creates a new figure and axis.
-        file_name: Optional filename (without extension) to save the plot as PNG.
-
-    Returns:
-        matplotlib.axes.Axes: The axis with the plotted Gaussians and any optional data points.
-    """
-
-    # Collect the gaussians from all DS'
-    mu = []
-    sigma = []
-    directions = []
-    for ds in ds_set:
-        mu.append(ds.damm.Mu)
-        sigma.append(ds.damm.Sigma)
-        directions.append(get_gaussian_directions(ds))
-    mu = np.vstack(mu)
-    sigma = np.vstack(sigma)
-    directions = np.vstack(directions)
-
-    # Plot the Gaussians
-    ax = plot_gaussians(config, mu, sigma, directions, ax=ax)
-
-    # Add trajectory points if requested
-    if include_points:
-
-        # get color map (one color for each gaussian from each ds)
-        num_gaussians = mu.shape[0]
-        colors = plt.cm.hsv(np.linspace(0, 1, num_gaussians))
-        random.shuffle(colors)
-
-        # plot points assigned to each gaussian with the corresponding color (k)
-        k = 0
-        for i in range(len(ds_set)):
-            for j in range(ds_set[i].K):
-
-                # get the points assigned to the j-th gaussian of the i-th ds
-                assigned_x = ds_set[i].x[ds_set[i].assignment_arr == j]
-                assigned_x_dot = ds_set[i].x_dot[ds_set[i].assignment_arr == j]
-                for p in range(len(assigned_x)):
-                    ax.arrow(assigned_x[p, 0], assigned_x[p, 1], assigned_x_dot[p, 0] * 0.1, assigned_x_dot[p, 1] * 0.1,
-                             head_width=0.05, head_length=0.05, fc=colors[k], ec=colors[k], alpha=0.5)
-                k += 1
-
-    # save the figure
-    if file_name is not None:
-        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
-        os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + file_name + '.png', dpi=800)
-
-    return ax
-
-def plot_demonstration_set(demo_set, config, ax=None, file_name=None):
-    """Plots grouped demonstration trajectories with start and end points, optionally saving the figure.
-
-    Args:
-        demo_set: List of Demonstration objects, each containing Trajectory objects to plot.
-        config: Configuration object specifying plot extent, dataset path, and ds_method.
-        ax: Optional matplotlib axis. If None, a new figure and axis are created.
-        file_name: Optional filename (without extension) to save the plot as PNG.
-
-    Returns:
-        matplotlib.axes.Axes: The axis containing the plotted demonstration set.
-    """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
-
-    # Number of demonstrations
-    n_demos = len(demo_set)
-
-    # Generate colors from colormap - one color per demonstration
-    colors = plt.cm.viridis(np.linspace(0, 1, n_demos+2))
-    colors = colors[1:-1]
-
-    # Plot each demonstration with its assigned color
-    for i, demo in enumerate(demo_set):
-        demo_color = colors[i]
-
-        # Plot all trajectories in this demonstration with the same color
-        for traj in demo.trajectories:
-            ax.plot(traj.x[:, 0], traj.x[:, 1], color=demo_color, linewidth=1, alpha=1)
-            # Start point (green)
-            ax.plot(traj.x[0, 0], traj.x[0, 1], 'go', markersize=8)
-            # End point (red)
-            ax.plot(traj.x[-1, 0], traj.x[-1, 1], 'ro', markersize=8)
-
-    # Plot settings
-    if hasattr(config, 'plot_extent'):
-        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
-        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
-    ax.set_aspect('equal')
-    plt.tight_layout()
-
-    # Save the figure if file_name is provided
-    if file_name is not None:
-        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
-        os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + file_name + '.png', dpi=600)
-
-    # Close the figure if we created it
-    if ax is None:
-        plt.close()
-
-    return ax
-
 def plot_gaussian_graph(gg, config, ax=None, save_as=None):
     """Plots a GaussianGraph.
 
@@ -310,7 +350,6 @@ def plot_trajectory_points(x, x_dot, ax):
     for i in range(len(x)):
         ax.arrow(x[i, 0], x[i, 1], x_dot[i, 0] * 0.1, x_dot[i, 1] * 0.1,
                  head_width=0.05, head_length=0.05, fc='blue', ec='blue', alpha=0.5)
-
 
 def plot_gmm(x_train, label, damm, ax = None):
     """ passing damm object to plot the ellipsoids of clustering results"""
@@ -464,3 +503,109 @@ def plot_incremental_ds(new_data, prev_data, att, x_test_list):
     ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
     ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
     ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+
+
+
+# Plotting primitives: accepts ax, adds to it, and returns it
+def primitive_plot_demo(ax, demo, color=None):
+    """Plots a single demonstration's trajectories with start and end points, optionally using a specified color.
+    """
+    # Params
+    alpha = 1
+    linewidth = 1
+    marker_size = 8
+
+    # Select random color if not provided
+    if color is None:
+        color = "#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
+
+    # Plot all trajectories in this demonstration with the same color
+    for traj in demo.trajectories:
+        ax.plot(traj.x[:, 0], traj.x[:, 1], color=color, linewidth=linewidth, alpha=alpha)
+        # Start point (green)
+        ax.plot(traj.x[0, 0], traj.x[0, 1], 'go', markersize=marker_size)
+        # End point (red)
+        ax.plot(traj.x[-1, 0], traj.x[-1, 1], 'ro', markersize=marker_size)
+
+    return ax
+
+def primitive_plot_gaussian(ax, mu, sigma, color=None, sigma_bound=2, resolution=200, direction=None):
+
+    # Params
+    sigma_bound_color = 'black'
+    sigma_bound_linewidth = 0.25
+    direction_arrow_color = 'white'
+    direction_arrow_size = 0.1
+    sigma_extent = 3  # extent of the grid in terms of std deviations
+
+    # Select random color if not provided
+    if color is None:
+        color = "#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
+
+    # Create coordinate grid
+    x_min = mu[0] - sigma_extent * np.sqrt(sigma[0, 0])
+    x_max = mu[0] + sigma_extent * np.sqrt(sigma[0, 0])
+    x = np.linspace(x_min, x_max, resolution)
+    y_min = mu[1] - sigma_extent * np.sqrt(sigma[1, 1])
+    y_max = mu[1] + sigma_extent * np.sqrt(sigma[1, 1])
+    y = np.linspace(y_min, y_max, resolution)
+
+    X, Y = np.meshgrid(x, y)
+    grid_points = np.column_stack([X.ravel(), Y.ravel()])
+
+    # Evaluate each grid point wrt the Gaussian
+    diff = grid_points - mu
+    inv_sigma = np.linalg.inv(sigma)
+    mahalanobis_sq = np.sum(diff @ inv_sigma * diff, axis=1)
+    norm_const = 1 / (2 * np.pi * np.sqrt(np.linalg.det(sigma)))
+    gaussian_values = norm_const * np.exp(-0.5 * mahalanobis_sq)
+    gaussian_values_normalized = gaussian_values / np.max(gaussian_values)  # Normalize for visualization
+    gaussian_evaluations = gaussian_values_normalized
+
+    # create heatmap
+    heatmap = gaussian_evaluations.reshape(resolution, resolution)
+    cmap = LinearSegmentedColormap.from_list('custom_heatmap', [(1, 1, 1, 0), color])
+    ax.imshow(heatmap, extent=(x_min, x_max, y_min, y_max), origin='lower', cmap=cmap, aspect='equal')
+
+    # Add 2-sigma ellipses for each Gaussian
+    if sigma_bound is not None:
+
+        # Eigendecomposition for ellipse orientation and size
+        eigenvals, eigenvecs = np.linalg.eigh(sigma)
+        order = eigenvals.argsort()[::-1]  # Sort in descending order
+        eigenvals = eigenvals[order]
+        eigenvecs = eigenvecs[:, order]
+
+        # Calculate ellipse parameters for x-sigma boundary
+        angle = np.degrees(np.arctan2(eigenvecs[1, 0], eigenvecs[0, 0]))
+        width = sigma_bound ** 2 * np.sqrt(eigenvals[0])  # 2-sigma width (2 * 2 * sqrt)
+        height = sigma_bound ** 2 * np.sqrt(eigenvals[1])  # 2-sigma height (2 * 2 * sqrt)
+
+        # Draw 2-sigma ellipse
+        ellipse = Ellipse(xy=mu, width=width, height=height, angle=angle,
+                          edgecolor=sigma_bound_color, facecolor='none',
+                          linewidth=sigma_bound_linewidth, linestyle='-')
+        ax.add_patch(ellipse)
+
+    # Add direction arrows
+    if direction is not None:
+        direction_norm = direction / (np.linalg.norm(direction, keepdims=True) + 1e-10)
+        arrow_scale = min(np.sqrt(sigma[0, 0]), np.sqrt(sigma[1, 1])) * direction_arrow_size
+
+        ax.arrow(mu[0], mu[1], direction_norm[0] * arrow_scale, direction_norm[1] * arrow_scale,
+                 width=arrow_scale,
+                 fc=direction_arrow_color, ec=direction_arrow_color)
+
+    return ax
+
+def primitive_plot_trajectory_points(ax, x, x_dot, color='blue', alpha=0.5):
+    """Plots arrows at each point in x with direction given by x_dot."""
+
+    # params
+    size = 0.015
+
+    for i in range(len(x)):
+        ax.arrow(x[i, 0], x[i, 1], x_dot[i, 0] * size, x_dot[i, 1] * size,
+                 width=size, fc=color, ec=color, alpha=alpha)
+
+    return ax

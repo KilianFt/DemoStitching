@@ -108,7 +108,7 @@ class ChainingPolicyTests(unittest.TestCase):
         self.assertEqual(chained.assignment_arr.shape, (chained.x.shape[0],))
         self.assertTrue(np.all(chained.assignment_arr >= 0))
         self.assertTrue(np.all(chained.assignment_arr < chained.K))
-        ax = plot_ds_set_gaussians([chained], config, include_points=True)
+        ax = plot_ds_set_gaussians([chained], config, include_trajectory=True)
         self.assertIsNotNone(ax)
 
 

@@ -39,6 +39,9 @@ class GaussianGraph:
         self.shortest_path = None
         """
 
+    def __str__(self):
+        return f'GaussianGraph with {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.'
+
     def add_gaussians(self, gaussians, reverse_gaussians=False):
 
         # create nodes
@@ -249,7 +252,7 @@ class GaussianGraph:
             node = self.graph.nodes[node_id]
             return node['mean'], node['covariance'], node['direction'], node['prior']
 
-    def plot(self, ax=None):
+    def plot(self, ax=None, nodes=None):
         """Plots the basic gaussian graph.
 
         Intended to be used as a base for more complex plots that overlay additional info (e.g. DS vector field,
@@ -274,19 +277,21 @@ class GaussianGraph:
             fig, ax = plt.subplots(figsize=(8, 6))
 
         # Get positions for nodes
-        pos = nx.get_node_attributes(self.graph, 'mean')
+        nodes = nodes if nodes is not None else self.graph.nodes
+        pos = {node: self.graph.nodes[node]['mean'] for node in nodes}
+        edges = [e for e in self.graph.edges if e[0] in nodes and e[1] in nodes]
 
         # Draw nodes using scatter plot
         pos_np = np.array([p for p in pos.values()])
         ax.scatter(pos_np[:, 0], pos_np[:, 1], c=node_color, s=node_size, zorder=3)
 
         # Extract edge weights and normalize for alpha values
-        weights = nx.get_edge_attributes(self.graph, 'weight')
-        weights_np = np.array([weights[edge] for edge in self.graph.edges])
+        weights = [self.graph.edges[e]['weight'] for e in edges]
+        weights_np = np.array(weights)
         alphas = np.minimum(1/weights_np + min_edge_alpha, 1)
 
         # Draw edges
-        for (u, v), alpha in zip(self.graph.edges, alphas):
+        for (u, v), alpha in zip(edges, alphas):
             start_pos = pos[u]
             end_pos = pos[v]
 
