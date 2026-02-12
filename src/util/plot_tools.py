@@ -14,7 +14,7 @@ plt.rcParams.update({
     "font.size": 20
 })
 
-def plot_demonstration_set(demo_set, config, ax=None, save_as=None):
+def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=False):
     """Plots grouped demonstration trajectories with start and end points, optionally saving the figure.
 
     Args:
@@ -27,7 +27,7 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None):
         matplotlib.axes.Axes: The axis containing the plotted demonstration set.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 8))
 
     # Generate colors from colormap - one color per demonstration
     colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
@@ -40,6 +40,8 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None):
     if hasattr(config, 'plot_extent'):
         ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
         ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    if hide_axis:
+        ax.axis('off')
     ax.set_aspect('equal')
     plt.tight_layout()
 
@@ -55,7 +57,7 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None):
 
     return ax
 
-def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, save_as=None):
+def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, save_as=None, hide_axis=False):
     """Plots means, covariances, and directions for all Gaussians in the DS set, with optional data point arrows.
 
     Args:
@@ -69,7 +71,7 @@ def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, sav
         matplotlib.axes.Axes: The axis with the plotted Gaussians and any optional data points.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 8))
 
     # Plot the gaussians
     colors = plt.cm.get_cmap('tab10', len(ds_set)).colors
@@ -90,6 +92,8 @@ def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, sav
     if hasattr(config, 'plot_extent'):
         ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
         ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    if hide_axis:
+        ax.axis('off')
     ax.set_aspect('equal')
     plt.tight_layout()
 
@@ -101,12 +105,12 @@ def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, sav
 
     return ax
 
-def plot_gg_solution(gg, solution_nodes, config, ax=None, save_as=None):
+def plot_gg_solution(gg, solution_nodes, config, ax=None, save_as=None, hide_axis=False):
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 8))
 
-    ax = gg.plot(ax=ax, nodes=solution_nodes)
+    ax = gg.plot(ax=ax)
 
     # plot gaussians
     for node in solution_nodes:
@@ -117,6 +121,8 @@ def plot_gg_solution(gg, solution_nodes, config, ax=None, save_as=None):
     if hasattr(config, 'plot_extent'):
         ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
         ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    if hide_axis:
+        ax.axis('off')
     ax.set_aspect('equal')
     plt.tight_layout()
 
@@ -127,7 +133,7 @@ def plot_gg_solution(gg, solution_nodes, config, ax=None, save_as=None):
 
     return ax
 
-def plot_ds(lpvds, x_test_list, config, ax=None, save_as=None):
+def plot_ds(lpvds, x_test_list, config, ax=None, save_as=None, hide_axis=False):
     """Plots the DS vector field and simulated trajectories in 2D.
 
     Args:
@@ -141,7 +147,7 @@ def plot_ds(lpvds, x_test_list, config, ax=None, save_as=None):
         matplotlib.axes.Axes: The axis with the plotted DS vector field and trajectories.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 8))
 
     plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=ax,
                x_min=config.plot_extent[0], x_max=config.plot_extent[1],
@@ -151,6 +157,8 @@ def plot_ds(lpvds, x_test_list, config, ax=None, save_as=None):
     if hasattr(config, 'plot_extent'):
         ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
         ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    if hide_axis:
+        ax.axis('off')
     ax.set_aspect('equal')
     plt.tight_layout()
 
@@ -162,20 +170,22 @@ def plot_ds(lpvds, x_test_list, config, ax=None, save_as=None):
 
     return ax
 
-def plot_gaussian_graph(gg, config, ax=None, save_as=None):
+def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
     """Plots a GaussianGraph.
 
     Args:
         gg: a GaussianGraph
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 8))
     ax = gg.plot(ax=ax)
 
     # Apply config settings if provided
     if hasattr(config, 'plot_extent'):
         ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
         ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    if hide_axis:
+        ax.axis('off')
     ax.set_aspect('equal')
     plt.tight_layout()
 
@@ -186,6 +196,7 @@ def plot_gaussian_graph(gg, config, ax=None, save_as=None):
         plt.close()
 
     return ax
+
 
 
 # These will possibly be removed at a later stage (avoid using if an alternative above is available)

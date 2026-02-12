@@ -92,12 +92,12 @@ def main():
 
     # Load/create a set of demonstrations
     demo_set = get_demonstration_set(config.dataset_path)
-    plot_demonstration_set(demo_set, config, save_as='Demonstrations_Raw')
+    plot_demonstration_set(demo_set, config, save_as='Demonstrations_Raw', hide_axis=True)
 
     # Fit a DS to each demonstration
     ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config)
-    plot_demonstration_set(norm_demo_set, config, save_as='Demonstrations_Norm')
-    plot_ds_set_gaussians(ds_set, config, include_trajectory=True, save_as='Demonstrations_Gaussians')
+    plot_demonstration_set(norm_demo_set, config, save_as='Demonstrations_Norm', hide_axis=True)
+    plot_ds_set_gaussians(ds_set, config, include_trajectory=True, save_as='Demonstrations_Gaussians', hide_axis=True)
 
     # Determine iteration strategy based on config
     init_attr_combinations = initialize_iter_strategy(config, demo_set)
@@ -142,11 +142,11 @@ def main():
 
             # Plot
             if i == 0 and config.save_fig:
-                plot_gaussian_graph(gg, config, save_as='Gaussian_Graph')
+                plot_gaussian_graph(gg, config, save_as='Gaussian_Graph', hide_axis=True)
             if config.save_fig:
-                plot_gg_solution(gg, gg_solution_nodes, config, save_as=f'{i}_Gaussian_Graph_Solution')
-                plot_ds_set_gaussians([stitched_ds], config, include_trajectory=True, save_as=f'{i}_Stitched_DS_Gaussians')
-                plot_ds(stitched_ds, simulated_trajectories, config, save_as=f'{i}_Stitched_DS_Simulation')
+                plot_gg_solution(gg, gg_solution_nodes, config, save_as=f'{i}_Gaussian_Graph_Solution', hide_axis=True)
+                plot_ds_set_gaussians([stitched_ds], config, include_trajectory=True, save_as=f'{i}_Stitched_DS_Gaussians', hide_axis=True)
+                plot_ds(stitched_ds, simulated_trajectories, config, save_as=f'{i}_Stitched_DS_Simulation', hide_axis=True)
 
         # Compile and append results
         results = {'combination_id': i, 'ds_method': config.ds_method,} | ds_stats | ds_metrics
