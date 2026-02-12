@@ -330,11 +330,9 @@ def _resolve_trigger_radii(state_sequence: np.ndarray, cfg: _ChainConfig) -> np.
     return radii
 
 
-def build_chained_ds(ds_set, gg, initial: np.ndarray, attractor: np.ndarray, config) -> Optional[ChainedLinearDS]:
-    if gg.shortest_path is None:
-        gg.compute_shortest_path()
+def build_chained_ds(ds_set, gg, gg_solution_nodes, initial: np.ndarray, attractor: np.ndarray, config) -> Optional[ChainedLinearDS]:
 
-    path_nodes = list(gg.shortest_path)
+    path_nodes = gg_solution_nodes
     if len(path_nodes) < 2:
         return None
 

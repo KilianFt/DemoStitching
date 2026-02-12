@@ -7,7 +7,7 @@ from src.util.load_tools import get_demonstration_set
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.ds_tools import apply_lpvds_demowise
-from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph, plot_gaussians_with_ds, plot_gg_solution, plot_ds
+from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph, plot_gg_solution, plot_ds
 
 # TODO
 # - all_paths_all

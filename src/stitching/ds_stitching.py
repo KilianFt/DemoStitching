@@ -8,7 +8,6 @@ from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A, find_lyapunov_function
 from src.stitching.chaining import build_chained_ds
 from src.util.ds_tools import get_gaussian_directions
-from src.util.plot_tools import plot_trajectory_points
 import graph_utils as gu
 
 
@@ -47,7 +46,6 @@ def construct_stitched_ds(config, norm_demo_set, ds_set, reversed_ds_set, initia
     else:
         raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
 
-
 def chain_ds(ds_set, initial, attractor, config):
     """Builds a chained DS that tracks a shortest Gaussian-graph path by switching targets."""
     stats = dict()
@@ -61,28 +59,22 @@ def chain_ds(ds_set, initial, attractor, config):
             zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior)
         )
     }
-    gg = gu.GaussianGraph(
-        gaussians,
-        attractor=attractor,
-        initial=initial,
-        reverse_gaussians=config.reverse_gaussians,
-        param_dist=config.param_dist,
-        param_cos=config.param_cos,
-    )
-    gg.compute_shortest_path()
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
+    gg_solution_nodes = gg.shortest_path(initial, attractor)
     stats['gg compute time'] = time.time() - t0
 
     # ############## DS ##############
     t_ds = time.time()
     try:
-        stitched_ds = build_chained_ds(ds_set, gg, initial=initial, attractor=attractor, config=config)
+        stitched_ds = build_chained_ds(ds_set, gg, gg_solution_nodes, initial=initial, attractor=attractor, config=config)
     except Exception as e:
         print(f'Failed to construct Chained DS: {e}')
         stitched_ds = None
 
     stats['ds compute time'] = time.time() - t_ds
     stats['total compute time'] = time.time() - t0
-    return stitched_ds, gg, stats
+    return stitched_ds, gg, gg_solution_nodes, stats
 
 def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     """Builds a stitched dynamical system by following the shortest path through a Gaussian graph.
@@ -108,23 +100,19 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     gaussians = {(i,j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(gaussians,
-                          attractor=attractor,
-                          initial=initial,
-                          reverse_gaussians=config.reverse_gaussians,
-                          param_dist=config.param_dist,
-                          param_cos=config.param_cos)
-    gg.compute_shortest_path()
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
+    gg_solution_nodes = gg.shortest_path(initial, attractor)
     stats['gg compute time'] = time.time() - t0
 
     # ############## DS ##############
     t_ds = time.time()
 
     # Collect the gaussians along the shortest path
-    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg.shortest_path[1:-1]]
+    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg_solution_nodes]
     priors = [prior / sum(priors) for prior in priors]
     gaussians = []
-    for i, node_id in enumerate(gg.shortest_path[1:-1]):
+    for i, node_id in enumerate(gg_solution_nodes):
         mu, sigma, direction, prior = gg.get_gaussian(node_id)
         gaussians.append({
             'prior': priors[i],  # use normalized prior
@@ -136,7 +124,7 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     # collect the trajectory points that are assigned to the gaussians along the shortest path
     filtered_x = []
     filtered_x_dot = []
-    for node_id in gg.shortest_path[1:-1]:
+    for node_id in gg_solution_nodes:
 
         ds_idx = node_id[0]
         gaussian_idx = node_id[1]
@@ -178,7 +166,7 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     stats['ds compute time'] = time.time() - t_ds
     stats['total compute time'] = time.time() - t0
 
-    return stitched_ds, gg, stats
+    return stitched_ds, gg, gg_solution_nodes, stats
 
 def _process_node(args):
     """Helper function to process a single node in parallel.
@@ -224,13 +212,9 @@ def reuse_ds(ds_set, reversed_ds_set, initial, attractor, config):
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in
                  enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(gaussians,
-                          attractor=attractor,
-                          initial=initial,
-                          reverse_gaussians=config.reverse_gaussians,
-                          param_dist=config.param_dist,
-                          param_cos=config.param_cos)
-    gg.compute_shortest_path()
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
+    gg_solution_nodes = gg.shortest_path(initial, attractor)
     stats['gg compute time'] = time.time() - t0
 
     # ############## DS ##############
@@ -249,10 +233,10 @@ def reuse_ds(ds_set, reversed_ds_set, initial, attractor, config):
         print("WARN: reuse did not find good attractor")
 
     # Collect the gaussians along the shortest path
-    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg.shortest_path[1:-1]]
+    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg_solution_nodes]
     priors = [prior / sum(priors) for prior in priors]
     gaussians = []
-    for i, node_id in enumerate(gg.shortest_path[1:-1]):
+    for i, node_id in enumerate(gg_solution_nodes):
         mu, sigma, direction, prior = gg.get_gaussian(node_id)
         gaussians.append({
             'prior': priors[i],  # use normalized prior
@@ -262,7 +246,7 @@ def reuse_ds(ds_set, reversed_ds_set, initial, attractor, config):
         })
 
     # collect the trajectory points that are assigned to the gaussians along the shortest path (optimized)
-    nodes_to_process = gg.shortest_path[1:-1]
+    nodes_to_process = gg_solution_nodes
     
     # Prepare arguments for processing
     process_args = [(node_id, ds_set, gg, P, attractor) for node_id in nodes_to_process]
@@ -305,7 +289,7 @@ def reuse_ds(ds_set, reversed_ds_set, initial, attractor, config):
     stats['ds compute time'] = time.time() - t_ds
     stats['total compute time'] = time.time() - t0
 
-    return lpvds, gg, stats
+    return lpvds, gg, gg_solution_nodes, stats
 
 def all_paths(ds_set, attractor, config, recompute_gaussians):
     """Constructs a stitched dynamical system by aggregating all node-wise shortest paths in a Gaussian graph.
@@ -494,11 +478,9 @@ def all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config):
 
     return lpvds, gg, gg_solution_nodes, stats
 
-
-
 def reuse_A(ds_set, initial, attractor, config):
 
-        # Initialize stats dictionary
+    # Initialize stats dictionary
     stats = dict()
 
     # ############## GAUSSIAN GRAPH ##############
@@ -507,22 +489,19 @@ def reuse_A(ds_set, initial, attractor, config):
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in
                  enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(gaussians,
-                          attractor=attractor,
-                          reverse_gaussians=config.reverse_gaussians,
-                          param_dist=config.param_dist,
-                          param_cos=config.param_cos)
-    gg.compute_node_wise_shortest_path()
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
+    gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
     stats['gg compute time'] = time.time() - t0
 
     # ############## DS ##############
     t0 = time.time()
 
     # Collect the gaussians that eventually lead to the target
-    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg.node_wise_shortest_path]
+    priors = [gg.graph.nodes[node_id]['prior'] for node_id in gg_solution_nodes]
     priors = [prior / sum(priors) for prior in priors]
     gaussians = []
-    for i, node_id in enumerate(gg.node_wise_shortest_path):
+    for i, node_id in enumerate(gg_solution_nodes):
         mu, sigma, direction, prior = gg.get_gaussian(node_id)
         gaussians.append({
             'prior': priors[i],  # use normalized prior
@@ -535,7 +514,7 @@ def reuse_A(ds_set, initial, attractor, config):
     filtered_x = []
     filtered_x_dot = []
     As = []
-    for node_id in gg.node_wise_shortest_path:
+    for node_id in gg_solution_nodes:
 
         ds_idx = node_id[0]
         gaussian_idx = node_id[1]
@@ -593,4 +572,4 @@ def reuse_A(ds_set, initial, attractor, config):
     stats['ds compute time'] = time.time() - t0
     stats['total compute time'] = time.time() - t0
 
-    return lpvds, gg, stats
+    return lpvds, gg, gg_solution_nodes, stats
