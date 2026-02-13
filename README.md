@@ -1,17 +1,19 @@
 # Demonstration stitching
 This code builds on top of the following repositories:
-- [LPVDS](https://github.com/sunan-sun/lpvds)
-- [DAMM](https://github.com/SunannnSun/damm)
-- [DSOPT](https://github.com/sunan-sun/dsopt)
+1. [LPVDS](https://github.com/sunan-sun/lpvds)
+2. [DAMM](https://github.com/SunannnSun/damm)
+3. [DSOPT](https://github.com/sunan-sun/dsopt)
+4. [Robottask dataset](https://github.com/sayantanauddy/clfd-snode)
 
 with following references
-
 
 > [1] Billard, A., Mirrazavi, S., & Figueroa, N. (2022). Learning for adaptive and reactive robot control: a dynamical systems approach. Mit Press.
 
 > [2] Sun, S., Gao, H., Li, T., & Figueroa, N. (2024). "Directionality-aware mixture model parallel sampling for efficient linear parameter varying dynamical system learning". IEEE Robotics and Automation Letters, 9(7), 6248-6255.
 
 > [3] Li, T., Sun, S., Aditya, S. S., & Figueroa, N. (2025). Elastic Motion Policy: An Adaptive Dynamical System for Robust and Efficient One-Shot Imitation Learning. arXiv preprint arXiv:2503.08029.
+
+> [4] Auddy, S.*, Hollenstein, J.*, Saveriano, M., Rodríguez-Sánchez, A., & Piater, J. (2025). Scalable and Efficient Continual Learning from Demonstration via a Hypernetwork-generated Stable Dynamics Model. arXiv preprint arXiv:2311.03600.
 
 Thanks for open sourcing your work!
 
@@ -104,7 +106,30 @@ The `ds_method` parameter controls how the dynamical system is computed:
 - **"recompute_all"**: Recompute the entire DS using the shortest path (most accurate)
 - **"recompute_ds"**: Only recompute the DS parameters, reuse Gaussian structure
 - **"reuse"**: Reuse pre-computed A matrices from individual Gaussians (fastest)
-- **"chain"**: Fit DS to each node and switch between attractors to reach goal
+- **"all_paths_all"**: Aggregate all node-wise shortest paths and relearn DS
+- **"all_paths_ds"**: Aggregate all node-wise shortest paths and relearn only linear maps
+- **"all_paths_reuse"**: Aggregate all node-wise shortest paths with A reuse
+- **"chain"**: One linear DS per path node, then online switch/blend to next node target
+
+For chaining, the main control parameters are:
+- **"subsystem_edges"**: Number of edges to include in each subsystem
+- **"blend_length_ratio"**: Ratio of blend length to subsystem length
+- **"transition_trigger_method"**: Method for triggering transitions
+
+### Composite Robot-Task Dataset
+
+Build the connected workspace dataset with `obstaclerotate` as the central corridor:
+- `pouring` starts at the obstacle start anchor,
+- `pan2stove` starts at the obstacle end anchor,
+- `openbox` branches from the obstacle midpoint.
+
+```bash
+uv run python build_workspace_dataset.py \
+  --output-dir dataset/stitching/robottasks_workspace_chain
+```
+
+This generates `demonstration_*` folders and `workspace_plan.json` in:
+- `dataset/stitching/robottasks_workspace_chain`
 
 ### Output and Visualization
 

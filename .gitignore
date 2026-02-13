@@ -5,3 +5,9 @@ figures/
 build/
 dist/
 *.egg-info/
+dataset/robottasks/plots
+.pytest_cache/
+*.png
+*.pdf
+*.csv
+*.pkl

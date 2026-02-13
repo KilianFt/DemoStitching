@@ -15,6 +15,11 @@ def predict_velocities(x_positions, lpvds):
     Returns:
         x_dot_pred: Predicted velocities (M x n)
     """
+    # Allow policy-specific predictors (e.g., chained DS with state-dependent switching).
+    if hasattr(lpvds, "predict_velocities"):
+        x_dot_pred = lpvds.predict_velocities(x_positions)
+        return np.asarray(x_dot_pred)
+
     x_dot_pred = []
     
     for i in range(len(x_positions)):
