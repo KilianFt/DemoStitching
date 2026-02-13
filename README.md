@@ -27,6 +27,14 @@ The stitching framework allows you to connect multiple trajectory demonstrations
 uv run main_stitch.py
 ```
 
+Otherwise you can use conda
+```bash
+conda create -n lpvds_env python=3.9
+conda activate lpvds_env
+pip install -r requirements.txt
+python main_stitch.py
+```
+
 ### How It Works
 
 `main_stitch.py` implements a complete pipeline for trajectory stitching:
@@ -183,32 +191,3 @@ The system includes an interactive UI for selecting initial and goal positions:
 3. **Overlap Regions**: Ensure trajectories have some overlapping regions for connectivity
 4. **Consistent Speed**: Try to maintain consistent drawing speed for better velocity estimation
 5. **Clear Goals**: Make sure trajectories clearly converge to their intended goals
-
-## Usage Example
-
-Fetch the required submodules
-```
-git submodule update --init --recursive
-```
-
-Compile [DAMM](https://github.com/SunannnSun/damm) submodule
-```
-cd src/damm/build
-cmake ../src
-make
-```
-
-Return to root directory and install all dependencies in a virtual environment
-- Make sure to replace `/path/to/python3.8` with the correct path to the Python 3.8 executable on your system. 
-
-```
-cd -
-virtualenv -p /path/to/python3.8 venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-Run 
-```
-python main.py
-```
