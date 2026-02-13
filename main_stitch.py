@@ -1,65 +1,13 @@
 import numpy as np
-from dataclasses import dataclass
-from typing import Optional
-from src.util import plot_tools
+
 from src.stitching.metrics import save_results_dataframe, calculate_ds_metrics
 from src.util.load_tools import get_demonstration_set, resolve_data_scales
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.ds_tools import apply_lpvds_demowise
 from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph, plot_gg_solution, plot_ds
+from configs import StitchConfig
 
-# TODO
-# - all_paths_all
-
-# ds_method options:
-# - ["sp_recompute_all"]            Uses shortest path, extracts raw traj. points, recomputes Gaussians and DS.
-# - ["sp_recompute_ds"]             Uses shortest path, keeps Gaussians but recomputes DS.
-# - ["sp_recompute_invalid_As"]     Uses shortest path, selects a P near the attractor, recomputes any incompatible As.
-# - ["sp_recompute_P"]              Uses shortest path, keeps Gaussians and As, tries to find a P.
-# - ["spt_recompute_all"]           Uses shortest path tree, otherwise same as corresponding "sp" method.
-# - ["spt_recompute_ds"]            Uses shortest path tree, otherwise same as corresponding "sp" method.
-# - ["spt_recompute_invalid_As"]    Uses shortest path tree, otherwise same as corresponding "sp" method.
-# - ["chain"]                       Fit one linear DS per path node and switch/blend between them online.
-
-@dataclass
-class Config:
-    dataset_path: str = "./dataset/stitching/presentation2"
-    force_preprocess: bool = True
-    initial: Optional[np.ndarray] = None#np.array([4,15])
-    attractor: Optional[np.ndarray] = None#np.array([14,2])
-    ds_method: str = "chain"
-    reverse_gaussians: bool = True
-    param_dist: int = 3
-    param_cos: int = 3
-    n_demos: int = 5 # number of demonstrations to generate
-    noise_std: float = 0.05 # standard deviation of noise added to demonstrations
-    plot_extent = (0, 15, 0, 15) # (x_min, x_max, y_min, y_max)
-    n_test_simulations: int = 2 # number of test simulations for metrics
-    save_fig: bool = True
-    seed: int = 42 # 42, 100, 3215, 21
-
-    # DAMM settings
-    rel_scale: float = 0.1 # 0.7
-    total_scale: float = 1.0 # 1.5
-    nu_0: int = 2*6 # 5
-    kappa_0: float = 1.0
-    psi_dir_0: float = 0.1 # 1.0
-    data_position_scale: float = 1.0
-    data_velocity_scale: Optional[float] = None
-
-    # Chaining settings
-    chain_switch_threshold: float = 0.12
-    chain_blend_width: float = 0.18
-    chain_trigger_radius: float = 0.10
-    chain_transition_time: float = 5.0
-    chain_start_node_candidates: int = 1
-    chain_goal_node_candidates: int = 1
-    chain_recovery_distance: float = 0.35
-    chain_enable_recovery: bool = False
-    chain_stabilization_margin: float = 1e-3
-    chain_lmi_tolerance: float = 5e-5
-    chain_edge_data_mode: str = "between_orthogonals"  # ["both_all", "between_orthogonals"]
 
 def simulate_trajectories(ds, initial, config):
     """Simulates multiple trajectories from noisy initial conditions.
@@ -86,7 +34,7 @@ def simulate_trajectories(ds, initial, config):
     return simulated_trajectories
 
 def main():
-    config = Config()
+    config = StitchConfig()
     np.random.seed(config.seed)
 
     save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
@@ -101,7 +49,7 @@ def main():
     plot_demonstration_set(demo_set, config, save_as='Demonstrations_Raw', hide_axis=True)
 
     # Fit a DS to each demonstration
-    ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config)
+    ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config.damm)
     plot_demonstration_set(norm_demo_set, config, save_as='Demonstrations_Norm', hide_axis=True)
     plot_ds_set_gaussians(ds_set, config, include_trajectory=True, save_as='Demonstrations_Gaussians', hide_axis=True)
 

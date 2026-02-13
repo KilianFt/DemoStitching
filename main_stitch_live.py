@@ -7,8 +7,8 @@ from matplotlib.patches import Ellipse
 from matplotlib.animation import FuncAnimation
 import numpy as np
 
-import graph_utils as gu
-from main_stitch import Config as StitchConfig
+import src.graph_utils as gu
+from configs import StitchConfig
 from src.stitching.chaining import build_chained_ds, prepare_chaining_edge_lookup
 from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.benchmarking_tools import initialize_iter_strategy
@@ -110,7 +110,7 @@ class LiveStitchController:
             position_scale=data_position_scale,
             velocity_scale=data_velocity_scale,
         )
-        self.ds_set, self.reversed_ds_set, self.norm_demo_set = apply_lpvds_demowise(self.demo_set, config)
+        self.ds_set, self.reversed_ds_set, self.norm_demo_set = apply_lpvds_demowise(self.demo_set, config.damm)
         self.state_dim = int(self.ds_set[0].x.shape[1])
 
         self.gaussian_map = {
@@ -126,8 +126,9 @@ class LiveStitchController:
             param_cos=config.param_cos,
         )
         self.chain_base_graph.add_gaussians(self.gaussian_map, reverse_gaussians=config.reverse_gaussians)
-        self.chain_cfg, self.chain_edge_lookup = prepare_chaining_edge_lookup(
-            self.ds_set, self.chain_base_graph, config
+        self.chain_cfg = config
+        self.chain_edge_lookup = prepare_chaining_edge_lookup(
+            self.ds_set, self.chain_base_graph
         )
 
         self.start_state = self._select_start_state()
@@ -166,6 +167,13 @@ class LiveStitchController:
         goal[:2] = goal_xy[:2]
         return goal
 
+    @staticmethod
+    def _chain_sources_targets(ds):
+        if hasattr(ds, "node_sources") and hasattr(ds, "node_targets"):
+            return np.asarray(ds.node_sources, dtype=float), np.asarray(ds.node_targets, dtype=float)
+        state_seq = np.asarray(ds.state_sequence, dtype=float)
+        return state_seq[:-1], state_seq[1:]
+
     def _build_chain_ds(self, initial: np.ndarray, attractor: np.ndarray):
         gg = gu.GaussianGraph(param_dist=self.config.param_dist, param_cos=self.config.param_cos)
         gg.add_gaussians(self.gaussian_map, reverse_gaussians=self.config.reverse_gaussians)
@@ -179,7 +187,6 @@ class LiveStitchController:
             initial=initial,
             attractor=attractor,
             config=self.config,
-            precomputed_chain_cfg=self.chain_cfg,
             precomputed_edge_lookup=self.chain_edge_lookup,
             shortest_path_nodes=path_nodes,
         )
@@ -241,8 +248,9 @@ class LiveStitchController:
             self.trajectory = [self.current_state.copy()]
 
         if self.config.ds_method == "chain":
+            sources, _ = self._chain_sources_targets(self.current_ds)
             init_idx = int(
-                np.argmin(np.linalg.norm(self.current_ds.state_sequence[:-1] - self.current_state.reshape(1, -1), axis=1))
+                np.argmin(np.linalg.norm(sources - self.current_state.reshape(1, -1), axis=1))
             )
             self.current_ds.reset_runtime(initial_idx=init_idx, start_time=0.0)
             self.current_chain_idx = init_idx
@@ -280,10 +288,11 @@ class LiveStitchController:
         self.trajectory.append(self.current_state.copy())
 
         if self.config.ds_method == "chain" and self.current_ds is not None:
+            sources, _ = self._chain_sources_targets(self.current_ds)
             idx = int(
                 np.argmin(
                     np.linalg.norm(
-                        self.current_ds.state_sequence[:-1] - self.current_state.reshape(1, -1),
+                        sources - self.current_state.reshape(1, -1),
                         axis=1,
                     )
                 )
@@ -318,10 +327,11 @@ class LiveStitchController:
             self.current_state = self.start_state.copy()
             self.trajectory = [self.current_state.copy()]
             if self.config.ds_method == "chain":
+                sources, _ = self._chain_sources_targets(self.current_ds)
                 init_idx = int(
                     np.argmin(
                         np.linalg.norm(
-                            self.current_ds.state_sequence[:-1] - self.current_state.reshape(1, -1), axis=1
+                            sources - self.current_state.reshape(1, -1), axis=1
                         )
                     )
                 )
@@ -437,7 +447,8 @@ class LiveStitchApp:
 
         if self.ctrl.config.ds_method == "chain":
             idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
-            target = self.ctrl.current_ds.state_sequence[idx + 1]
+            _, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
+            target = targets[idx]
             velocities = (self.ctrl.current_ds.A_seq[idx] @ (points - target).T).T
         else:
             velocities = _predict_velocity_field(self.ctrl.current_ds, points)
@@ -532,8 +543,9 @@ class LiveStitchApp:
         if self.ctrl.config.ds_method != "chain" or self.ctrl.current_ds is None:
             return
         idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
-        source = self.ctrl.current_ds.state_sequence[idx][:2]
-        target = self.ctrl.current_ds.state_sequence[idx + 1][:2]
+        sources, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
+        source = sources[idx][:2]
+        target = targets[idx][:2]
         self.chain_source_artist, = self.ax.plot(source[0], source[1], "o", color="orange", markersize=9)
         self.chain_target_artist, = self.ax.plot(target[0], target[1], "o", color="red", markersize=9)
 
@@ -590,8 +602,9 @@ class LiveStitchApp:
         if self.ctrl.config.ds_method != "chain" or self.ctrl.current_ds is None:
             return
         idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
-        source = self.ctrl.current_ds.state_sequence[idx][:2]
-        target = self.ctrl.current_ds.state_sequence[idx + 1][:2]
+        sources, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
+        source = sources[idx][:2]
+        target = targets[idx][:2]
         if self.chain_source_artist is not None:
             self.chain_source_artist.set_data([source[0]], [source[1]])
         if self.chain_target_artist is not None:
@@ -718,6 +731,15 @@ def parse_args():
     parser.add_argument("--disturbance-step", type=float, default=0.25)
     parser.add_argument("--chain-start-node-candidates", type=int, default=None)
     parser.add_argument("--chain-goal-node-candidates", type=int, default=None)
+    parser.add_argument("--chain-subsystem-edges", type=int, default=None)
+    parser.add_argument("--chain-transition-length-ratio", type=float, default=None)
+    parser.add_argument(
+        "--chain-transition-trigger-method",
+        type=str,
+        default=None,
+        choices=["mean_normals", "distance_ratio"],
+    )
+    parser.add_argument("--chain-max-subsystem-time", type=float, default=None)
     parser.add_argument("--start-x", type=float, default=None)
     parser.add_argument("--start-y", type=float, default=None)
     parser.add_argument("--figure-width", type=float, default=10.0)
@@ -745,10 +767,12 @@ def main():
     config.data_velocity_scale = args.data_velocity_scale
     config.goal_tolerance = args.goal_tolerance
     config.disturbance_step = args.disturbance_step
-    if args.chain_start_node_candidates is not None:
-        config.chain_start_node_candidates = args.chain_start_node_candidates
-    if args.chain_goal_node_candidates is not None:
-        config.chain_goal_node_candidates = args.chain_goal_node_candidates
+    if args.chain_subsystem_edges is not None:
+        config.chain.subsystem_edges = args.chain_subsystem_edges
+    if args.chain_transition_length_ratio is not None:
+        config.chain.blend_length_ratio = args.chain_transition_length_ratio
+    if args.chain_transition_trigger_method is not None:
+        config.chain.transition_trigger_method = args.chain_transition_trigger_method
     config.start_x = args.start_x
     config.start_y = args.start_y
     config.figure_width = args.figure_width

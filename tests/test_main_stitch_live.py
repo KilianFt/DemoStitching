@@ -130,11 +130,49 @@ class LiveStitchVelocityFieldTests(unittest.TestCase):
 
         planned = LiveStitchController.plan_to_goal(ctrl, np.array([3.0, 4.0]), keep_trajectory=True)
         self.assertTrue(planned)
+        np.testing.assert_allclose(ctrl.goal_state, np.array([3.0, 4.0]))
         np.testing.assert_allclose(ctrl.current_state, np.array([1.0, 2.0]))
         np.testing.assert_allclose(ctrl.path_anchor_state, np.array([1.0, 2.0]))
         self.assertEqual(len(ctrl.trajectory), 2)
         self.assertEqual(ctrl.current_path_nodes, [("n0",), ("n1",)])
         self.assertEqual(dummy_ds.reset_calls[-1][0], 0)
+
+    def test_plan_to_goal_chain_keeps_clicked_goal_not_last_path_node(self):
+        class _DummyChainDS:
+            def __init__(self):
+                self.state_sequence = np.array([[0.0, 0.0], [1.0, 1.0]])
+
+            def reset_runtime(self, initial_idx=0, start_time=0.0):
+                return None
+
+        ctrl = LiveStitchController.__new__(LiveStitchController)
+        ctrl.config = SimpleNamespace(ds_method="chain")
+        ctrl.current_state = np.array([0.5, 0.5])
+        ctrl.start_state = np.array([0.0, 0.0])
+        ctrl.goal_state = None
+        ctrl.current_ds = None
+        ctrl.current_gg = None
+        ctrl.current_path_nodes = None
+        ctrl.current_chain_idx = None
+        ctrl.trajectory = [ctrl.current_state.copy()]
+        dummy_ds = _DummyChainDS()
+        fake_gg = SimpleNamespace(
+            graph=SimpleNamespace(
+                nodes={
+                    ("n0",): {"mean": np.array([1.0, 1.0])},
+                    ("n1",): {"mean": np.array([2.5, 2.5])},
+                }
+            )
+        )
+
+        ctrl._compose_goal_state = lambda goal_xy: np.asarray(goal_xy, dtype=float)
+        ctrl._build_chain_ds = lambda initial, attractor: (dummy_ds, fake_gg, [("n0",), ("n1",)])
+        ctrl._build_other_ds = lambda initial, attractor: (None, None, None)
+
+        clicked_goal = np.array([3.0, 4.0], dtype=float)
+        planned = LiveStitchController.plan_to_goal(ctrl, clicked_goal, keep_trajectory=True)
+        self.assertTrue(planned)
+        np.testing.assert_allclose(ctrl.goal_state, clicked_goal)
 
     def test_build_chain_ds_uses_gaussian_graph_shortest_path(self):
         class _FakeGG:

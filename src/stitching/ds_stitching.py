@@ -8,7 +8,7 @@ from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A, find_lyapunov_function
 from src.stitching.chaining import build_chained_ds
 from src.util.ds_tools import get_gaussian_directions
-import graph_utils as gu
+import src.graph_utils as gu
 
 
 def construct_stitched_ds(config, norm_demo_set, ds_set, reversed_ds_set, initial, attractor):
@@ -67,7 +67,14 @@ def chain_ds(ds_set, initial, attractor, config):
     # ############## DS ##############
     t_ds = time.time()
     try:
-        stitched_ds = build_chained_ds(ds_set, gg, gg_solution_nodes, initial=initial, attractor=attractor, config=config)
+        stitched_ds = build_chained_ds(
+            ds_set,
+            gg,
+            initial=initial,
+            attractor=attractor,
+            config=config,
+            shortest_path_nodes=gg_solution_nodes,
+        )
     except Exception as e:
         print(f'Failed to construct Chained DS: {e}')
         stitched_ds = None

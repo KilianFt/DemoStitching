@@ -112,15 +112,9 @@ The `ds_method` parameter controls how the dynamical system is computed:
 - **"chain"**: One linear DS per path node, then online switch/blend to next node target
 
 For chaining, the main control parameters are:
-- `chain_trigger_radius`: trigger radius as edge percentage (e.g. `0.10` means last 10% of edge length)
-- `chain_transition_time`: timer duration `T_i` for transition state `s_i'`
-- `chain_start_node_candidates`: number of closest start-node candidates used for chain path search (`1` enforces local starts)
-- `chain_goal_node_candidates`: number of closest goal-node candidates used for chain path search (`1` enforces local goal-side final edge)
-- `chain_switch_threshold`: backward-compatible alias for `chain_trigger_radius`
-- `chain_blend_width`: backward-compatible alias for `chain_transition_time`
-- `chain_recovery_distance`: if disturbed far from current node, reattach to nearest node
-- `chain_enable_recovery`: enable/disable disturbance recovery behavior
-- `chain_edge_data_mode`: edge-fit samples for chaining (`both_all` or `between_orthogonals`)
+- **"subsystem_edges"**: Number of edges to include in each subsystem
+- **"blend_length_ratio"**: Ratio of blend length to subsystem length
+- **"transition_trigger_method"**: Method for triggering transitions
 
 ### Composite Robot-Task Dataset
 
