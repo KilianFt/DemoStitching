@@ -32,8 +32,8 @@ class CompareStitchMethodsTests(unittest.TestCase):
                     "dtw_distance_mean": 2.0,
                     "distance_to_attractor_mean": 0.1,
                     "gg compute time": 0.3,
-                    "ds compute time": 0.4,
-                    "total compute time": 0.7,
+                    "ds_compute_time": 0.4,
+                    "total_compute_time": 0.7,
                 },
                 {
                     "dataset_path": "d1",
@@ -44,8 +44,8 @@ class CompareStitchMethodsTests(unittest.TestCase):
                     "dtw_distance_mean": np.nan,
                     "distance_to_attractor_mean": np.nan,
                     "gg compute time": np.nan,
-                    "ds compute time": np.nan,
-                    "total compute time": np.nan,
+                    "ds_compute_time": np.nan,
+                    "total_compute_time": np.nan,
                 },
             ]
         )

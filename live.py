@@ -42,31 +42,46 @@ def _predict_velocity_field(ds, points: np.ndarray) -> np.ndarray:
     return vel
 
 
-def _collect_live_points_2d(demo_set, gaussian_map, start_state: Optional[np.ndarray] = None) -> np.ndarray:
+def _collect_live_points_nd(
+    demo_set,
+    gaussian_map,
+    start_state: Optional[np.ndarray] = None,
+    ndim: int = 2,
+) -> np.ndarray:
+    ndim = int(max(1, ndim))
     points = []
     for demo in demo_set:
         for traj in demo.trajectories:
             x = np.asarray(traj.x, dtype=float)
-            if x.ndim == 2 and x.shape[0] > 0 and x.shape[1] >= 2:
-                points.append(x[:, :2])
+            if x.ndim == 2 and x.shape[0] > 0 and x.shape[1] >= ndim:
+                points.append(x[:, :ndim])
 
     if gaussian_map is not None and len(gaussian_map) > 0:
         mus = []
         for node in gaussian_map.values():
             mu = np.asarray(node["mu"], dtype=float).reshape(-1)
-            if mu.shape[0] >= 2 and np.all(np.isfinite(mu[:2])):
-                mus.append(mu[:2])
+            if mu.shape[0] >= ndim and np.all(np.isfinite(mu[:ndim])):
+                mus.append(mu[:ndim])
         if len(mus) > 0:
             points.append(np.vstack(mus))
 
     if start_state is not None:
-        start_xy = np.asarray(start_state, dtype=float).reshape(-1)
-        if start_xy.shape[0] >= 2 and np.all(np.isfinite(start_xy[:2])):
-            points.append(start_xy[:2].reshape(1, 2))
+        start_xyz = np.asarray(start_state, dtype=float).reshape(-1)
+        if start_xyz.shape[0] >= ndim and np.all(np.isfinite(start_xyz[:ndim])):
+            points.append(start_xyz[:ndim].reshape(1, ndim))
 
     if len(points) == 0:
-        return np.zeros((0, 2), dtype=float)
+        return np.zeros((0, ndim), dtype=float)
     return np.vstack(points)
+
+
+def _collect_live_points_2d(demo_set, gaussian_map, start_state: Optional[np.ndarray] = None) -> np.ndarray:
+    return _collect_live_points_nd(
+        demo_set=demo_set,
+        gaussian_map=gaussian_map,
+        start_state=start_state,
+        ndim=2,
+    )
 
 
 def _compute_view_extent(
@@ -99,6 +114,38 @@ def _compute_view_extent(
     )
 
 
+def _compute_view_extent_3d(
+    points_xyz: np.ndarray,
+    padding_ratio: float = 0.08,
+    padding_abs: float = 0.5,
+):
+    pts = np.asarray(points_xyz, dtype=float)
+    if pts.ndim != 2 or pts.shape[0] == 0 or pts.shape[1] < 3:
+        return -1.0, 1.0, -1.0, 1.0, -1.0, 1.0
+
+    pts = pts[:, :3]
+    finite_mask = np.all(np.isfinite(pts), axis=1)
+    pts = pts[finite_mask]
+    if pts.shape[0] == 0:
+        return -1.0, 1.0, -1.0, 1.0, -1.0, 1.0
+
+    mins = np.min(pts, axis=0)
+    maxs = np.max(pts, axis=0)
+    spans = np.maximum(maxs - mins, 1e-6)
+    max_span = float(np.max(spans))
+    margin = max(float(padding_abs), float(padding_ratio) * max_span)
+    half_extent = 0.5 * max_span + margin
+    center = 0.5 * (mins + maxs)
+    return (
+        float(center[0] - half_extent),
+        float(center[0] + half_extent),
+        float(center[1] - half_extent),
+        float(center[1] + half_extent),
+        float(center[2] - half_extent),
+        float(center[2] + half_extent),
+    )
+
+
 class LiveStitchController:
     def __init__(self, config: LiveConfig):
         self.config = config
@@ -126,7 +173,7 @@ class LiveStitchController:
             param_cos=config.param_cos,
         )
         self.chain_base_graph.add_gaussians(self.gaussian_map, reverse_gaussians=config.reverse_gaussians)
-        self.chain_cfg = config
+        self.chain_cfg = config.chain
         self.chain_edge_lookup = prepare_chaining_edge_lookup(
             self.ds_set, self.chain_base_graph
         )
@@ -352,6 +399,18 @@ class LiveStitchController:
             points.append(np.asarray(self.goal_state, dtype=float)[:2])
         return np.vstack(points)
 
+    def path_points_nd(self, ndim: int):
+        if self.current_gg is None or self.current_path_nodes is None:
+            return None
+        dim = int(max(1, ndim))
+        points = [np.asarray(self.path_anchor_state, dtype=float)[:dim]]
+        for node_id in self.current_path_nodes:
+            p = self.current_gg.graph.nodes[node_id]["mean"]
+            points.append(np.asarray(p, dtype=float)[:dim])
+        if self.goal_state is not None:
+            points.append(np.asarray(self.goal_state, dtype=float)[:dim])
+        return np.vstack(points)
+
     def current_chain_direction_stats(self):
         if self.config.ds_method != "chain" or self.current_ds is None:
             return None
@@ -366,12 +425,20 @@ class LiveStitchController:
 class LiveStitchApp:
     def __init__(self, controller: LiveStitchController):
         self.ctrl = controller
+        self.is_3d = self.ctrl.state_dim > 2
         self.stream = None
-        self.figure, self.ax = plt.subplots(
-            1,
-            1,
-            figsize=(self.ctrl.config.figure_width, self.ctrl.config.figure_height),
-        )
+        self.quiver = None
+        if self.is_3d:
+            self.figure = plt.figure(
+                figsize=(self.ctrl.config.figure_width, self.ctrl.config.figure_height)
+            )
+            self.ax = self.figure.add_subplot(111, projection="3d")
+        else:
+            self.figure, self.ax = plt.subplots(
+                1,
+                1,
+                figsize=(self.ctrl.config.figure_width, self.ctrl.config.figure_height),
+            )
 
         self.traj_line = None
         self.point_artist = None
@@ -390,16 +457,36 @@ class LiveStitchApp:
             "down": np.array([0.0, -1.0]),
         }
 
-        view_points = _collect_live_points_2d(
-            self.ctrl.norm_demo_set,
-            self.ctrl.gaussian_map,
-            self.ctrl.start_state,
-        )
-        self.x_min, self.x_max, self.y_min, self.y_max = _compute_view_extent(
-            view_points,
-            padding_ratio=self.ctrl.config.view_padding_ratio,
-            padding_abs=self.ctrl.config.view_padding_abs,
-        )
+        if self.is_3d:
+            view_points = _collect_live_points_nd(
+                self.ctrl.norm_demo_set,
+                self.ctrl.gaussian_map,
+                self.ctrl.start_state,
+                ndim=3,
+            )
+            (
+                self.x_min,
+                self.x_max,
+                self.y_min,
+                self.y_max,
+                self.z_min,
+                self.z_max,
+            ) = _compute_view_extent_3d(
+                view_points,
+                padding_ratio=self.ctrl.config.view_padding_ratio,
+                padding_abs=self.ctrl.config.view_padding_abs,
+            )
+        else:
+            view_points = _collect_live_points_2d(
+                self.ctrl.norm_demo_set,
+                self.ctrl.gaussian_map,
+                self.ctrl.start_state,
+            )
+            self.x_min, self.x_max, self.y_min, self.y_max = _compute_view_extent(
+                view_points,
+                padding_ratio=self.ctrl.config.view_padding_ratio,
+                padding_abs=self.ctrl.config.view_padding_abs,
+            )
 
         self._redraw_scene()
         self.figure.canvas.mpl_connect("button_press_event", self._on_click)
@@ -414,20 +501,32 @@ class LiveStitchApp:
 
     def _remove_streamplot(self):
         if self.stream is None:
-            return
-        for artist in (getattr(self.stream, "lines", None), getattr(self.stream, "arrows", None)):
-            if artist is None:
-                continue
+            pass
+        else:
+            for artist in (getattr(self.stream, "lines", None), getattr(self.stream, "arrows", None)):
+                if artist is None:
+                    continue
+                try:
+                    artist.remove()
+                except Exception:
+                    # Backends differ in how/if streamplot artists can be detached.
+                    pass
+            self.stream = None
+
+        if self.quiver is not None:
             try:
-                artist.remove()
+                self.quiver.remove()
             except Exception:
-                # Backends differ in how/if streamplot artists can be detached.
                 pass
-        self.stream = None
+            self.quiver = None
 
     def _draw_ds_field(self):
         self._remove_streamplot()
         if self.ctrl.current_ds is None:
+            return
+
+        if self.is_3d:
+            self._draw_ds_field_3d()
             return
 
         plot_sample = 45
@@ -466,11 +565,73 @@ class LiveStitchApp:
             arrowstyle="->",
         )
 
+    def _draw_ds_field_3d(self):
+        plot_sample = 8
+        x = np.linspace(self.x_min, self.x_max, plot_sample)
+        y = np.linspace(self.y_min, self.y_max, plot_sample)
+        z = np.linspace(self.z_min, self.z_max, plot_sample)
+        x_mesh, y_mesh, z_mesh = np.meshgrid(x, y, z, indexing="xy")
+        points_3d = np.column_stack([x_mesh.ravel(), y_mesh.ravel(), z_mesh.ravel()])
+        points = np.zeros((points_3d.shape[0], self.ctrl.state_dim), dtype=float)
+        points[:, :3] = points_3d
+        if self.ctrl.state_dim > 3:
+            anchor = self.ctrl.current_state.copy()
+            points[:, 3:] = anchor[3:]
+
+        if self.ctrl.config.ds_method == "chain":
+            idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
+            _, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
+            target = np.asarray(targets[idx], dtype=float).reshape(-1)
+            velocities = (self.ctrl.current_ds.A_seq[idx] @ (points - target).T).T
+        else:
+            velocities = _predict_velocity_field(self.ctrl.current_ds, points)
+
+        speeds = np.linalg.norm(velocities, axis=1)
+        valid = np.isfinite(speeds) & (speeds > 1e-9)
+        if not np.any(valid):
+            return
+
+        points = points[valid]
+        points_3d = points[:, :3]
+        velocities = velocities[valid]
+        speeds = np.linalg.norm(velocities, axis=1, keepdims=True)
+        unit_velocities = velocities / np.maximum(speeds, 1e-9)
+
+        arrow_len = 0.05 * max(
+            float(self.x_max - self.x_min),
+            float(self.y_max - self.y_min),
+            float(self.z_max - self.z_min),
+        )
+        self.quiver = self.ax.quiver(
+            points_3d[:, 0],
+            points_3d[:, 1],
+            points_3d[:, 2],
+            unit_velocities[:, 0],
+            unit_velocities[:, 1],
+            unit_velocities[:, 2],
+            length=max(arrow_len, 1e-4),
+            normalize=False,
+            color="black",
+            linewidth=0.4,
+            alpha=0.35,
+        )
+
     def _draw_demos(self):
         demo_colors = plt.cm.viridis(np.linspace(0.1, 0.9, len(self.ctrl.norm_demo_set)))
         for i, demo in enumerate(self.ctrl.norm_demo_set):
             for traj in demo.trajectories:
-                self.ax.plot(traj.x[:, 0], traj.x[:, 1], color=demo_colors[i], linewidth=1.0, alpha=0.25)
+                if self.is_3d:
+                    z = traj.x[:, 2] if traj.x.shape[1] > 2 else np.zeros(traj.x.shape[0], dtype=float)
+                    self.ax.plot(
+                        traj.x[:, 0],
+                        traj.x[:, 1],
+                        z,
+                        color=demo_colors[i],
+                        linewidth=1.0,
+                        alpha=0.25,
+                    )
+                else:
+                    self.ax.plot(traj.x[:, 0], traj.x[:, 1], color=demo_colors[i], linewidth=1.0, alpha=0.25)
 
     def _iter_gaussian_params(self):
         if self.ctrl.current_gg is not None:
@@ -488,6 +649,10 @@ class LiveStitchApp:
             yield np.asarray(node["mu"], dtype=float), np.asarray(node["sigma"], dtype=float)
 
     def _draw_gaussians(self):
+        if self.is_3d:
+            self._draw_gaussians_3d()
+            return
+
         centers = []
         for mu, sigma in self._iter_gaussian_params():
             if mu.shape[0] < 2 or sigma.shape[0] < 2 or sigma.shape[1] < 2:
@@ -533,85 +698,219 @@ class LiveStitchApp:
                 zorder=1.6,
             )
 
+    def _draw_gaussians_3d(self):
+        centers = []
+        for mu, sigma in self._iter_gaussian_params():
+            if mu.shape[0] < 3 or sigma.shape[0] < 3 or sigma.shape[1] < 3:
+                continue
+            if not np.all(np.isfinite(mu[:3])) or not np.all(np.isfinite(sigma[:3, :3])):
+                continue
+
+            cov_3d = 0.5 * (sigma[:3, :3] + sigma[:3, :3].T)
+            try:
+                eigvals, eigvecs = np.linalg.eigh(cov_3d)
+            except np.linalg.LinAlgError:
+                continue
+
+            eigvals = np.maximum(eigvals, 1e-10)
+            for axis_id in range(3):
+                axis_vec = eigvecs[:, axis_id] * (2.0 * np.sqrt(eigvals[axis_id]))
+                start = mu[:3] - axis_vec
+                end = mu[:3] + axis_vec
+                self.ax.plot(
+                    [start[0], end[0]],
+                    [start[1], end[1]],
+                    [start[2], end[2]],
+                    color="dimgray",
+                    linewidth=0.7,
+                    alpha=0.25,
+                    zorder=1.4,
+                )
+            centers.append(mu[:3])
+
+        if len(centers) > 0:
+            centers = np.vstack(centers)
+            self.gaussian_center_artist = self.ax.scatter(
+                centers[:, 0],
+                centers[:, 1],
+                centers[:, 2],
+                s=12,
+                color="dimgray",
+                alpha=0.45,
+                zorder=1.6,
+            )
+
     def _draw_graph(self):
-        if self.ctrl.current_gg is not None:
-            self.ctrl.current_gg.plot(ax=self.ax)
-        else:
-            self.ctrl.chain_base_graph.plot(ax=self.ax)
+        graph = self.ctrl.current_gg if self.ctrl.current_gg is not None else self.ctrl.chain_base_graph
+        if not self.is_3d:
+            graph.plot(ax=self.ax)
+            return
+
+        nodes = list(graph.graph.nodes())
+        if len(nodes) == 0:
+            return
+
+        points = {}
+        for node_id in nodes:
+            mu = np.asarray(graph.graph.nodes[node_id].get("mean", np.zeros(3)), dtype=float).reshape(-1)
+            if mu.shape[0] < 3:
+                lifted = np.zeros(3, dtype=float)
+                lifted[: mu.shape[0]] = mu
+                mu = lifted
+            points[node_id] = mu[:3]
+
+        node_pts = np.vstack([points[n] for n in nodes])
+        self.ax.scatter(
+            node_pts[:, 0],
+            node_pts[:, 1],
+            node_pts[:, 2],
+            c="teal",
+            s=24,
+            alpha=0.85,
+            zorder=2.0,
+        )
+
+        edges = list(graph.graph.edges())
+        if len(edges) == 0:
+            return
+        weights = np.array([graph.graph.edges[e].get("weight", 1.0) for e in edges], dtype=float)
+        safe_weights = np.maximum(weights, 1e-9)
+        alphas = np.minimum(1.0 / safe_weights + 0.25, 1.0)
+        for (src, dst), alpha in zip(edges, alphas):
+            start = points[src]
+            end = points[dst]
+            self.ax.plot(
+                [start[0], end[0]],
+                [start[1], end[1]],
+                [start[2], end[2]],
+                color="black",
+                alpha=float(alpha),
+                linewidth=0.6,
+                zorder=1.0,
+            )
 
     def _draw_chain_markers(self):
         if self.ctrl.config.ds_method != "chain" or self.ctrl.current_ds is None:
             return
         idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
         sources, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
-        source = sources[idx][:2]
-        target = targets[idx][:2]
-        self.chain_source_artist, = self.ax.plot(source[0], source[1], "o", color="orange", markersize=9)
-        self.chain_target_artist, = self.ax.plot(target[0], target[1], "o", color="red", markersize=9)
+        source = sources[idx]
+        target = targets[idx]
+        if self.is_3d:
+            self.chain_source_artist = self.ax.scatter(
+                [source[0]], [source[1]], [source[2]], color="orange", s=48, zorder=4
+            )
+            self.chain_target_artist = self.ax.scatter(
+                [target[0]], [target[1]], [target[2]], color="red", s=48, zorder=4
+            )
+        else:
+            self.chain_source_artist, = self.ax.plot(source[0], source[1], "o", color="orange", markersize=9)
+            self.chain_target_artist, = self.ax.plot(target[0], target[1], "o", color="red", markersize=9)
 
     def _draw_chain_fit_points(self):
-        if self.ctrl.config.ds_method != "chain" or self.ctrl.current_ds is None:
-            return
-        if not hasattr(self.ctrl.current_ds, "edge_fit_points"):
+        if self.ctrl.current_ds is None:
             return
 
-        idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
-        fit_points_list = self.ctrl.current_ds.edge_fit_points
-        if idx >= len(fit_points_list):
-            return
+        points = None
+        label = None
+        if self.ctrl.config.ds_method == "chain":
+            if not hasattr(self.ctrl.current_ds, "edge_fit_points"):
+                return
 
-        points = np.asarray(fit_points_list[idx], dtype=float)
-        if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 2:
-            return
+            idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
+            fit_points_list = self.ctrl.current_ds.edge_fit_points
+            if idx >= len(fit_points_list):
+                return
 
-        self.chain_fit_points_artist = self.ax.scatter(
-            points[:, 0],
-            points[:, 1],
-            s=12,
-            color="deepskyblue",
-            alpha=0.4,
-            edgecolors="none",
-        )
+            points = np.asarray(fit_points_list[idx], dtype=float)
+            if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 2:
+                return
 
-        stats = None
-        if hasattr(self.ctrl.current_ds, "edge_direction_stats") and idx < len(self.ctrl.current_ds.edge_direction_stats):
-            stats = self.ctrl.current_ds.edge_direction_stats[idx]
-        if isinstance(stats, dict):
-            n_points = int(stats.get("n_points", points.shape[0]))
-            frac = float(stats.get("frac_forward", np.nan))
-            min_proj = float(stats.get("min_proj", np.nan))
-            if np.isfinite(frac) and np.isfinite(min_proj):
-                label = f"A[{idx}] fit n={n_points} | forward={frac:.2f} | min proj={min_proj:.3f}"
+            stats = None
+            if hasattr(self.ctrl.current_ds, "edge_direction_stats") and idx < len(self.ctrl.current_ds.edge_direction_stats):
+                stats = self.ctrl.current_ds.edge_direction_stats[idx]
+            if isinstance(stats, dict):
+                n_points = int(stats.get("n_points", points.shape[0]))
+                frac = float(stats.get("frac_forward", np.nan))
+                min_proj = float(stats.get("min_proj", np.nan))
+                if np.isfinite(frac) and np.isfinite(min_proj):
+                    label = f"A[{idx}] fit n={n_points} | forward={frac:.2f} | min proj={min_proj:.3f}"
+                else:
+                    label = f"A[{idx}] fit n={n_points}"
             else:
-                label = f"A[{idx}] fit n={n_points}"
+                label = f"A[{idx}] fit n={points.shape[0]}"
         else:
-            label = f"A[{idx}] fit n={points.shape[0]}"
+            if not hasattr(self.ctrl.current_ds, "x"):
+                return
+            points = np.asarray(self.ctrl.current_ds.x, dtype=float)
+            if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 2:
+                return
+            label = f"DS fit n={points.shape[0]}"
 
-        self.chain_fit_info_text = self.ax.text(
-            0.02,
-            0.98,
-            label,
-            transform=self.ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=9,
-            bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
-        )
+        if self.is_3d:
+            z = points[:, 2] if points.shape[1] > 2 else np.zeros(points.shape[0], dtype=float)
+            self.chain_fit_points_artist = self.ax.scatter(
+                points[:, 0],
+                points[:, 1],
+                z,
+                s=12,
+                color="deepskyblue",
+                alpha=0.4,
+                edgecolors="none",
+            )
+        else:
+            self.chain_fit_points_artist = self.ax.scatter(
+                points[:, 0],
+                points[:, 1],
+                s=12,
+                color="deepskyblue",
+                alpha=0.4,
+                edgecolors="none",
+            )
+        text_kwargs = {
+            "ha": "left",
+            "va": "top",
+            "fontsize": 9,
+            "bbox": {"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+        }
+        if self.is_3d and hasattr(self.ax, "text2D"):
+            self.chain_fit_info_text = self.ax.text2D(
+                0.02,
+                0.98,
+                label,
+                transform=self.ax.transAxes,
+                **text_kwargs,
+            )
+        else:
+            self.chain_fit_info_text = self.ax.text(
+                0.02,
+                0.98,
+                label,
+                transform=self.ax.transAxes,
+                **text_kwargs,
+            )
 
     def _update_chain_markers(self):
         if self.ctrl.config.ds_method != "chain" or self.ctrl.current_ds is None:
             return
         idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
         sources, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
-        source = sources[idx][:2]
-        target = targets[idx][:2]
+        source = sources[idx]
+        target = targets[idx]
         if self.chain_source_artist is not None:
-            self.chain_source_artist.set_data([source[0]], [source[1]])
+            if self.is_3d and hasattr(self.chain_source_artist, "_offsets3d"):
+                self.chain_source_artist._offsets3d = ([source[0]], [source[1]], [source[2]])
+            else:
+                self.chain_source_artist.set_data([source[0]], [source[1]])
         if self.chain_target_artist is not None:
-            self.chain_target_artist.set_data([target[0]], [target[1]])
+            if self.is_3d and hasattr(self.chain_target_artist, "_offsets3d"):
+                self.chain_target_artist._offsets3d = ([target[0]], [target[1]], [target[2]])
+            else:
+                self.chain_target_artist.set_data([target[0]], [target[1]])
 
     def _redraw_scene(self):
         self.stream = None
+        self.quiver = None
         self.ax.clear()
         self._draw_ds_field()
         self._draw_gaussians()
@@ -619,24 +918,68 @@ class LiveStitchApp:
         self._draw_graph()
 
         if self.ctrl.goal_state is not None:
-            self.goal_artist, = self.ax.plot(
-                self.ctrl.goal_state[0], self.ctrl.goal_state[1], "o", color="red", markersize=9
+            if self.is_3d:
+                self.goal_artist = self.ax.scatter(
+                    [self.ctrl.goal_state[0]],
+                    [self.ctrl.goal_state[1]],
+                    [self.ctrl.goal_state[2]],
+                    color="red",
+                    s=54,
+                    zorder=4,
+                )
+            else:
+                self.goal_artist, = self.ax.plot(
+                    self.ctrl.goal_state[0], self.ctrl.goal_state[1], "o", color="red", markersize=9
+                )
+        if self.is_3d:
+            self.ax.scatter(
+                [self.ctrl.start_state[0]],
+                [self.ctrl.start_state[1]],
+                [self.ctrl.start_state[2]],
+                color="gold",
+                s=54,
+                zorder=4,
             )
-        self.ax.plot(self.ctrl.start_state[0], self.ctrl.start_state[1], "o", color="gold", markersize=9)
+        else:
+            self.ax.plot(self.ctrl.start_state[0], self.ctrl.start_state[1], "o", color="gold", markersize=9)
 
-        path = self.ctrl.path_points_2d()
-        if path is not None:
-            self.path_line, = self.ax.plot(path[:, 0], path[:, 1], "--", color="magenta", linewidth=2.5, alpha=0.5)
+        if self.is_3d:
+            path = self.ctrl.path_points_nd(3)
+            if path is not None:
+                self.path_line, = self.ax.plot(
+                    path[:, 0], path[:, 1], path[:, 2], "--", color="magenta", linewidth=2.0, alpha=0.45
+                )
+        else:
+            path = self.ctrl.path_points_2d()
+            if path is not None:
+                self.path_line, = self.ax.plot(path[:, 0], path[:, 1], "--", color="magenta", linewidth=2.5, alpha=0.5)
 
         traj = np.array(self.ctrl.trajectory)
-        self.traj_line, = self.ax.plot(traj[:, 0], traj[:, 1], color="magenta", linewidth=3.0)
-        self.point_artist, = self.ax.plot(self.ctrl.current_state[0], self.ctrl.current_state[1], "ko", markersize=6)
+        if self.is_3d:
+            self.traj_line, = self.ax.plot(traj[:, 0], traj[:, 1], traj[:, 2], color="magenta", linewidth=2.6)
+            self.point_artist = self.ax.scatter(
+                [self.ctrl.current_state[0]],
+                [self.ctrl.current_state[1]],
+                [self.ctrl.current_state[2]],
+                color="black",
+                s=34,
+                zorder=5,
+            )
+        else:
+            self.traj_line, = self.ax.plot(traj[:, 0], traj[:, 1], color="magenta", linewidth=3.0)
+            self.point_artist, = self.ax.plot(self.ctrl.current_state[0], self.ctrl.current_state[1], "ko", markersize=6)
         self._draw_chain_markers()
         self._draw_chain_fit_points()
 
         self.ax.set_xlim(self.x_min, self.x_max)
         self.ax.set_ylim(self.y_min, self.y_max)
-        self.ax.set_aspect("equal")
+        if self.is_3d:
+            self.ax.set_zlim(self.z_min, self.z_max)
+            if hasattr(self.ax, "set_box_aspect"):
+                self.ax.set_box_aspect((1.0, 1.0, 1.0))
+            self.ax.set_zlabel("z")
+        else:
+            self.ax.set_aspect("equal")
         self.ax.set_title(
             f"Live Stitch ({self.ctrl.config.ds_method}) | click: new goal | arrows: disturb | r: reset | cyan: fit points"
         )
@@ -667,6 +1010,10 @@ class LiveStitchApp:
                     f"Active edge fit stats: n={n_points}, "
                     f"forward_ratio={frac:.2f}, min_proj={min_proj:.3f}"
                 )
+        elif self.ctrl.current_ds is not None and hasattr(self.ctrl.current_ds, "x"):
+            used_points = np.asarray(self.ctrl.current_ds.x, dtype=float)
+            if used_points.ndim == 2 and used_points.shape[0] > 0 and used_points.shape[1] >= 2:
+                print(f"Used fit datapoints: n={used_points.shape[0]}")
 
     def _on_key_press(self, event):
         key = event.key.lower() if isinstance(event.key, str) else event.key
@@ -687,8 +1034,18 @@ class LiveStitchApp:
         prev_chain_idx = self.ctrl.current_chain_idx
         self.ctrl.step_once()
         traj = np.array(self.ctrl.trajectory)
-        self.traj_line.set_data(traj[:, 0], traj[:, 1])
-        self.point_artist.set_data([self.ctrl.current_state[0]], [self.ctrl.current_state[1]])
+        if self.is_3d:
+            self.traj_line.set_data(traj[:, 0], traj[:, 1])
+            self.traj_line.set_3d_properties(traj[:, 2])
+            if hasattr(self.point_artist, "_offsets3d"):
+                self.point_artist._offsets3d = (
+                    [self.ctrl.current_state[0]],
+                    [self.ctrl.current_state[1]],
+                    [self.ctrl.current_state[2]],
+                )
+        else:
+            self.traj_line.set_data(traj[:, 0], traj[:, 1])
+            self.point_artist.set_data([self.ctrl.current_state[0]], [self.ctrl.current_state[1]])
 
         if self.ctrl.config.ds_method == "chain" and self.ctrl.current_chain_idx != prev_chain_idx:
             stats = self.ctrl.current_chain_direction_stats()

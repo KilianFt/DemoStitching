@@ -191,3 +191,14 @@ The system includes an interactive UI for selecting initial and goal positions:
 3. **Overlap Regions**: Ensure trajectories have some overlapping regions for connectivity
 4. **Consistent Speed**: Try to maintain consistent drawing speed for better velocity estimation
 5. **Clear Goals**: Make sure trajectories clearly converge to their intended goals
+
+## Sweep
+
+```bash
+python sweep.py \
+  --datasets dataset/stitching/X dataset/stitching/robottasks_obstacle_bottle2shelf_side dataset/stitching/robottasks_workspace_chain \
+  --ds-methods sp_recompute_all sp_recompute_ds chain \
+  --seeds 1 2 3 \
+  --output-dir results/sweep_results \
+  --timeout-s 600
+```
