@@ -59,7 +59,7 @@ def chain_ds(ds_set, initial, attractor, config):
             zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior)
         )
     }
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
     gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path(initial, attractor)
     stats['gg compute time'] = time.time() - t0
@@ -107,7 +107,7 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     gaussians = {(i,j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
     gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path(initial, attractor)
     stats['gg compute time'] = time.time() - t0
@@ -219,7 +219,7 @@ def reuse_ds(ds_set, reversed_ds_set, initial, attractor, config):
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in
                  enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
     gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path(initial, attractor)
     stats['gg compute time'] = time.time() - t0
@@ -323,7 +323,7 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in
                  enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
     gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
     stats['gg compute time'] = time.time() - t0
@@ -406,7 +406,7 @@ def all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config):
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in
                  enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
     gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
     stats['gg compute time'] = time.time() - t0
@@ -496,7 +496,7 @@ def reuse_A(ds_set, initial, attractor, config):
                  for i, ds in enumerate(ds_set)
                  for j, (mu, sigma, direction, prior) in
                  enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos)
+    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
     gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
     stats['gg compute time'] = time.time() - t0

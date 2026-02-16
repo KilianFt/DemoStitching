@@ -1,24 +1,23 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-from src.util import plot_tools
 
 class GaussianGraph:
+    """A directed graph where each node represents a Gaussian distribution (with mean, covariance, direction, and prior)
+    and edges represent potential transitions between these Gaussians based on distance and directionality.
+    """
 
-    def __init__(self, param_dist=1, param_cos=1):
-        """Initializes a GaussianGraph with nodes and edge parameters.
+    def __init__(self, param_dist=1, param_cos=1, bhattacharyya_threshold=0.1):
+        """Initializes an empty GaussianGraph.
 
         Args:
-            gaussians: Dictionary of Gaussian parameters for graph nodes.
-            attractor: Optional attractor point to mark in the graph.
-            initial: Optional initial point to mark in the graph.
-            reverse_gaussians: If True, adds nodes with reversed directions.
-            param_dist: Distance scaling parameter for edge computation.
-            param_cos: Cosine scaling parameter for edge computation.
-
+            param_dist: Exponent for distance in edge weight calculation (default=1).
+            param_cos: Exponent for directionality score in edge weight calculation (default=1).
+            bhattacharyya_threshold: Threshold for pruning edges based on Bhattacharyya coefficient (default=0.1).
         """
         self.param_dist = param_dist
         self.param_cos = param_cos
+        self.bhattacharyya_threshold = bhattacharyya_threshold
 
         self.graph = nx.DiGraph()
         self.gaussian_reversal_map = dict()  # keys = reversed node ids, values = original node ids
@@ -28,6 +27,12 @@ class GaussianGraph:
         return f'GaussianGraph with {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.'
 
     def add_gaussians(self, gaussians, reverse_gaussians=False):
+        """ Adds Gaussian nodes to the graph.
+
+        args:
+            gaussians: Dictionary mapping node IDs to Gaussian parameters (mean, covariance, direction, prior).
+            reverse_gaussians: If True, adds nodes with reversed directions for each Gaussian.
+        """
 
         # create nodes
         existing_nodes = set(self.graph.nodes)
@@ -106,18 +111,43 @@ class GaussianGraph:
         return d ** self.param_dist / dir_score ** self.param_cos
 
     def prune_edges(self):
-        """ Prunes edges from the graph based on shortest paths.
-
-        Principle: If the shortest path from node n1 to n3 is n1 -> n2 -> n3, then never will a shortest path use the
-        direct edge n1 -> n3, so we can remove it to simplify the graph.
-
-        Implementation details:
-            - More efficient to check per edge rather than per node-pair, since many pairs won't have a direct edge
-            (especially toward the end of pruning) and thus don't need to be checked.
-            - With a shortest path n1 -> n2 -> n3 -> ... -> nk, all edges with 2+ hops (n1 -> n3, n1 -> n4, etc.) can be
-            pruned if they exist, since they will never be part of a shortest path.
+        """ Prunes edges from the graph based on Bhattacharyya distance and shortest paths.
         """
 
+        def bhattacharyya_distance(node1, node2):
+            """Computes the Bhattacharyya distance between two Gaussian nodes.
+
+            args:
+                node1, node2: Node IDs of the two Gaussian nodes to compare.
+            """
+
+            mu1, sigma1 = self.graph.nodes[node1]['mean'], self.graph.nodes[node1]['covariance']
+            mu2, sigma2 = self.graph.nodes[node2]['mean'], self.graph.nodes[node2]['covariance']
+
+            sigma_avg = (sigma1 + sigma2) / 2
+            mu_diff = mu1 - mu2
+            try:
+                inv_sigma_avg = np.linalg.inv(sigma_avg)
+            except np.linalg.LinAlgError:
+                return float('inf')  # If the average covariance is singular, treat distance as infinite
+
+            sigma_avg_det = np.linalg.det(sigma_avg)
+            sigma1_det = np.linalg.det(sigma1)
+            sigma2_det = np.linalg.det(sigma2)
+
+            DB = (1/8) * mu_diff.T @ inv_sigma_avg @ mu_diff + (1/2) * np.log(sigma_avg_det / np.sqrt(sigma1_det * sigma2_det))
+            BC = np.exp(-DB)
+            return BC
+
+        # Prune edges if Bhattacharyya coefficient is below threshold
+        for n1, n2 in list(self.graph.edges):
+
+            bc = bhattacharyya_distance(n1, n2)
+
+            if bc < self.bhattacharyya_threshold:
+                self.graph.remove_edge(n1, n2)
+
+        # Prune edges that are not part of any shortest path between their nodes
         edges_to_check = set(self.graph.edges)
         while edges_to_check:
             n1, n2 = edges_to_check.pop()
@@ -135,9 +165,20 @@ class GaussianGraph:
                         self.graph.remove_edge(shortest_path[i], shortest_path[j])
 
     def shortest_path(self, initial_state, target_state):
-        """ Adds temporary initial and target nodes to the graph, computes shortest path, then removes them.
+        """ Computes the shortest path from initial_state to target_state through the graph.
 
+        Adds temporary nodes for the initial and target states, connects them to existing nodes, computes the shortest
+        path, and then removes the temporary nodes before returning the path.
+
+        args:
+            initial_state: Starting point for the path.
+            target_state: Ending point for the path.
+
+        returns:
+            List of node IDs representing the shortest path from initial_state to target_state, excluding the temporary
+            nodes. Returns None if no path exists.
         """
+
         INIT = '__TEMP_INITIAL__'
         TARGET = '__TEMP_TARGET__'
 
@@ -176,7 +217,15 @@ class GaussianGraph:
     def shortest_path_tree(self, target_state):
         """Returns a list of node ids for which there exists a path to the target state.
 
-        For reversed nodes: if both have a path, keep only the one with the shorter path.
+        Adds a temporary target node, connects it to existing nodes, computes the shortest path length from each node
+        to the target, and then removes the temporary node before returning the list of nodes that have a path to the
+        target.
+
+        args:
+            target_state: Ending point for the paths.
+
+        returns:
+            List of node IDs that have a path to the target state, excluding the temporary target node
         """
 
         # Add temporary target node
