@@ -54,7 +54,7 @@ def clean_metric_names(metric_names):
         'distance_to_attractor_mean': 'Distance to Attractor',
         'trajectory_length_mean': 'Trajectory Length',
         'compute_time': 'Compute Time',
-        'ds compute time': 'DS Compute Time'
+        'ds_compute_time': 'ds_compute_time'
     }
     
     return {name: metric_name_mapping.get(name, name.replace('_', ' ').title()) 
@@ -122,8 +122,8 @@ def generate_latex_summary(df, metrics_cols=None):
                        'distance_to_attractor_mean', 'trajectory_length_mean']
         if 'compute_time' in df.columns:
             metrics_cols.append('compute_time')
-        if 'ds compute time' in df.columns:
-            metrics_cols.append('ds compute time')
+        if 'ds_compute_time' in df.columns:
+            metrics_cols.append('ds_compute_time')
     
     # Clean method names
     df_clean = clean_method_names(df)

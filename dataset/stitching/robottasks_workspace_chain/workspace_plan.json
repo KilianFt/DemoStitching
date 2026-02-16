@@ -1,0 +1,100 @@
+{
+  "task_data_dir": "dataset/robottasks/pos_ori",
+  "n_trajectories_per_task": 6,
+  "n_points": 180,
+  "seed": 7,
+  "demonstrations": [
+    {
+      "demo_dir": "dataset/stitching/robottasks_workspace_chain/demonstration_0",
+      "task_name": "obstaclerotate",
+      "role": "central transit corridor",
+      "start_anchor": [
+        -0.55,
+        0.02,
+        0.24
+      ],
+      "end_anchor": [
+        0.2,
+        0.05,
+        0.24
+      ],
+      "source_indices": [
+        7,
+        5,
+        6,
+        3,
+        4,
+        8
+      ]
+    },
+    {
+      "demo_dir": "dataset/stitching/robottasks_workspace_chain/demonstration_1",
+      "task_name": "pouring",
+      "role": "branch starting at obstacle entry",
+      "start_anchor": [
+        -0.55,
+        0.02,
+        0.24
+      ],
+      "end_anchor": [
+        -0.1,
+        0.28,
+        0.18
+      ],
+      "source_indices": [
+        6,
+        1,
+        0,
+        4,
+        3,
+        7
+      ]
+    },
+    {
+      "demo_dir": "dataset/stitching/robottasks_workspace_chain/demonstration_2",
+      "task_name": "pan2stove",
+      "role": "branch starting at obstacle exit",
+      "start_anchor": [
+        0.2,
+        0.05,
+        0.24
+      ],
+      "end_anchor": [
+        0.88,
+        0.42,
+        0.46
+      ],
+      "source_indices": [
+        1,
+        6,
+        4,
+        7,
+        8,
+        5
+      ]
+    },
+    {
+      "demo_dir": "dataset/stitching/robottasks_workspace_chain/demonstration_3",
+      "task_name": "openbox",
+      "role": "side branch off obstacle midpoint",
+      "start_anchor": [
+        -0.175,
+        0.035,
+        0.24
+      ],
+      "end_anchor": [
+        0.18,
+        -0.24,
+        0.3
+      ],
+      "source_indices": [
+        4,
+        6,
+        7,
+        3,
+        5,
+        8
+      ]
+    }
+  ]
+}

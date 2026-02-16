@@ -69,8 +69,8 @@ def aggregate_method_results(df: pd.DataFrame) -> pd.DataFrame:
                 "dtw_distance_mean": safe_nanmean(part["dtw_distance_mean"]),
                 "distance_to_attractor_mean": safe_nanmean(part["distance_to_attractor_mean"]),
                 "gg_compute_time_mean": safe_nanmean(part["gg compute time"]),
-                "ds_compute_time_mean": safe_nanmean(part["ds compute time"]),
-                "total_compute_time_mean": safe_nanmean(part["total compute time"]),
+                "ds_compute_time_mean": safe_nanmean(part["ds_compute_time"]),
+                "total_compute_time_mean": safe_nanmean(part["total_compute_time"]),
             }
         )
     return pd.DataFrame(grouped)
@@ -211,8 +211,8 @@ def run_comparison(cfg: CompareConfig) -> Tuple[pd.DataFrame, pd.DataFrame]:
                     stitched_ds = None
                     ds_stats = {
                         "gg compute time": np.nan,
-                        "ds compute time": np.nan,
-                        "total compute time": np.nan,
+                        "ds_compute_time": np.nan,
+                        "total_compute_time": np.nan,
                     }
                     print(f"    combo {combo_id}: FAILED during construction: {e}")
 

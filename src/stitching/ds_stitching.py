@@ -79,8 +79,8 @@ def chain_ds(ds_set, initial, attractor, config):
         print(f'Failed to construct Chained DS: {e}')
         stitched_ds = None
 
-    stats['ds compute time'] = time.time() - t_ds
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t_ds
+    stats['total_compute_time'] = time.time() - t0
     return stitched_ds, gg, gg_solution_nodes, stats
 
 def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
@@ -152,11 +152,11 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     x_att = attractor
     try:
         stitched_ds = lpvds_class(filtered_x, filtered_x_dot, x_att,
-                                  rel_scale=getattr(config, 'rel_scale', 0.7),
-                                  total_scale=getattr(config, 'total_scale', 1.5),
-                                  nu_0=getattr(config, 'nu_0', 5),
-                                  kappa_0=getattr(config, 'kappa_0', 1),
-                                  psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                                  rel_scale=config.damm.rel_scale,
+                                  total_scale=config.damm.total_scale,
+                                  nu_0=config.damm.nu_0,
+                                  kappa_0=config.damm.kappa_0,
+                                  psi_dir_0=config.damm.psi_dir_0)
         if recompute_gaussians:     # compute new gaussians and linear systems (As)
             result = stitched_ds.begin()
             if not result:
@@ -170,8 +170,8 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
         print(f'Failed to construct Stitched DS: {e}')
         stitched_ds = None
 
-    stats['ds compute time'] = time.time() - t_ds
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t_ds
+    stats['total_compute_time'] = time.time() - t0
 
     return stitched_ds, gg, gg_solution_nodes, stats
 
@@ -283,18 +283,18 @@ def reuse_ds(ds_set, reversed_ds_set, initial, attractor, config):
     As = np.array(As)
 
     lpvds = lpvds_class(filtered_x, filtered_x_dot, attractor,
-                        rel_scale=getattr(config, 'rel_scale', 0.7),
-                        total_scale=getattr(config, 'total_scale', 1.5),
-                        nu_0=getattr(config, 'nu_0', 5),
-                        kappa_0=getattr(config, 'kappa_0', 1),
-                        psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                        rel_scale=config.damm.rel_scale,
+                        total_scale=config.damm.total_scale,
+                        nu_0=config.damm.nu_0,
+                        kappa_0=config.damm.kappa_0,
+                        psi_dir_0=config.damm.psi_dir_0)
     lpvds.init_cluster(gaussians)
     lpvds.A = np.array(As)
     lpvds.ds_opt = dsopt_class(lpvds.x, lpvds.x_dot, lpvds.x_att, lpvds.gamma, lpvds.assignment_arr)
     lpvds.ds_opt.P = P
 
-    stats['ds compute time'] = time.time() - t_ds
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t_ds
+    stats['total_compute_time'] = time.time() - t0
 
     return lpvds, gg, gg_solution_nodes, stats
 
@@ -368,11 +368,11 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
     x_att = attractor
     try:
         stitched_ds = lpvds_class(filtered_x, filtered_x_dot, x_att,
-                                  rel_scale=getattr(config, 'rel_scale', 0.7),
-                                  total_scale=getattr(config, 'total_scale', 1.5),
-                                  nu_0=getattr(config, 'nu_0', 5),
-                                  kappa_0=getattr(config, 'kappa_0', 1),
-                                  psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                                  rel_scale=config.damm.rel_scale,
+                                  total_scale=config.damm.total_scale,
+                                  nu_0=config.damm.nu_0,
+                                  kappa_0=config.damm.kappa_0,
+                                  psi_dir_0=config.damm.psi_dir_0)
         if recompute_gaussians:  # compute new gaussians and linear systems (As)
             result = stitched_ds.begin()
             if result is None:
@@ -390,8 +390,8 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
         print(f'Failed to construct Stitched DS: {e}')
         stitched_ds = None
 
-    stats['ds compute time'] = time.time() - t0
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t0
+    stats['total_compute_time'] = time.time() - t0
 
     return stitched_ds, gg, gg_solution_nodes, stats
 
@@ -470,18 +470,18 @@ def all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config):
     As = np.array(As)
 
     lpvds = lpvds_class(filtered_x, filtered_x_dot, attractor,
-                        rel_scale=getattr(config, 'rel_scale', 0.7),
-                        total_scale=getattr(config, 'total_scale', 1.5),
-                        nu_0=getattr(config, 'nu_0', 5),
-                        kappa_0=getattr(config, 'kappa_0', 1),
-                        psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                        rel_scale=config.damm.rel_scale,
+                        total_scale=config.damm.total_scale,
+                        nu_0=config.damm.nu_0,
+                        kappa_0=config.damm.kappa_0,
+                        psi_dir_0=config.damm.psi_dir_0)
     lpvds.init_cluster(gaussians)
     lpvds.A = np.array(As)
     lpvds.ds_opt = dsopt_class(lpvds.x, lpvds.x_dot, lpvds.x_att, lpvds.gamma, lpvds.assignment_arr)
     lpvds.ds_opt.P = P
 
-    stats['ds compute time'] = time.time() - t_ds
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t_ds
+    stats['total_compute_time'] = time.time() - t0
 
     return lpvds, gg, gg_solution_nodes, stats
 
@@ -566,17 +566,17 @@ def reuse_A(ds_set, initial, attractor, config):
         print(f"Successfully found Lyapunov function P for all {len(As)} A matrices")
 
     lpvds = lpvds_class(filtered_x, filtered_x_dot, attractor,
-                        rel_scale=getattr(config, 'rel_scale', 0.7),
-                        total_scale=getattr(config, 'total_scale', 1.5),
-                        nu_0=getattr(config, 'nu_0', 5),
-                        kappa_0=getattr(config, 'kappa_0', 1),
-                        psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                        rel_scale=config.damm.rel_scale,
+                        total_scale=config.damm.total_scale,
+                        nu_0=config.damm.nu_0,
+                        kappa_0=config.damm.kappa_0,
+                        psi_dir_0=config.damm.psi_dir_0)
     lpvds.init_cluster(gaussians)
     lpvds.A = np.array(As)
     lpvds.ds_opt = dsopt_class(lpvds.x, lpvds.x_dot, lpvds.x_att, lpvds.gamma, lpvds.assignment_arr)
     lpvds.ds_opt.P = P
 
-    stats['ds compute time'] = time.time() - t0
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t0
+    stats['total_compute_time'] = time.time() - t0
 
     return lpvds, gg, gg_solution_nodes, stats

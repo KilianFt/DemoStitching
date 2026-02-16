@@ -29,7 +29,7 @@ def simulate_trajectories(ds, initial, config):
                range(config.n_test_simulations)]
     simulated_trajectories = []
     for x_0 in x_inits:
-        simulated_trajectories.append(ds.sim(x_0[None, :], dt=0.01)[0])
+        simulated_trajectories.append(ds.sim(x_0[None, :], dt=0.1)[0])
 
     return simulated_trajectories
 
@@ -87,6 +87,7 @@ def main():
             simulated_trajectories = simulate_trajectories(stitched_ds, initial, config)
 
             # Calculate DS metrics
+            # TODO we should make sure to use the correct x and xdot for spt method here (not all x and x_dot)
             print('Calculating DS metrics...')
             ds_metrics = calculate_ds_metrics(
                 x_ref=stitched_ds.x,
@@ -111,9 +112,9 @@ def main():
 
         # Print
         if stitched_ds is not None:
-            print(f'Successful Stitched DS construction: {ds_stats["total compute time"]:.2f} s')
+            print(f'Successful Stitched DS construction: {ds_stats["total_compute_time"]:.2f} s')
             print(f'  Gaussian Graph: {ds_stats["gg compute time"]:.2f} s, ')
-            print(f'  Stitched DS: {ds_stats["ds compute time"]:.2f} s')
+            print(f'  Stitched DS: {ds_stats["ds_compute_time"]:.2f} s')
             print(f'Metrics:')
             print(f'  RMSE: {ds_metrics["prediction_rmse"]:.4f}')
             print(f'  Cosine Dissimilarity: {ds_metrics["cosine_dissimilarity"]:.4f}')
