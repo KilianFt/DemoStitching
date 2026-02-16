@@ -57,7 +57,7 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=Fa
 
     return ax
 
-def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, save_as=None, hide_axis=False):
+def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_trajectory=False, ax=None, save_as=None, hide_axis=False):
     """Plots means, covariances, and directions for all Gaussians in the DS set, with optional data point arrows.
 
     Args:
@@ -73,8 +73,14 @@ def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, sav
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Plot the gaussians
     colors = plt.cm.get_cmap('tab10', len(ds_set)).colors
+
+    # Add trajectory points if requested
+    if include_trajectory:
+        for i, ds in enumerate(ds_set):
+            ax = primitive_plot_trajectory_points(ax, ds.x, ds.x_dot, color=colors[i])
+
+    # Plot the gaussians
     for i, ds in enumerate(ds_set):
         mus = ds.damm.Mu
         sigmas = ds.damm.Sigma
@@ -83,10 +89,11 @@ def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, sav
         for mu, sigma, direction in zip(mus, sigmas, directions):
             ax = primitive_plot_gaussian(ax, mu, sigma, color=colors[i], direction=direction, sigma_bound=2)
 
-    # Add trajectory points if requested
-    if include_trajectory:
-        for i, ds in enumerate(ds_set):
-            ax = primitive_plot_trajectory_points(ax, ds.x, ds.x_dot, color=colors[i])
+    # plot initial and attractor
+    if initial is not None:
+        ax = primitive_plot_point(ax, initial, color='red')
+    if attractor is not None:
+        ax = primitive_plot_point(ax, attractor, color='green')
 
     # set limits
     if hasattr(config, 'plot_extent'):
@@ -105,7 +112,7 @@ def plot_ds_set_gaussians(ds_set, config, include_trajectory=False, ax=None, sav
 
     return ax
 
-def plot_gg_solution(gg, solution_nodes, config, ax=None, save_as=None, hide_axis=False):
+def plot_gg_solution(gg, solution_nodes, initial, attractor, config, ax=None, save_as=None, hide_axis=False):
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 8))
@@ -116,6 +123,10 @@ def plot_gg_solution(gg, solution_nodes, config, ax=None, save_as=None, hide_axi
     for node in solution_nodes:
         mu, sigma, direction, _ = gg.get_gaussian(node)
         ax = primitive_plot_gaussian(ax, mu, sigma, color='orange', direction=direction)
+
+    # plot initial and attractor
+    ax = primitive_plot_point(ax, initial, color='red')
+    ax = primitive_plot_point(ax, attractor, color='green')
 
     # set limits
     if hasattr(config, 'plot_extent'):
@@ -133,7 +144,7 @@ def plot_gg_solution(gg, solution_nodes, config, ax=None, save_as=None, hide_axi
 
     return ax
 
-def plot_ds(lpvds, x_test_list, config, ax=None, save_as=None, hide_axis=False):
+def plot_ds(lpvds, x_test_list, initial, attractor, config, ax=None, save_as=None, hide_axis=False):
     """Plots the DS vector field and simulated trajectories in 2D.
 
     Args:
@@ -152,6 +163,10 @@ def plot_ds(lpvds, x_test_list, config, ax=None, save_as=None, hide_axis=False):
     plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=ax,
                x_min=config.plot_extent[0], x_max=config.plot_extent[1],
                y_min=config.plot_extent[2], y_max=config.plot_extent[3])
+
+    # plot initial and attractor
+    ax = primitive_plot_point(ax, initial, color='red')
+    ax = primitive_plot_point(ax, attractor, color='green')
 
     # set limits
     if hasattr(config, 'plot_extent'):
@@ -388,6 +403,11 @@ def primitive_plot_trajectory_points(ax, x, x_dot, color='blue', alpha=0.5):
         ax.arrow(x[i, 0], x[i, 1], x_dot[i, 0] * size, x_dot[i, 1] * size,
                  width=size, fc=color, ec=color, alpha=alpha)
 
+    return ax
+
+def primitive_plot_point(ax, point, color='red', marker='o', size=100, label=None):
+    """Plots a single point with specified color, marker, and size."""
+    ax.scatter(point[0], point[1], color=color, marker=marker, s=size, label=label)
     return ax
 
 def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):

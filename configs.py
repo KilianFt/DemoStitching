@@ -42,8 +42,8 @@ class StitchConfig:
     attractor: Optional[np.ndarray] = None
     ds_method: str = "chain"
     reverse_gaussians: bool = True
-    param_dist: int = 4
-    param_cos: int = 4
+    param_dist: int = 1
+    param_cos: int = 1
     bhattacharyya_threshold: float = 0.05
     # n_demos: int = 5 # number of demonstrations to generate
     # noise_std: float = 0.05 # standard deviation of noise added to demonstrations

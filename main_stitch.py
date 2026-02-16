@@ -80,7 +80,6 @@ def main():
                 attractor=attractor
             )
         else:
-            plot_ds_set_gaussians([stitched_ds], config, include_trajectory=True, save_as=f'stitched_gaussians_{i}', hide_axis=True)
 
             # Simulate trajectories
             print('Simulating trajectories...')
@@ -101,9 +100,9 @@ def main():
             if i == 0 and config.save_fig:
                 plot_gaussian_graph(gg, config, save_as='Gaussian_Graph', hide_axis=True)
             if config.save_fig:
-                plot_gg_solution(gg, gg_solution_nodes, config, save_as=f'{i}_Gaussian_Graph_Solution', hide_axis=True)
-                plot_ds_set_gaussians([stitched_ds], config, include_trajectory=True, save_as=f'{i}_Stitched_DS_Gaussians', hide_axis=True)
-                plot_ds(stitched_ds, simulated_trajectories, config, save_as=f'{i}_Stitched_DS_Simulation', hide_axis=True)
+                plot_gg_solution(gg, gg_solution_nodes, initial, attractor, config, save_as=f'{i}_Gaussian_Graph_Solution', hide_axis=True)
+                plot_ds_set_gaussians([stitched_ds], config, initial=initial, attractor=attractor, include_trajectory=True, save_as=f'{i}_Stitched_DS_Gaussians', hide_axis=True)
+                plot_ds(stitched_ds, simulated_trajectories, initial, attractor, config, save_as=f'{i}_Stitched_DS_Simulation', hide_axis=True)
 
         # Compile and append results
         results = {'combination_id': i, 'ds_method': config.ds_method,} | ds_stats | ds_metrics

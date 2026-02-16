@@ -1,6 +1,7 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
+from scipy.stats import multivariate_normal
 
 class GaussianGraph:
     """A directed graph where each node represents a Gaussian distribution (with mean, covariance, direction, and prior)
@@ -182,23 +183,46 @@ class GaussianGraph:
         INIT = '__TEMP_INITIAL__'
         TARGET = '__TEMP_TARGET__'
 
-        # Add temporary initial node
+        # Add temporary initial node and connect based on normal edge weight * Gaussian evaluation
+        """
+        self.graph.add_node(INIT, mean=initial_state)
+        neighbor_scores = {
+            node: multivariate_normal.pdf(initial_state,
+                                         mean=self.graph.nodes[node]['mean'],
+                                         cov=self.graph.nodes[node]['covariance'])
+            for node in self.graph.nodes
+        }
+        neighbor = max(self.graph.nodes,
+                       key=lambda node: multivariate_normal.pdf(initial_state,
+                                                                mean=self.graph.nodes[node]['mean'],
+                                                                cov=self.graph.nodes[node]['covariance'])
+                       )
+        self.graph.add_edge(INIT, neighbor)
+        """
+
         self.graph.add_node(INIT, mean=initial_state)
         for node in self.graph.nodes():
             if node == INIT:
                 continue
 
-            edge_weight = self.compute_edge_weight(initial_state,None, self.graph.nodes[node]['mean'])
+            edge_weight = self.compute_edge_weight(initial_state, self.graph.nodes[node]['direction'], self.graph.nodes[node]['mean'])
+            gaussian_eval = multivariate_normal.pdf(initial_state, mean=self.graph.nodes[node]['mean'], cov=self.graph.nodes[node]['covariance'])
+            edge_weight = edge_weight / gaussian_eval if edge_weight is not None else None
+
             if edge_weight is not None:
                 self.graph.add_edge(INIT, node, weight=edge_weight)
 
         # Add temporary target node
         self.graph.add_node(TARGET, mean=target_state)
+        # Connect to all other nodes with edge weights based on distance and directionality
         for node in self.graph.nodes():
             if node == INIT or node == TARGET:
                 continue
 
             edge_weight = self.compute_edge_weight(self.graph.nodes[node]['mean'], self.graph.nodes[node]['direction'], target_state)
+            gaussian_eval = multivariate_normal.pdf(target_state, mean=self.graph.nodes[node]['mean'], cov=self.graph.nodes[node]['covariance'])
+            edge_weight = edge_weight / gaussian_eval if edge_weight is not None else None
+
             if edge_weight is not None:
                 self.graph.add_edge(node, TARGET, weight=edge_weight)
 
@@ -315,9 +339,7 @@ class GaussianGraph:
         pos = {node: self.graph.nodes[node]['mean'] for node in nodes}
         edges = [e for e in self.graph.edges if e[0] in nodes and e[1] in nodes]
 
-        # Draw nodes using scatter plot
-        pos_np = np.array([p for p in pos.values()])
-        ax.scatter(pos_np[:, 0], pos_np[:, 1], c=node_color, s=node_size, zorder=3)
+
 
         # Extract edge weights and normalize for alpha values
         weights = [self.graph.edges[e]['weight'] for e in edges]
@@ -346,7 +368,7 @@ class GaussianGraph:
 
                 # Draw the line between adjusted points
                 ax.plot([adjusted_start_x, adjusted_end_x], [adjusted_start_y, adjusted_end_y],
-                        color=edge_color, alpha=alpha, zorder=1, linewidth=edge_width)
+                        color=edge_color, alpha=alpha, linewidth=edge_width)
 
                 # Draw arrow head at the end of the adjusted line
                 # Position arrow slightly before the adjusted end point
@@ -357,7 +379,10 @@ class GaussianGraph:
                             xytext=(arrow_tail_x, arrow_tail_y),
                             arrowprops=dict(arrowstyle='->', color=edge_color,
                                             alpha=alpha, lw=edge_width,
-                                            mutation_scale=arrow_head_size),
-                            zorder=2)
+                                            mutation_scale=arrow_head_size))
+
+        # Draw nodes using scatter plot
+        pos_np = np.array([p for p in pos.values()])
+        ax.scatter(pos_np[:, 0], pos_np[:, 1], c=node_color, s=node_size)
 
         return ax
