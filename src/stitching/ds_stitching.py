@@ -53,7 +53,7 @@ def chain_ds(ds_set, gg, initial, attractor, config):
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
     gg_solution_nodes = gg.shortest_path(initial, attractor)
-    stats['gg solution compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############ Precompute ########
     #TODO accept precomputation dictionary
@@ -112,7 +112,7 @@ def recompute_ds(ds_set, gg, initial, attractor, config, recompute_gaussians):
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
     gg_solution_nodes = gg.shortest_path(initial, attractor)
-    stats['gg solution compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t_ds = time.time()
@@ -218,7 +218,7 @@ def reuse_ds(ds_set, gg, reversed_ds_set, initial, attractor, config):
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
     gg_solution_nodes = gg.shortest_path(initial, attractor)
-    stats['gg solution compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t_ds = time.time()
@@ -316,7 +316,7 @@ def all_paths(ds_set, gg, attractor, config, recompute_gaussians):
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
-    stats['gg solution compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t0 = time.time()
@@ -392,7 +392,7 @@ def all_paths_reuse(ds_set, gg, reversed_ds_set, initial, attractor, config):
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
-    stats['gg solution compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t_ds = time.time()
@@ -476,7 +476,7 @@ def reuse_A(ds_set, gg, initial, attractor, config):
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
-    stats['gg solution compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t0 = time.time()
