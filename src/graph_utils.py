@@ -387,3 +387,29 @@ class GaussianGraph:
         ax.scatter(pos_np[:, 0], pos_np[:, 1], c=node_color, s=node_size)
 
         return ax
+
+    def get_all_simple_paths(self, nr_edges):
+        """Returns a list of all simple paths in the graph with a specified number of edges."""
+
+        def get_simple_paths(curr_edges):
+
+            # recursion termination
+            if len(curr_edges) == nr_edges:
+                return {curr_edges}
+
+            out_edges = [e for e in self.graph.out_edges(curr_edges[-1][1]) if e not in curr_edges]
+            new_paths = set()
+            for e in out_edges:
+                new_paths.update(
+                    get_simple_paths(curr_edges + (e,))
+                )
+
+            return new_paths
+
+        paths = set()
+        for start_edge in self.graph.edges:
+            paths.update(
+                get_simple_paths((start_edge,))
+            )
+
+        return paths

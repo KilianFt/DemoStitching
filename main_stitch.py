@@ -10,6 +10,7 @@ from configs import StitchConfig
 import time
 import src.graph_utils as gu
 from src.util.ds_tools import get_gaussian_directions
+from src.stitching.chaining import _compute_segment_DS
 
 
 def simulate_trajectories(ds, initial, config):
@@ -76,8 +77,18 @@ def main():
     t0 = time.time()
     segment_ds_lookup = dict()
     if config.ds_method == "chain":
-        # TODO precompute
-        pass
+
+        all_segments_to_precompute = gg.get_all_simple_paths(nr_edges=config.chain.subsystem_edges)
+        for segment in all_segments_to_precompute:
+
+            # segment contains edges, extract the nodes
+            segment_nodes = tuple(e[0] for e in segment) + (segment[-1][1],)
+
+            # compute the segment DS and store in lookup
+            segment_ds = _compute_segment_DS(ds_set, gg, segment_nodes, config)
+            segment_ds_lookup[segment] = segment_ds
+
+
     pre_computation_results['precomputation_time'] = time.time() - t0
 
     # ============= Test various initial/attractor combinations =============
@@ -89,7 +100,7 @@ def main():
         # Construct Gaussian Graph and Stitched DS
         print('Constructing Gaussian Graph and Stitched DS...')
         stitched_ds, gg_solution_nodes, stitching_stats = construct_stitched_ds(
-            config, gg, norm_demo_set, ds_set, reversed_ds_set, initial, attractor
+            config, gg, norm_demo_set, ds_set, reversed_ds_set, initial, attractor, segment_ds_lookup=segment_ds_lookup,
         )
 
         if stitched_ds is None or not hasattr(stitched_ds, 'damm') or stitched_ds.damm is None or not hasattr(stitched_ds.damm, 'Mu'):
