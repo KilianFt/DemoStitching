@@ -7,7 +7,13 @@ dist/
 *.egg-info/
 dataset/robottasks/plots
 .pytest_cache/
+results/
+dataset/stitching/nodes_1
+dataset/stitching/nodes_2
+dataset/stitching/presentation
+dataset/stitching/testing*
 *.png
 *.pdf
 *.csv
 *.pkl
+*.log

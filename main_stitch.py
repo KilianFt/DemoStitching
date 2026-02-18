@@ -1,7 +1,7 @@
 import numpy as np
 
 from src.stitching.metrics import save_results_dataframe, calculate_ds_metrics
-from src.util.load_tools import get_demonstration_set, resolve_data_scales
+from src.util.load_tools import get_demonstration_set, resolve_data_scales, infer_state_dim_from_demo_set, compute_plot_extent_from_demo_set
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.ds_tools import apply_lpvds_demowise
@@ -51,6 +51,8 @@ def main():
         position_scale=data_position_scale,
         velocity_scale=data_velocity_scale,
     )
+    state_dim = infer_state_dim_from_demo_set(demo_set)
+    config.plot_extent = compute_plot_extent_from_demo_set(demo_set, state_dim=state_dim)
     plot_demonstration_set(demo_set, config, save_as='Demonstrations_Raw', hide_axis=True)
 
     #  ============= Fit a DS to each demonstration =============
@@ -147,7 +149,7 @@ def main():
         # Print
         if stitched_ds is not None:
             print(f'Successful Stitched DS construction: {ds_stats["total_compute_time"]:.2f} s')
-            print(f'  Gaussian Graph: {ds_stats["gg compute time"]:.2f} s, ')
+            print(f'  Gaussian Graph: {ds_stats["gg_compute_time"]:.2f} s, ')
             print(f'  Stitched DS: {ds_stats["ds_compute_time"]:.2f} s')
             print(f'Metrics:')
             print(f'  RMSE: {ds_metrics["prediction_rmse"]:.4f}')

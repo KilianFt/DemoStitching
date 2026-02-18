@@ -164,7 +164,12 @@ class LiveStitchController:
             (i, j): {"mu": mu, "sigma": sigma, "direction": direction, "prior": prior}
             for i, ds in enumerate(self.ds_set)
             for j, (mu, sigma, direction, prior) in enumerate(
-                zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior)
+                zip(
+                    ds.damm.Mu,
+                    ds.damm.Sigma,
+                    get_gaussian_directions(ds, method=self.config.gaussian_direction_method),
+                    ds.damm.Prior,
+                )
             )
         }
 
@@ -1084,6 +1089,12 @@ def parse_args():
     parser.add_argument("--interval-ms", type=int, default=30)
     parser.add_argument("--data-position-scale", "--damm-position-scale", dest="data_position_scale", type=float, default=None)
     parser.add_argument("--data-velocity-scale", "--damm-velocity-scale", dest="data_velocity_scale", type=float, default=None)
+    parser.add_argument(
+        "--gaussian-direction-method",
+        type=str,
+        default="mean_velocity",
+        choices=["mean_velocity", "a_mu"],
+    )
     parser.add_argument("--goal-tolerance", type=float, default=0.08)
     parser.add_argument("--disturbance-step", type=float, default=0.25)
     parser.add_argument("--chain-start-node-candidates", type=int, default=None)
@@ -1122,6 +1133,7 @@ def main():
     if args.data_position_scale is not None:
         config.data_position_scale = args.data_position_scale
     config.data_velocity_scale = args.data_velocity_scale
+    config.gaussian_direction_method = args.gaussian_direction_method
     config.goal_tolerance = args.goal_tolerance
     config.disturbance_step = args.disturbance_step
     if args.chain_subsystem_edges is not None:

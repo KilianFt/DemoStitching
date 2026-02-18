@@ -14,6 +14,96 @@ plt.rcParams.update({
     "font.size": 20
 })
 
+def _infer_demo_dim(demo_set):
+    for demo in demo_set:
+        for traj in getattr(demo, "trajectories", []):
+            x = np.asarray(getattr(traj, "x", []), dtype=float)
+            if x.ndim == 2 and x.shape[1] > 0:
+                return int(x.shape[1])
+    return 2
+
+def _infer_ds_dim(ds_set):
+    if ds_set is None or len(ds_set) == 0:
+        return 2
+    x = np.asarray(getattr(ds_set[0], "x", []), dtype=float)
+    if x.ndim == 2 and x.shape[1] > 0:
+        return int(x.shape[1])
+    return 2
+
+def _infer_graph_dim(gg):
+    for _, node_data in gg.graph.nodes(data=True):
+        mu = node_data.get("mean", None)
+        if mu is None:
+            continue
+        mu = np.asarray(mu, dtype=float).reshape(-1)
+        if mu.shape[0] > 0:
+            return int(mu.shape[0])
+    return 2
+
+def _create_axis(dim, ax=None, figsize=(8, 8)):
+    if ax is not None:
+        return ax
+    fig = plt.figure(figsize=figsize)
+    if dim >= 3:
+        return fig.add_subplot(projection='3d')
+    return fig.add_subplot()
+
+def _apply_plot_extent(ax, config, dim):
+    if not hasattr(config, "plot_extent"):
+        return
+    extent = getattr(config, "plot_extent")
+    if extent is None:
+        return
+    if dim >= 3:
+        if len(extent) >= 4:
+            ax.set_xlim(extent[0], extent[1])
+            ax.set_ylim(extent[2], extent[3])
+        if len(extent) >= 6:
+            ax.set_zlim(extent[4], extent[5])
+    else:
+        if len(extent) >= 4:
+            ax.set_xlim(extent[0], extent[1])
+            ax.set_ylim(extent[2], extent[3])
+
+def _plot_graph_3d(ax, gg, highlight_nodes=None):
+    nodes = []
+    for node_id, node_data in gg.graph.nodes(data=True):
+        mu = node_data.get("mean", None)
+        if mu is None:
+            continue
+        mu = np.asarray(mu, dtype=float).reshape(-1)
+        if mu.shape[0] < 3:
+            continue
+        nodes.append((node_id, mu))
+
+    if len(nodes) == 0:
+        return ax
+
+    node_lookup = {node_id: mu for node_id, mu in nodes}
+    all_pts = np.vstack([mu for _, mu in nodes])
+    ax.scatter(all_pts[:, 0], all_pts[:, 1], all_pts[:, 2], s=14, color='teal', alpha=0.8)
+
+    for u, v in gg.graph.edges:
+        if u not in node_lookup or v not in node_lookup:
+            continue
+        pu = node_lookup[u]
+        pv = node_lookup[v]
+        ax.plot([pu[0], pv[0]], [pu[1], pv[1]], [pu[2], pv[2]], color='black', alpha=0.25, linewidth=0.7)
+
+    if highlight_nodes is not None:
+        pts = []
+        for node in highlight_nodes:
+            if node in node_lookup:
+                pts.append(node_lookup[node])
+        if len(pts) > 0:
+            pts = np.vstack(pts)
+            ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], s=26, color='orange', alpha=0.95)
+
+    ax.set_xlabel(r'$\xi_1$')
+    ax.set_ylabel(r'$\xi_2$')
+    ax.set_zlabel(r'$\xi_3$')
+    return ax
+
 def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=False):
     """Plots grouped demonstration trajectories with start and end points, optionally saving the figure.
 
@@ -26,8 +116,8 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=Fa
     Returns:
         matplotlib.axes.Axes: The axis containing the plotted demonstration set.
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
+    dim = _infer_demo_dim(demo_set)
+    ax = _create_axis(dim, ax=ax, figsize=(8, 8))
 
     # Generate colors from colormap - one color per demonstration
     colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
@@ -37,12 +127,11 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=Fa
         ax = primitive_plot_demo(ax, demo, color=colors[i])
 
     # Plot settings
-    if hasattr(config, 'plot_extent'):
-        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
-        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    _apply_plot_extent(ax, config, dim)
     if hide_axis:
         ax.axis('off')
-    ax.set_aspect('equal')
+    if dim < 3:
+        ax.set_aspect('equal')
     plt.tight_layout()
 
     # Save the figure if file_name is provided
@@ -50,10 +139,6 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=Fa
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
         plt.savefig(save_folder + save_as + '.pdf')
-
-    # Close the figure if we created it
-    if ax is None:
-        plt.close()
 
     return ax
 
@@ -70,8 +155,8 @@ def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_
     Returns:
         matplotlib.axes.Axes: The axis with the plotted Gaussians and any optional data points.
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
+    dim = _infer_ds_dim(ds_set)
+    ax = _create_axis(dim, ax=ax, figsize=(8, 8))
 
     colors = plt.cm.get_cmap('tab10', len(ds_set)).colors
 
@@ -84,7 +169,10 @@ def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_
     for i, ds in enumerate(ds_set):
         mus = ds.damm.Mu
         sigmas = ds.damm.Sigma
-        directions = get_gaussian_directions(ds)
+        directions = get_gaussian_directions(
+            ds,
+            method=config.gaussian_direction_method,
+        )
 
         for mu, sigma, direction in zip(mus, sigmas, directions):
             ax = primitive_plot_gaussian(ax, mu, sigma, color=colors[i], direction=direction, sigma_bound=2)
@@ -96,12 +184,11 @@ def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_
         ax = primitive_plot_point(ax, attractor, color='green')
 
     # set limits
-    if hasattr(config, 'plot_extent'):
-        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
-        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    _apply_plot_extent(ax, config, dim)
     if hide_axis:
         ax.axis('off')
-    ax.set_aspect('equal')
+    if dim < 3:
+        ax.set_aspect('equal')
     plt.tight_layout()
 
     # save the figure
@@ -113,28 +200,27 @@ def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_
     return ax
 
 def plot_gg_solution(gg, solution_nodes, initial, attractor, config, ax=None, save_as=None, hide_axis=False):
+    dim = _infer_graph_dim(gg)
+    ax = _create_axis(dim, ax=ax, figsize=(8, 8))
 
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
-
-    ax = gg.plot(ax=ax)
-
-    # plot gaussians
-    for node in solution_nodes:
-        mu, sigma, direction, _ = gg.get_gaussian(node)
-        ax = primitive_plot_gaussian(ax, mu, sigma, color='orange', direction=direction)
+    if dim >= 3:
+        ax = _plot_graph_3d(ax, gg, highlight_nodes=solution_nodes)
+    else:
+        ax = gg.plot(ax=ax)
+        for node in solution_nodes:
+            mu, sigma, direction, _ = gg.get_gaussian(node)
+            ax = primitive_plot_gaussian(ax, mu, sigma, color='orange', direction=direction)
 
     # plot initial and attractor
     ax = primitive_plot_point(ax, initial, color='red')
     ax = primitive_plot_point(ax, attractor, color='green')
 
     # set limits
-    if hasattr(config, 'plot_extent'):
-        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
-        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    _apply_plot_extent(ax, config, dim)
     if hide_axis:
         ax.axis('off')
-    ax.set_aspect('equal')
+    if dim < 3:
+        ax.set_aspect('equal')
     plt.tight_layout()
 
     if save_as is not None:
@@ -145,7 +231,7 @@ def plot_gg_solution(gg, solution_nodes, initial, attractor, config, ax=None, sa
     return ax
 
 def plot_ds(lpvds, x_test_list, initial, attractor, config, ax=None, save_as=None, hide_axis=False):
-    """Plots the DS vector field and simulated trajectories in 2D.
+    """Plots the DS vector field/trajectories in 2D, and trajectories in 3D.
 
     Args:
         lpvds: The DS object containing the fitted model.
@@ -157,24 +243,33 @@ def plot_ds(lpvds, x_test_list, initial, attractor, config, ax=None, save_as=Non
     Returns:
         matplotlib.axes.Axes: The axis with the plotted DS vector field and trajectories.
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
-
-    plot_ds_2d(lpvds.x, x_test_list, lpvds, ax=ax,
-               x_min=config.plot_extent[0], x_max=config.plot_extent[1],
-               y_min=config.plot_extent[2], y_max=config.plot_extent[3])
+    dim = int(np.asarray(lpvds.x, dtype=float).shape[1])
+    ax = _create_axis(dim, ax=ax, figsize=(8, 8))
+    x_test_list = [] if x_test_list is None else x_test_list
+    if dim >= 3:
+        ax = plot_ds_3d(lpvds.x, x_test_list, ax=ax, att=attractor)
+    else:
+        plot_ds_2d(
+            lpvds.x,
+            x_test_list,
+            lpvds,
+            ax=ax,
+            x_min=config.plot_extent[0],
+            x_max=config.plot_extent[1],
+            y_min=config.plot_extent[2],
+            y_max=config.plot_extent[3],
+        )
 
     # plot initial and attractor
     ax = primitive_plot_point(ax, initial, color='red')
     ax = primitive_plot_point(ax, attractor, color='green')
 
     # set limits
-    if hasattr(config, 'plot_extent'):
-        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
-        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    _apply_plot_extent(ax, config, dim)
     if hide_axis:
         ax.axis('off')
-    ax.set_aspect('equal')
+    if dim < 3:
+        ax.set_aspect('equal')
     plt.tight_layout()
 
     # save the figure
@@ -191,17 +286,19 @@ def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
     Args:
         gg: a GaussianGraph
     """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
-    ax = gg.plot(ax=ax)
+    dim = _infer_graph_dim(gg)
+    ax = _create_axis(dim, ax=ax, figsize=(8, 8))
+    if dim >= 3:
+        ax = _plot_graph_3d(ax, gg)
+    else:
+        ax = gg.plot(ax=ax)
 
     # Apply config settings if provided
-    if hasattr(config, 'plot_extent'):
-        ax.set_xlim(config.plot_extent[0], config.plot_extent[1])
-        ax.set_ylim(config.plot_extent[2], config.plot_extent[3])
+    _apply_plot_extent(ax, config, dim)
     if hide_axis:
         ax.axis('off')
-    ax.set_aspect('equal')
+    if dim < 3:
+        ax.set_aspect('equal')
     plt.tight_layout()
 
     if save_as is not None:
@@ -316,15 +413,25 @@ def primitive_plot_demo(ax, demo, color=None):
 
     # Plot all trajectories in this demonstration with the same color
     for traj in demo.trajectories:
-        ax.plot(traj.x[:, 0], traj.x[:, 1], color=color, linewidth=linewidth, alpha=alpha)
-        # Start point (green)
-        ax.plot(traj.x[0, 0], traj.x[0, 1], 'go', markersize=marker_size)
-        # End point (red)
-        ax.plot(traj.x[-1, 0], traj.x[-1, 1], 'ro', markersize=marker_size)
+        x = np.asarray(traj.x, dtype=float)
+        if x.ndim != 2 or x.shape[0] == 0 or x.shape[1] < 2:
+            continue
+        if x.shape[1] >= 3:
+            ax.plot(x[:, 0], x[:, 1], x[:, 2], color=color, linewidth=linewidth, alpha=alpha)
+            ax.scatter(x[0, 0], x[0, 1], x[0, 2], color='green', s=marker_size * 6)
+            ax.scatter(x[-1, 0], x[-1, 1], x[-1, 2], color='red', s=marker_size * 6)
+        else:
+            ax.plot(x[:, 0], x[:, 1], color=color, linewidth=linewidth, alpha=alpha)
+            # Start point (green)
+            ax.plot(x[0, 0], x[0, 1], 'go', markersize=marker_size)
+            # End point (red)
+            ax.plot(x[-1, 0], x[-1, 1], 'ro', markersize=marker_size)
 
     return ax
 
 def primitive_plot_gaussian(ax, mu, sigma, color=None, sigma_bound=2, resolution=200, direction=None):
+    mu = np.asarray(mu, dtype=float).reshape(-1)
+    sigma = np.asarray(sigma, dtype=float)
 
     # Params
     sigma_bound_color = 'black'
@@ -336,6 +443,30 @@ def primitive_plot_gaussian(ax, mu, sigma, color=None, sigma_bound=2, resolution
     # Select random color if not provided
     if color is None:
         color = "#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
+
+    if mu.shape[0] >= 3:
+        ax.scatter(mu[0], mu[1], mu[2], color=color, s=28, alpha=0.9)
+        if direction is not None:
+            direction = np.asarray(direction, dtype=float).reshape(-1)
+            direction_norm = direction / (np.linalg.norm(direction) + 1e-10)
+            if sigma.ndim == 2 and sigma.shape[0] >= 3 and sigma.shape[1] >= 3:
+                scale = float(np.sqrt(np.max(np.diag(sigma[:3, :3]))))
+            else:
+                scale = 0.1
+            scale = max(scale, 1e-3)
+            ax.quiver(
+                mu[0],
+                mu[1],
+                mu[2],
+                direction_norm[0],
+                direction_norm[1],
+                direction_norm[2],
+                length=scale,
+                normalize=True,
+                color='black',
+                linewidth=0.9,
+            )
+        return ax
 
     # Create coordinate grid
     x_min = mu[0] - sigma_extent * np.sqrt(sigma[0, 0])
@@ -395,6 +526,27 @@ def primitive_plot_gaussian(ax, mu, sigma, color=None, sigma_bound=2, resolution
 
 def primitive_plot_trajectory_points(ax, x, x_dot, color='blue', alpha=0.5):
     """Plots arrows at each point in x with direction given by x_dot."""
+    x = np.asarray(x, dtype=float)
+    x_dot = np.asarray(x_dot, dtype=float)
+    if x.ndim != 2 or x_dot.ndim != 2 or x.shape[0] == 0:
+        return ax
+    if x.shape[1] >= 3 and x_dot.shape[1] >= 3:
+        size = 0.04
+        for i in range(len(x)):
+            ax.quiver(
+                x[i, 0],
+                x[i, 1],
+                x[i, 2],
+                x_dot[i, 0],
+                x_dot[i, 1],
+                x_dot[i, 2],
+                length=size,
+                normalize=False,
+                color=color,
+                alpha=alpha,
+                linewidth=0.4,
+            )
+        return ax
 
     # params
     size = 0.015
@@ -407,7 +559,11 @@ def primitive_plot_trajectory_points(ax, x, x_dot, color='blue', alpha=0.5):
 
 def primitive_plot_point(ax, point, color='red', marker='o', size=100, label=None):
     """Plots a single point with specified color, marker, and size."""
-    ax.scatter(point[0], point[1], color=color, marker=marker, s=size, label=label)
+    point = np.asarray(point, dtype=float).reshape(-1)
+    if point.shape[0] >= 3:
+        ax.scatter(point[0], point[1], point[2], color=color, marker=marker, s=size, label=label)
+    else:
+        ax.scatter(point[0], point[1], color=color, marker=marker, s=size, label=label)
     return ax
 
 def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
@@ -452,22 +608,29 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
     if title is not None:
         ax.set_title(title)
 
-def plot_ds_3d(x_train, x_test_list):
+def plot_ds_3d(x_train, x_test_list, ax=None, att=None, title=None):
     N = x_train.shape[1]
 
-    fig = plt.figure(figsize=(12, 10))
+    if ax is None:
+        fig = plt.figure(figsize=(12, 10))
     if N == 2:
-        ax = fig.add_subplot()
+        if ax is None:
+            ax = fig.add_subplot()
         ax.scatter(x_train[:, 0], x_train[:, 1], color='k', s=1, alpha=0.4, label="Demonstration")
         for idx, x_test in enumerate(x_test_list):
             ax.plot(x_test[:, 0], x_test[:, 1], color='b')
 
-    elif N == 3:
-        ax = fig.add_subplot(projection='3d')
+    elif N >= 3:
+        if ax is None:
+            ax = fig.add_subplot(projection='3d')
         ax.scatter(x_train[:, 0], x_train[:, 1], x_train[:, 2], 'o', color='k', s=3, alpha=0.4, label="Demonstration")
 
         for idx, x_test in enumerate(x_test_list):
             ax.plot(x_test[:, 0], x_test[:, 1], x_test[:, 2], color='b')
+        if att is not None:
+            att = np.asarray(att, dtype=float).reshape(-1)
+            if att.shape[0] >= 3:
+                ax.scatter(att[0], att[1], att[2], color='g', s=70, alpha=0.8)
         ax.set_xlabel(r'$\xi_1$', fontsize=38, labelpad=20)
         ax.set_ylabel(r'$\xi_2$', fontsize=38, labelpad=20)
         ax.set_zlabel(r'$\xi_3$', fontsize=38, labelpad=20)
@@ -478,3 +641,7 @@ def plot_ds_3d(x_train, x_test_list):
         ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
         ax.zaxis.set_major_locator(MaxNLocator(nbins=3))
         ax.tick_params(axis='z', which='major', pad=15)
+
+    if title is not None:
+        ax.set_title(title)
+    return ax

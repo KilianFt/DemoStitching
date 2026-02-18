@@ -68,7 +68,7 @@ def aggregate_method_results(df: pd.DataFrame) -> pd.DataFrame:
                 "cosine_dissimilarity_mean": safe_nanmean(part["cosine_dissimilarity"]),
                 "dtw_distance_mean": safe_nanmean(part["dtw_distance_mean"]),
                 "distance_to_attractor_mean": safe_nanmean(part["distance_to_attractor_mean"]),
-                "gg_compute_time_mean": safe_nanmean(part["gg compute time"]),
+                "gg_compute_time_mean": safe_nanmean(part["gg_compute_time"]),
                 "ds_compute_time_mean": safe_nanmean(part["ds_compute_time"]),
                 "total_compute_time_mean": safe_nanmean(part["total_compute_time"]),
             }
@@ -210,7 +210,7 @@ def run_comparison(cfg: CompareConfig) -> Tuple[pd.DataFrame, pd.DataFrame]:
                 except Exception as e:
                     stitched_ds = None
                     ds_stats = {
-                        "gg compute time": np.nan,
+                        "gg_compute_time": np.nan,
                         "ds_compute_time": np.nan,
                         "total_compute_time": np.nan,
                     }

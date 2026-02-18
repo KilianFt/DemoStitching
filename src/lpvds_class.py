@@ -62,7 +62,8 @@ class lpvds_class():
 
         # self.K     = self.gamma.shape[0] 
 
-        self.assignment_arr = self.damm.z
+        # Keep assignment consistent with posterior used elsewhere in the pipeline.
+        self.assignment_arr = assignment_arr
         # unique_elements, counts = np.unique(self.assignment_arr, return_counts=True)
         # for element, count in zip(unique_elements, counts):
         #     print("Current element", element)

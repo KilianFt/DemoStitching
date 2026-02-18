@@ -84,6 +84,9 @@ def _summarize_run_metrics(results_csv: Path) -> dict[str, float]:
             "cosine_dissimilarity_mean": math.nan,
             "dtw_distance_mean": math.nan,
             "distance_to_attractor_mean": math.nan,
+            "ds_compute_time_mean": math.nan,
+            "gg_compute_time_mean": math.nan,
+            "total_compute_time_mean": math.nan,
         }
 
     df = pd.read_csv(results_csv)
@@ -93,6 +96,9 @@ def _summarize_run_metrics(results_csv: Path) -> dict[str, float]:
         "cosine_dissimilarity_mean": _safe_mean(df, "cosine_dissimilarity"),
         "dtw_distance_mean": _safe_mean(df, "dtw_distance_mean"),
         "distance_to_attractor_mean": _safe_mean(df, "distance_to_attractor_mean"),
+        "ds_compute_time_mean": _safe_mean(df, "ds_compute_time_mean"),
+        "gg_compute_time_mean": _safe_mean(df, "gg_compute_time_mean"),
+        "total_compute_time_mean": _safe_mean(df, "total_compute_time_mean"),
     }
 
 
