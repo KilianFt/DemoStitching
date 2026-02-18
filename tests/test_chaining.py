@@ -47,7 +47,13 @@ class _MockGaussianGraph:
 
 class ChainingTransitionPolicyTests(unittest.TestCase):
     @staticmethod
-    def _build_chain(path_states: np.ndarray, method: str, attractor: Optional[np.ndarray] = None):
+    def _build_chain(
+        path_states: np.ndarray,
+        method: str,
+        attractor: Optional[np.ndarray] = None,
+        chain_ds_method: str = "linear",
+        precomputed_edge_lookup: Optional[dict] = None,
+    ):
         path_states = np.asarray(path_states, dtype=float)
         if attractor is None:
             attractor = path_states[-1]
@@ -65,6 +71,7 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         cfg = StitchConfig()
         cfg.chain.subsystem_edges = 1  # should be ignored: chaining always uses 3-node windows.
         cfg.chain.transition_trigger_method = method
+        cfg.chain.ds_method = chain_ds_method
         cfg.chain.enable_recovery = False
         cfg.chain.blend_length_ratio = 0.10
 
@@ -75,6 +82,7 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
             attractor=attractor,
             config=cfg,
             shortest_path_nodes=path_nodes,
+            precomputed_edge_lookup=precomputed_edge_lookup,
         )
         return chained, initial, attractor, path_states
 
@@ -178,6 +186,58 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
                 self.assertLess(np.linalg.norm(trajectory[-1] - attractor), 0.20)
                 self.assertIsNotNone(chained.last_sim_indices)
                 self.assertEqual(int(np.max(chained.last_sim_indices)), chained.n_systems - 1)
+
+    def test_segmented_chain_matches_linear_interface_and_returns(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.2],
+                [3.0, 0.1],
+            ]
+        )
+        chained, initial, attractor, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+        )
+        self.assertIsNotNone(chained)
+        self.assertTrue(hasattr(chained, "damm"))
+        self.assertEqual(chained.assignment_arr.shape[0], chained.x.shape[0])
+
+        step_out = chained.step_once(initial.copy(), dt=0.02)
+        self.assertEqual(len(step_out), 3)
+        x_next, velocity, idx = step_out
+        self.assertEqual(np.asarray(x_next).shape, initial.shape)
+        self.assertEqual(np.asarray(velocity).shape, initial.shape)
+        self.assertIsInstance(idx, (int, np.integer))
+
+        trajectory, gamma_history = chained.sim(initial[None, :], dt=0.02)
+        self.assertEqual(trajectory.ndim, 2)
+        self.assertEqual(gamma_history.ndim, 2)
+        self.assertLess(np.linalg.norm(trajectory[-1] - attractor), 0.25)
+
+    def test_segmented_chain_uses_same_configurable_trigger_policy(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained, _, _, _ = self._build_chain(
+            path,
+            method="distance_ratio",
+            chain_ds_method="segmented",
+        )
+        self.assertIsNotNone(chained)
+        expected_r = 2.0
+        # With use_boundary_ds_initial=False (default) there is no init boundary,
+        # so the first transition (index 0) is the first 3-node segment transition.
+        self.assertAlmostEqual(float(chained.transition_edge_ratios[0]), expected_r, places=8)
+        self.assertFalse(chained.trigger_state(0, np.array([2.2, 0.0])))
+        self.assertTrue(chained.trigger_state(0, np.array([2.9, 0.0])))
 
 
 if __name__ == "__main__":

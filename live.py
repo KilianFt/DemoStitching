@@ -233,15 +233,21 @@ class LiveStitchController:
         if path_nodes is None:
             print("Failed to find path nodes")
             return None, gg, None
-        ds = build_chained_ds(
-            self.ds_set,
-            gg,
-            initial=initial,
-            attractor=attractor,
-            config=self.config,
-            precomputed_edge_lookup=self.chain_edge_lookup,
-            shortest_path_nodes=path_nodes,
-        )
+        try:
+            ds = build_chained_ds(
+                self.ds_set,
+                gg,
+                initial=initial,
+                attractor=attractor,
+                config=self.config,
+                precomputed_edge_lookup=self.chain_edge_lookup,
+                shortest_path_nodes=path_nodes,
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Failed to build chain DS: {e}")
+            return None, gg, list(path_nodes)
         gg.shortest_path_nodes = list(path_nodes)
         return ds, gg, list(path_nodes)
 
@@ -551,9 +557,15 @@ class LiveStitchApp:
 
         if self.ctrl.config.ds_method == "chain":
             idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
-            _, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
-            target = targets[idx]
-            velocities = (self.ctrl.current_ds.A_seq[idx] @ (points - target).T).T
+            chain_method = self.ctrl.config.chain.ds_method
+            if chain_method == "segmented":
+                velocities = np.array([
+                    self.ctrl.current_ds._velocity_for_index(p, idx) for p in points
+                ])
+            else:
+                _, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
+                target = targets[idx]
+                velocities = (self.ctrl.current_ds.A_seq[idx] @ (points - target).T).T
         else:
             velocities = _predict_velocity_field(self.ctrl.current_ds, points)
 
@@ -585,9 +597,15 @@ class LiveStitchApp:
 
         if self.ctrl.config.ds_method == "chain":
             idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
-            _, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
-            target = np.asarray(targets[idx], dtype=float).reshape(-1)
-            velocities = (self.ctrl.current_ds.A_seq[idx] @ (points - target).T).T
+            chain_method = self.ctrl.config.chain.ds_method
+            if chain_method == "segmented":
+                velocities = np.array([
+                    self.ctrl.current_ds._velocity_for_index(p, idx) for p in points
+                ])
+            else:
+                _, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
+                target = np.asarray(targets[idx], dtype=float).reshape(-1)
+                velocities = (self.ctrl.current_ds.A_seq[idx] @ (points - target).T).T
         else:
             velocities = _predict_velocity_field(self.ctrl.current_ds, points)
 

@@ -25,6 +25,10 @@ class ChainConfig:
     enable_recovery: bool = False
     stabilization_margin: float = 1e-3
     lmi_tolerance: float = 5e-5
+    # Boundary A matrices (single-node data, separate linear system).
+    # When False the first / last segment uses multi-node data (≥3 nodes), like the core systems.
+    use_boundary_ds_initial: bool = False
+    use_boundary_ds_end: bool = False
 
 # ds_method options:
 # - ["sp_recompute_all"]            Uses shortest path, extracts raw traj. points, recomputes Gaussians and DS.
