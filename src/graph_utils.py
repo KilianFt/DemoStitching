@@ -206,7 +206,7 @@ class GaussianGraph:
 
             edge_weight = self.compute_edge_weight(initial_state, self.graph.nodes[node]['direction'], self.graph.nodes[node]['mean'])
             gaussian_eval = multivariate_normal.pdf(initial_state, mean=self.graph.nodes[node]['mean'], cov=self.graph.nodes[node]['covariance'])
-            edge_weight = edge_weight / gaussian_eval if edge_weight is not None else None
+            edge_weight = edge_weight / max(gaussian_eval, 1e-6) if edge_weight is not None else None
 
             if edge_weight is not None:
                 self.graph.add_edge(INIT, node, weight=edge_weight)
@@ -220,7 +220,7 @@ class GaussianGraph:
 
             edge_weight = self.compute_edge_weight(self.graph.nodes[node]['mean'], self.graph.nodes[node]['direction'], target_state)
             gaussian_eval = multivariate_normal.pdf(target_state, mean=self.graph.nodes[node]['mean'], cov=self.graph.nodes[node]['covariance'])
-            edge_weight = edge_weight / gaussian_eval if edge_weight is not None else None
+            edge_weight = edge_weight / max(gaussian_eval, 1e-6) if edge_weight is not None else None
 
             if edge_weight is not None:
                 self.graph.add_edge(node, TARGET, weight=edge_weight)
