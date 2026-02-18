@@ -27,8 +27,7 @@ def simulate_trajectories(ds, initial, config):
     if ds is None:
         return None
 
-    # --- simulate
-    # TODO figure out initial/final position from data
+    # --- simulate ---
     x_inits = [initial + np.random.normal(0, config.noise_std, initial.shape[0]) for _ in
                range(config.n_test_simulations)]
     simulated_trajectories = []
