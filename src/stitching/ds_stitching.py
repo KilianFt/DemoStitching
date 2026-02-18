@@ -6,7 +6,7 @@ from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
 from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A, find_lyapunov_function
-from src.stitching.chaining import build_chained_ds
+from src.stitching.chaining import build_chained_linear_ds, build_chained_segmented_ds
 from src.util.ds_tools import get_gaussian_directions
 import src.graph_utils as gu
 
@@ -64,17 +64,33 @@ def chain_ds(ds_set, initial, attractor, config):
     gg_solution_nodes = gg.shortest_path(initial, attractor)
     stats['gg compute time'] = time.time() - t0
 
+    # ############ Precompute ########
+    #TODO precompute the lookup table of piecewise DSs
+
     # ############## DS ##############
     t_ds = time.time()
     try:
-        stitched_ds = build_chained_ds(
-            ds_set,
-            gg,
-            initial=initial,
-            attractor=attractor,
-            config=config,
-            shortest_path_nodes=gg_solution_nodes,
-        )
+        if config.chain.ds_method == 'segmented':
+            stitched_ds = build_chained_segmented_ds(
+                ds_set,
+                gg,
+                initial=initial,
+                attractor=attractor,
+                config=config,
+                shortest_path_nodes=gg_solution_nodes,
+            )
+        elif config.chain.ds_method == 'linear':
+            stitched_ds = build_chained_linear_ds(
+                ds_set,
+                gg,
+                initial=initial,
+                attractor=attractor,
+                config=config,
+                shortest_path_nodes=gg_solution_nodes,
+            )
+        else:
+            raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
+
     except Exception as e:
         print(f'Failed to construct Chained DS: {e}')
         stitched_ds = None
@@ -394,7 +410,6 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
     stats['total compute time'] = time.time() - t0
 
     return stitched_ds, gg, gg_solution_nodes, stats
-
 
 def all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config):
     # Initialize stats dictionary

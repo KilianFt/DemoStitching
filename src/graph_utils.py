@@ -22,7 +22,6 @@ class GaussianGraph:
 
         self.graph = nx.DiGraph()
         self.gaussian_reversal_map = dict()  # keys = reversed node ids, values = original node ids
-        self.gaussian_ids = list(self.graph.nodes.keys())
 
     def __str__(self):
         return f'GaussianGraph with {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.'

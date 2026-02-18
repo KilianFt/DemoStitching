@@ -5,6 +5,8 @@ from scipy.stats import multivariate_normal
 from src.damm.src.damm_class import DAMM as damm_class
 import cvxpy as cp
 from configs import ChainConfig, StitchConfig
+from src.lpvds_class import lpvds_class
+
 
 
 def _lyapunov_constraint_residual(
@@ -333,6 +335,279 @@ class ChainedLinearDS:
     def vector_field(self, x_positions: np.ndarray) -> np.ndarray:
         return self.predict_velocities(x_positions)
 
+class ChainedSegmentedDS:
+    """DS chain with state-triggered entry and time-triggered transition completion."""
+
+    def __init__(self, x, x_dot, ds_set, gg, path_nodes, initial, attractor, intermediate_segments, intermediate_DSs, A_init,
+                 A_attractor, blend_length_ratio) -> None:
+        self.x = x
+        self.x_dot = x_dot
+        self.ds_set = ds_set
+        self.gg = gg
+        self.path_nodes = path_nodes
+        self.initial = initial
+        self.attractor = attractor
+        self.intermediate_segments = intermediate_segments
+        self.intermediate_DSs = intermediate_DSs
+        self.A_init = A_init
+        self.A_attractor = A_attractor
+        self.blend_length_ratio = blend_length_ratio
+
+        self.tol = 10e-3
+        self.max_iter = 10000
+        self.last_sim_indices = None
+
+        # ---- Nominal DSs (with dimension shaping to get [1,d] shape)
+        self.nominal_DSs = []
+        self.nominal_DSs.append(lambda x: np.expand_dims(self.A_init @ (x.squeeze() - self._get_gaussian_center(self.path_nodes[0])), axis=0))
+        for ds in self.intermediate_DSs:
+            self.nominal_DSs.append(lambda x: ds._step(x, dt=1)[2].T)
+        self.nominal_DSs.append(lambda x: np.expand_dims(self.A_attractor @ (x.squeeze() - self.attractor), axis=0))
+
+        # ---- Transition points
+        self.transition_points = []
+        self.transition_points.append((self.initial,
+                                       (self.initial + self._get_gaussian_center(self.path_nodes[0]))/2,
+                                       self._get_gaussian_center(self.path_nodes[0])))
+        for seg in self.intermediate_segments:
+            self.transition_points.append((self._get_gaussian_center(seg[0]),
+                                           self._get_gaussian_center(seg[1]),
+                                           self._get_gaussian_center(seg[2])))
+        self.transition_points.append((self._get_gaussian_center(self.path_nodes[0]),
+                                       (self._get_gaussian_center(self.path_nodes[0]) + self.attractor)/2,
+                                       self.attractor))
+
+        # Simulation variables
+        self.current_state = None
+        self.state_time = None
+        self.curr_trigger = None
+        self.curr_timer = None
+        self.curr_transitions_DS = None
+
+
+    def _state_vec(self, x: np.ndarray) -> np.ndarray:
+        x = np.asarray(x, dtype=float)
+        if x.ndim == 2:
+            return x[0]
+        return x
+
+    def _velocity_for_index(self, x: np.ndarray, idx: int) -> np.ndarray:
+        idx = int(np.clip(idx, 0, self.n_systems - 1))
+        return self.A_seq[idx] @ (x - self.node_targets[idx])
+
+    def _trigger_state_mean_normals(self, idx: int, x: np.ndarray) -> bool:
+        if idx >= len(self.transition_centers) or idx >= len(self.transition_normals):
+            return False
+        signed_distance = float(
+            np.dot(
+                np.asarray(x, dtype=float) - self.transition_centers[idx],
+                self.transition_normals[idx],
+            )
+        )
+        return signed_distance >= 0.0
+
+    def _trigger_state_distance_ratio(self, idx: int, x: np.ndarray) -> bool:
+        if (
+            idx >= len(self.transition_centers)
+            or idx >= len(self.transition_ratio_nodes)
+            or idx >= len(self.transition_edge_ratios)
+        ):
+            return False
+        n1 = self.transition_centers[idx]
+        n2 = self.transition_ratio_nodes[idx]
+        ratio_threshold = float(self.transition_edge_ratios[idx])
+        if not np.isfinite(ratio_threshold):
+            return False
+
+        x = np.asarray(x, dtype=float)
+        d1 = float(np.linalg.norm(x - n1))
+        d2 = float(np.linalg.norm(x - n2))
+        ratio = d1 / max(d2, 1e-12)
+        return ratio >= ratio_threshold
+
+    def trigger_state(self, idx: int, x: np.ndarray) -> bool:
+        idx = int(idx)
+        if idx < 0 or idx >= self.n_systems:
+            return False
+        if self.transition_trigger_method == "distance_ratio":
+            return self._trigger_state_distance_ratio(idx, x)
+        elif self.transition_trigger_method == "mean_normals":
+            return self._trigger_state_mean_normals(idx, x)
+        else:
+            raise ValueError(f"Unknown transition trigger method: {self.transition_trigger_method}")
+
+    def trigger_time(self, idx: int, t: float) -> bool:
+        if idx >= len(self.transition_times):
+            return True
+        if self._transition_t0 is None:
+            return False
+        return (t - self._transition_t0) >= self.transition_times[idx]
+
+    def select_node_index(self, x: np.ndarray, current_idx: int) -> int:
+        x = self._state_vec(x)
+        if not self.chain_cfg.enable_recovery:
+            return int(current_idx)
+
+        current_idx = int(np.clip(current_idx, 0, self.n_systems - 1))
+        dist_to_current = np.linalg.norm(x - self.node_sources[current_idx])
+        if dist_to_current <= self.chain_cfg.recovery_distance:
+            return current_idx
+
+        distances = np.linalg.norm(self.node_sources - x.reshape(1, -1), axis=1)
+        return int(np.argmin(distances))
+
+    def reset_runtime(self, initial_idx: int = 0, start_time: float = 0.0):
+        self._runtime_idx = int(np.clip(initial_idx, 0, self.n_systems - 1))
+        self._runtime_time = float(start_time)
+        self._state_entry_t = float(start_time)
+        self._transition_from_idx = None
+        self._transition_t0 = None
+
+    @property
+    def transition_active(self) -> bool:
+        return self._transition_from_idx is not None
+
+    def _clear_transition(self):
+        self._transition_from_idx = None
+        self._transition_t0 = None
+
+    def _start_transition_if_triggered(self, x: np.ndarray, t: float):
+        if self._runtime_idx >= self.n_systems - 1:
+            return
+        if self._transition_from_idx is not None:
+            return
+        trigger = self.trigger_state(self._runtime_idx, x)
+
+        if trigger:
+            self._transition_from_idx = self._runtime_idx
+            self._transition_t0 = t
+
+    def _transition_velocity(self, x: np.ndarray, t: float) -> np.ndarray:
+        idx = int(self._transition_from_idx)
+        v_current = self._velocity_for_index(x, idx)
+        v_next = self._velocity_for_index(x, idx + 1)
+
+        T = self.transition_times[idx] if idx < len(self.transition_times) else 0.0
+        if T <= 1e-12:
+            alpha = 1.0
+        else:
+            alpha = np.clip((t - self._transition_t0) / T, 0.0, 1.0)
+        v = (1.0 - alpha) * v_current + alpha * v_next
+
+        if self.trigger_time(idx, t):
+            self._runtime_idx = min(idx + 1, self.n_systems - 1)
+            self._state_entry_t = t
+            self._clear_transition()
+        return v
+
+    def _get_gaussian_center(self, node_id):
+        node_data = self.gg.graph.nodes[node_id]
+        if "mean" in node_data:
+            return np.asarray(node_data["mean"], dtype=float)
+        return None
+
+    def _get_trigger(self):
+
+        # If last DS, trigger is always false (no transition).
+        if self.current_state[1] >= len(self.nominal_DSs):
+            return lambda x: False
+
+
+        start, mid, end = self.transition_points[self.current_state[1]]
+        if mid is None:
+            mid = (start + end) / 2
+
+        e1 = mid - start
+        e2 = end - mid
+
+        transition_ratio = np.linalg.norm(e1) / np.linalg.norm(e2)
+        trigger = lambda x: np.linalg.norm(x - start) / np.linalg.norm(x - end) >= transition_ratio
+        return trigger
+
+    def _get_timer(self):
+
+        start, mid, end = self.transition_points[self.current_state[1]]
+        e2 = end - mid
+
+        ds1 = self.nominal_DSs[self.current_state[1]]
+        ds2 = self.nominal_DSs[self.current_state[1] + 1]
+
+        mid_x_dot = ds1(mid)
+        T = self.blend_length_ratio * np.linalg.norm(e2) / np.linalg.norm(mid_x_dot)
+
+        timer = lambda t: t - self.state_time >= T
+        transition_DS = lambda x, t: ds1(x) * (t-self.state_time)/T + ds2(x) * (1 - (t-self.state_time)/T)
+
+        return timer, transition_DS
+
+    def step_once(self, x: np.ndarray, dt: float):
+
+        # Update state
+        if self.current_state[0] == 'nominal':
+            trigger_eval = self.curr_trigger(x)
+            if trigger_eval:
+                self.current_state = ('intermediate', self.current_state[1])
+                self.curr_timer, self.curr_transitions_DS = self._get_timer()
+
+        elif self.current_state[0] == 'intermediate':
+            timer_eval = self.curr_timer(self.state_time)
+            if timer_eval:
+                self.current_state = ('nominal', self.current_state[1] + 1)
+                self.curr_trigger = self._get_trigger()
+
+
+        # Get x_dot
+        if self.current_state[0] == 'nominal':
+            x_dot = self.nominal_DSs[self.current_state[1]](x)
+        elif self.current_state[0] == 'intermediate':
+            x_dot = self.curr_transitions_DS(x, self.state_time)
+
+        # Update variables
+        x_next = x + dt * x_dot
+        self.state_time += dt
+
+        return x_next
+
+    def sim(self, x_init: np.ndarray, dt: float):
+
+        # Init
+        x = np.asarray(x_init, dtype=float)
+
+        # Reset simulation variables
+        self.current_state = ('nominal', 0)
+        self.state_time = 0  # time since entering current state
+        self.curr_trigger = self._get_trigger()
+        self.curr_timer = None
+        self.curr_transitions_DS = None
+
+        trajectory = [x.copy()]
+        gamma_history = []  # TODO sort this out for the segmented case
+
+        for _ in range(self.max_iter):
+            if np.linalg.norm(x - self.attractor) < self.tol:
+                break
+
+            x = self.step_once(x, dt=dt)
+            trajectory.append(x.copy())
+
+        return np.vstack(trajectory), np.array(gamma_history)
+
+    def predict_velocities(self, x_positions: np.ndarray) -> np.ndarray:
+        """Stateless proxy for metrics/visualization."""
+        x_positions = np.atleast_2d(x_positions)
+        velocities = []
+        for x in x_positions:
+            idx = int(np.argmin(np.linalg.norm(self.node_sources - x.reshape(1, -1), axis=1)))
+            if idx < self.n_systems - 1 and self.trigger_state(idx, x):
+                v = 0.5 * self._velocity_for_index(x, idx) + 0.5 * self._velocity_for_index(x, idx + 1)
+            else:
+                v = self._velocity_for_index(x, idx)
+            velocities.append(v)
+        return np.vstack(velocities)
+
+    def vector_field(self, x_positions: np.ndarray) -> np.ndarray:
+        return self.predict_velocities(x_positions)
+
 
 def _get_source_data_for_node(ds_set, gg, node_id):
     ds_idx = node_id[0]
@@ -540,17 +815,75 @@ def prepare_chaining_edge_lookup(ds_set, gg):
     }
     return triplet_lookup
 
+def _compute_segment_DS(ds_set, gg, segment_nodes, config):
 
-def build_chained_ds(
-    ds_set,
-    gg,
-    initial,
-    attractor,
-    config: StitchConfig,
-    shortest_path_nodes,
-    precomputed_edge_lookup: Optional[dict] = None,
+    # Collect the gaussians and normalize priors
+    gaussians = []
+    for i, node_id in enumerate(segment_nodes):
+        mu, sigma, direction, prior = gg.get_gaussian(node_id)
+        gaussians.append({
+            'prior': prior,  # use normalized prior
+            'mu': mu,
+            'sigma': sigma,
+            'rv': multivariate_normal(mu, sigma, allow_singular=True)
+        })
+    sum_priors = sum(g['prior'] for g in gaussians)
+    for g in gaussians:
+        g['prior'] /= sum_priors
+
+    # collect the trajectory points that are assigned to the gaussians along the shortest path
+    filtered_x = []
+    filtered_x_dot = []
+    for node_id in segment_nodes:
+        ds_idx = node_id[0]
+        gaussian_idx = node_id[1]
+
+        assigned_x = ds_set[ds_idx].x[ds_set[ds_idx].assignment_arr == gaussian_idx]
+        assigned_x_dot = ds_set[ds_idx].x_dot[ds_set[ds_idx].assignment_arr == gaussian_idx]
+
+        # reverse velocity if gaussian is reversed
+        assigned_x_dot = -assigned_x_dot if node_id in gg.gaussian_reversal_map else assigned_x_dot
+
+        filtered_x.append(assigned_x)
+        filtered_x_dot.append(assigned_x_dot)
+
+    filtered_x = np.vstack(filtered_x)
+    filtered_x_dot = np.vstack(filtered_x_dot)
+
+    # compute DS
+    x_att = np.asarray(gg.graph.nodes[segment_nodes[-1]]["mean"], dtype=float)
+    try:
+        stitched_ds = lpvds_class(filtered_x, filtered_x_dot, x_att,
+                                  rel_scale=getattr(config, 'rel_scale', 0.7),
+                                  total_scale=getattr(config, 'total_scale', 1.5),
+                                  nu_0=getattr(config, 'nu_0', 5),
+                                  kappa_0=getattr(config, 'kappa_0', 1),
+                                  psi_dir_0=getattr(config, 'psi_dir_0', 1))
+        if config.chain.recompute_gaussians:  # compute new gaussians and linear systems (As)
+            result = stitched_ds.begin()
+            if not result:
+                print('Chaining: Failed to construct Stitched DS: DAMM clustering failed')
+                stitched_ds = None
+        else:  # compute only linear systems (As)
+            stitched_ds.init_cluster(gaussians)
+            stitched_ds._optimize()
+
+        return stitched_ds
+
+    except Exception as e:
+        print(f'Chaining: Failed to construct Stitched DS for a segment: {e}')
+        return None
+
+
+def build_chained_linear_ds(
+        ds_set,
+        gg,
+        initial,
+        attractor,
+        config: StitchConfig,
+        shortest_path_nodes,
+        precomputed_edge_lookup: Optional[dict] = None,
 ) -> Optional[ChainedLinearDS]:
-
     if initial is None or attractor is None or config is None:
         raise TypeError("build_chained_ds requires initial, attractor, and config.")
 
@@ -599,7 +932,7 @@ def build_chained_ds(
     # actual requested attractor. Only the final runtime target is replaced.
     node_targets = fit_node_targets.copy()
     node_targets[-1] = attractor
-    window_nodes_seq = [tuple(path_nodes[i : i + window_size]) for i in range(n_systems)]
+    window_nodes_seq = [tuple(path_nodes[i: i + window_size]) for i in range(n_systems)]
     if len(window_nodes_seq) != n_systems:
         return None
 
@@ -628,7 +961,7 @@ def build_chained_ds(
                 [source_cache[node][0] for node in window_nodes],
                 [source_cache[node][1] for node in window_nodes],
             )
-            
+
             assert not window_x.shape[0] == 0
 
             A_i, fit_x, fit_x_dot = _fit_window_matrix(
@@ -684,7 +1017,8 @@ def build_chained_ds(
             "prior": 1.0,
             "mu": np.asarray(initial, dtype=float),
             "sigma": np.eye(len(initial)) * 0.01,
-            "rv": multivariate_normal(np.asarray(initial, dtype=float), np.eye(len(initial)) * 0.01, allow_singular=True),
+            "rv": multivariate_normal(np.asarray(initial, dtype=float), np.eye(len(initial)) * 0.01,
+                                      allow_singular=True),
         }]
         filtered_x = np.asarray(initial, dtype=float).reshape(1, -1)
         filtered_x_dot = np.zeros_like(filtered_x)
@@ -772,4 +1106,95 @@ def build_chained_ds(
     )
     chained_ds.transition_ratio_nodes = transition_ratio_nodes
     chained_ds.transition_edge_ratios = transition_edge_ratios
+    return chained_ds
+
+def build_chained_segmented_ds(
+    ds_set,
+    gg,
+    initial,
+    attractor,
+    config: StitchConfig,
+    shortest_path_nodes,
+    precomputed_edge_lookup: Optional[dict] = None,
+) -> Optional[ChainedSegmentedDS]:
+
+    if initial is None or attractor is None or config is None:
+        raise TypeError("build_chained_ds requires initial, attractor, and config.")
+
+    initial = np.asarray(initial, dtype=float)
+    attractor = np.asarray(attractor, dtype=float)
+    path_nodes = list(shortest_path_nodes)
+
+    # Split path into intermediate segments (e.g. 2 edges: (n1->n2->n3), (n2->n3->n4), etc.)
+    segment_size = config.chain.subsystem_edges
+    if len(path_nodes)-1 < segment_size:
+        intermediate_segments = [tuple(path_nodes)]
+    else:
+        intermediate_segments = []
+        for i in range(0, len(path_nodes) - segment_size):
+            intermediate_segments.append(tuple(path_nodes[i : i + segment_size + 1]))
+
+    # Fetch precomputed segment DSs for intermediate segments if available.
+    intermediate_DSs = [None for _ in range(len(intermediate_segments))]
+    if precomputed_edge_lookup is not None:
+        for i, segment in enumerate(intermediate_segments):
+            if segment in precomputed_edge_lookup:
+                intermediate_DSs[i] = precomputed_edge_lookup[segment]
+
+    # ---- Compute DSs for each segment (init to first node, intermediate segments, last node to attractor) ----
+    # Gives:
+    #     1. A_init: and LTI A-matrix that is GAS to the first node
+    #     2. A_attractor: an LTI A-matrix that is GAS to the attractor
+    #     3. intermediate_DSs: a list of multi-node-fitted DS objects for each intermediate segment
+    # 1. Init to first node is a single-segment DS fit. Use gaussian from the first node as the target.
+    assigned_x, assigned_x_dot, _, _ = _get_source_data_for_node(ds_set, gg, path_nodes[0])
+    A_init = _fit_linear_system(x=assigned_x,
+                                x_dot=assigned_x_dot,
+                                target=np.asarray(gg.graph.nodes[path_nodes[0]]["mean"], dtype=float),
+                                stabilization_margin=config.chain.stabilization_margin,
+                                lmi_tolerance=config.chain.lmi_tolerance)
+    if A_init is None:
+        raise RuntimeError("Chaining: Failed to fit DS for initial -> first node.")
+
+    # 2. Last node to attractor is a single-segment DS fit. Use attractor as the target.
+    assigned_x, assigned_x_dot, _, _ = _get_source_data_for_node(ds_set, gg, path_nodes[-1])
+    A_attractor = _fit_linear_system(x=assigned_x,
+                                     x_dot=assigned_x_dot,
+                                     target=attractor,
+                                     stabilization_margin=config.chain.stabilization_margin,
+                                     lmi_tolerance=config.chain.lmi_tolerance)
+    if A_attractor is None:
+        raise RuntimeError("Chaining: Failed to fit DS for last node -> attractor.")
+
+    # 3. Intermediate segments are multi-node DS fits. Use the last node in each segment as the target.
+    for i, segment_DS in enumerate(intermediate_DSs):
+        if segment_DS is not None:
+            continue
+        intermediate_DSs[i] = _compute_segment_DS(ds_set, gg, intermediate_segments[i], config)
+
+    # Collect all x_ref and x_dot_ref along the path
+    x_list = []
+    x_dot_list = []
+    for node_id in shortest_path_nodes:
+        assigned_x, assigned_x_dot, _, _ = _get_source_data_for_node(ds_set, gg, node_id)
+        x_list.append(assigned_x)
+        x_dot_list.append(assigned_x_dot)
+    x_ref = np.vstack(x_list)
+    x_dot_ref = np.vstack(x_dot_list)
+
+    # Build and return segmented DS-chain
+    chained_ds = ChainedSegmentedDS(
+        x=x_ref,
+        x_dot=x_dot_ref,
+        ds_set=ds_set,
+        gg=gg,
+        path_nodes=path_nodes,
+        initial=initial,
+        attractor=attractor,
+        intermediate_segments=intermediate_segments,
+        intermediate_DSs=intermediate_DSs,
+        A_init=A_init,
+        A_attractor=A_attractor,
+        blend_length_ratio=config.chain.blend_length_ratio,
+    )
     return chained_ds

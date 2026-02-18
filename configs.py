@@ -15,6 +15,8 @@ class DammConfig:
 class ChainConfig:
     subsystem_edges: int = 2
     blend_length_ratio: float = 0.1
+    recompute_gaussians: bool = False
+    ds_method: str = "segmented" # "segmented" or "linear"
     # Supported values:
     # - "mean_normals": transition when crossing the mean-normal plane at n1.
     # - "distance_ratio": transition when d(x,n1)/d(x,n2) >= |e1|/|e2|.
@@ -36,13 +38,13 @@ class ChainConfig:
 
 @dataclass
 class StitchConfig:
-    dataset_path: str = "./dataset/stitching/presentation2"
+    dataset_path: str = "./dataset/stitching/X"
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None
     attractor: Optional[np.ndarray] = None
     ds_method: str = "chain"
     reverse_gaussians: bool = True
-    param_dist: int = 1
+    param_dist: int = 2
     param_cos: int = 1
     bhattacharyya_threshold: float = 0.05
     # n_demos: int = 5 # number of demonstrations to generate
