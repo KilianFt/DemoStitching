@@ -5,6 +5,63 @@ from src.util.ds_tools import Demonstration, Trajectory
 from src.util.generate_data import generate_data
 
 
+def infer_state_dim_from_demo_set(demo_set):
+    for demo in demo_set:
+        for traj in demo.trajectories:
+            x = np.asarray(traj.x, dtype=float)
+            if x.ndim == 2 and x.shape[0] > 0 and x.shape[1] > 0:
+                return int(x.shape[1])
+    return 2
+
+
+def compute_plot_extent_from_demo_set(
+    demo_set,
+    state_dim: int,
+    padding_ratio: float = 0.08,
+    padding_abs: float = 0.5,
+):
+    dim = 3 if int(state_dim) >= 3 else 2
+    points = []
+    for demo in demo_set:
+        for traj in demo.trajectories:
+            x = np.asarray(traj.x, dtype=float)
+            if x.ndim == 2 and x.shape[0] > 0 and x.shape[1] >= dim:
+                points.append(x[:, :dim])
+
+    if len(points) == 0:
+        if dim == 3:
+            return (-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
+        return (-1.0, 1.0, -1.0, 1.0)
+
+    pts = np.vstack(points)
+    finite_mask = np.all(np.isfinite(pts), axis=1)
+    pts = pts[finite_mask]
+    if pts.shape[0] == 0:
+        if dim == 3:
+            return (-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
+        return (-1.0, 1.0, -1.0, 1.0)
+
+    mins = np.min(pts, axis=0)
+    maxs = np.max(pts, axis=0)
+    spans = np.maximum(maxs - mins, 1e-6)
+    max_span = float(np.max(spans))
+    margin = max(float(padding_abs), float(padding_ratio) * max_span)
+    half_extent = 0.5 * max_span + margin
+    center = 0.5 * (mins + maxs)
+    lows = center - half_extent
+    highs = center + half_extent
+
+    if dim == 3:
+        return (
+            float(lows[0]), float(highs[0]),
+            float(lows[1]), float(highs[1]),
+            float(lows[2]), float(highs[2]),
+        )
+    return (
+        float(lows[0]), float(highs[0]),
+        float(lows[1]), float(highs[1]),
+    )
+
 def _numeric_suffix_sort_key(name):
     stem = os.path.splitext(name)[0]
     suffix = stem.split('_')[-1]

@@ -2,7 +2,7 @@ import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 import numpy as np
 
@@ -39,6 +39,22 @@ DEFAULT_TASK_PLAN = (
         start_anchor=np.array([-0.175, 0.035, 0.24]),
         end_anchor=np.array([0.18, -0.24, 0.30]),
         role="side branch off obstacle midpoint",
+    ),
+)
+
+
+OBSTACLE_TO_BOTTLE2SHELF_SIDE_PLAN = (
+    TaskSpec(
+        task_name="obstaclerotate",
+        start_anchor=np.array([24.25, -66.70, 11.70]),
+        end_anchor=np.array([37.00, -25.00, 26.00]),
+        role="primary segment ending at side connection",
+    ),
+    TaskSpec(
+        task_name="bottle2shelf",
+        start_anchor=np.array([37.00, -25.00, 26.00]),
+        end_anchor=np.array([52.00, -33.00, 28.00]),
+        role="connected branch from obstacle side to opposite-side shelf region",
     ),
 )
 
@@ -96,6 +112,7 @@ def build_workspace_composite_dataset(
     n_trajectories_per_task: int = 6,
     n_points: int = 180,
     include_openbox: bool = True,
+    task_plan: Optional[Iterable[TaskSpec]] = None,
     seed: int = 7,
     overwrite: bool = True,
 ) -> dict:
@@ -121,16 +138,23 @@ def build_workspace_composite_dataset(
             if file_path.exists():
                 file_path.unlink()
 
-    task_plan = tuple(_iter_active_task_plan(include_openbox=include_openbox))
+    if task_plan is None:
+        selected_plan = tuple(_iter_active_task_plan(include_openbox=include_openbox))
+    else:
+        selected_plan = tuple(task_plan)
+    if len(selected_plan) == 0:
+        raise ValueError("task_plan must contain at least one task specification")
+
     metadata = {
         "task_data_dir": str(task_data_dir),
         "n_trajectories_per_task": int(n_trajectories_per_task),
         "n_points": int(n_points),
         "seed": int(seed),
+        "task_plan_name": "custom" if task_plan is not None else "default_workspace",
         "demonstrations": [],
     }
 
-    for demo_idx, task_spec in enumerate(task_plan):
+    for demo_idx, task_spec in enumerate(selected_plan):
         task_file = Path(task_data_dir) / f"{task_spec.task_name}.npy"
         if not task_file.exists():
             raise FileNotFoundError(f"Missing robot-task file: {task_file}")
@@ -185,6 +209,38 @@ def build_default_workspace_dataset(overwrite: bool = True) -> dict:
     output_dir = repo_root / "dataset" / "stitching" / "robottasks_workspace_chain"
     task_data_dir = repo_root / "dataset" / "robottasks" / "pos_ori"
     return build_workspace_composite_dataset(
+        output_dir=str(output_dir),
+        task_data_dir=str(task_data_dir),
+        overwrite=overwrite,
+    )
+
+
+def build_obstacle_to_bottle2shelf_side_dataset(
+    output_dir: str,
+    task_data_dir: str = "dataset/robottasks/pos_ori",
+    n_trajectories_per_task: int = 6,
+    n_points: int = 180,
+    seed: int = 11,
+    overwrite: bool = True,
+) -> dict:
+    """Build a two-segment dataset: obstaclerotate -> bottle2shelf via side anchor."""
+    return build_workspace_composite_dataset(
+        output_dir=output_dir,
+        task_data_dir=task_data_dir,
+        n_trajectories_per_task=n_trajectories_per_task,
+        n_points=n_points,
+        include_openbox=False,
+        task_plan=OBSTACLE_TO_BOTTLE2SHELF_SIDE_PLAN,
+        seed=seed,
+        overwrite=overwrite,
+    )
+
+
+def build_default_obstacle_to_bottle2shelf_side_dataset(overwrite: bool = True) -> dict:
+    repo_root = Path(__file__).resolve().parents[2]
+    output_dir = repo_root / "dataset" / "stitching" / "robottasks_obstacle_bottle2shelf_side"
+    task_data_dir = repo_root / "dataset" / "robottasks" / "pos_ori"
+    return build_obstacle_to_bottle2shelf_side_dataset(
         output_dir=str(output_dir),
         task_data_dir=str(task_data_dir),
         overwrite=overwrite,

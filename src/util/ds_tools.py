@@ -122,7 +122,7 @@ def normalize_demo_set(demo_set):
 
     return normalized_demonstrations, attractors, initial_points
 
-def get_gaussian_directions(lpvds):
+def get_gaussian_directions(lpvds, method: str = "mean_velocity"):
     """Computes normalized direction vectors for each Gaussian in an LPV-DS.
 
     Args:
@@ -131,14 +131,47 @@ def get_gaussian_directions(lpvds):
     Returns:
         np.ndarray: Array of normalized direction vectors for all Gaussians.
     """
+    def _normalize_or_none(v):
+        v = np.asarray(v, dtype=float).reshape(-1)
+        n = np.linalg.norm(v)
+        if not np.isfinite(n) or n <= 1e-12:
+            return None
+        return v / n
+
+    method = str(method).strip().lower()
+    if method not in {"mean_velocity", "a_mu"}:
+        raise ValueError(f"Unknown gaussian direction method: {method}")
+
+    x = np.asarray(lpvds.x, dtype=float)
+    x_dot = np.asarray(lpvds.x_dot, dtype=float)
+    x_att = np.asarray(lpvds.x_att, dtype=float).reshape(-1)
+    assignment_arr = None
+    if method == "mean_velocity":
+        gamma = np.asarray(lpvds.damm.compute_gamma(x), dtype=float)
+        assignment_arr = np.argmax(gamma, axis=0)
+
     directions = []
     for i, gaussian in enumerate(lpvds.damm.gaussian_lists):
-        try:
-            d = lpvds.A[i] @ (gaussian['mu'] - lpvds.x_att)
-        except:
-            print('Hummm..')
-        d = d / np.linalg.norm(d)
+        d = None
+
+        if method == "mean_velocity":
+            # Primary definition: mean velocity from points assigned by highest posterior.
+            mask = assignment_arr == i
+            if np.any(mask):
+                d = _normalize_or_none(np.mean(x_dot[mask], axis=0))
+
+        # Fallback for empty/degenerate mean velocity or legacy mode.
+        if d is None:
+            try:
+                d = _normalize_or_none(lpvds.A[i] @ (np.asarray(gaussian["mu"], dtype=float) - x_att))
+            except Exception:
+                d = None
+
+        if d is None:
+            d = np.zeros(x.shape[1], dtype=float)
+            d[0] = 1.0
         directions.append(d)
-    directions = np.array(directions)
+
+    directions = np.asarray(directions, dtype=float)
 
     return directions

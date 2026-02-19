@@ -22,7 +22,6 @@ class GaussianGraph:
 
         self.graph = nx.DiGraph()
         self.gaussian_reversal_map = dict()  # keys = reversed node ids, values = original node ids
-        self.gaussian_ids = list(self.graph.nodes.keys())
 
     def __str__(self):
         return f'GaussianGraph with {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges.'
@@ -207,7 +206,7 @@ class GaussianGraph:
 
             edge_weight = self.compute_edge_weight(initial_state, self.graph.nodes[node]['direction'], self.graph.nodes[node]['mean'])
             gaussian_eval = multivariate_normal.pdf(initial_state, mean=self.graph.nodes[node]['mean'], cov=self.graph.nodes[node]['covariance'])
-            edge_weight = edge_weight / gaussian_eval if edge_weight is not None else None
+            edge_weight = edge_weight / max(gaussian_eval, 1e-6) if edge_weight is not None else None
 
             if edge_weight is not None:
                 self.graph.add_edge(INIT, node, weight=edge_weight)
@@ -221,7 +220,7 @@ class GaussianGraph:
 
             edge_weight = self.compute_edge_weight(self.graph.nodes[node]['mean'], self.graph.nodes[node]['direction'], target_state)
             gaussian_eval = multivariate_normal.pdf(target_state, mean=self.graph.nodes[node]['mean'], cov=self.graph.nodes[node]['covariance'])
-            edge_weight = edge_weight / gaussian_eval if edge_weight is not None else None
+            edge_weight = edge_weight / max(gaussian_eval, 1e-6) if edge_weight is not None else None
 
             if edge_weight is not None:
                 self.graph.add_edge(node, TARGET, weight=edge_weight)
@@ -388,3 +387,29 @@ class GaussianGraph:
         ax.scatter(pos_np[:, 0], pos_np[:, 1], c=node_color, s=node_size)
 
         return ax
+
+    def get_all_simple_paths(self, nr_edges):
+        """Returns a list of all simple paths in the graph with a specified number of edges."""
+
+        def get_simple_paths(curr_edges):
+
+            # recursion termination
+            if len(curr_edges) == nr_edges:
+                return {curr_edges}
+
+            out_edges = [e for e in self.graph.out_edges(curr_edges[-1][1]) if e not in curr_edges]
+            new_paths = set()
+            for e in out_edges:
+                new_paths.update(
+                    get_simple_paths(curr_edges + (e,))
+                )
+
+            return new_paths
+
+        paths = set()
+        for start_edge in self.graph.edges:
+            paths.update(
+                get_simple_paths((start_edge,))
+            )
+
+        return paths

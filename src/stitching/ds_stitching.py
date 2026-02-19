@@ -6,12 +6,12 @@ from src.lpvds_class import lpvds_class
 from src.dsopt.dsopt_class import dsopt_class
 from src.util.benchmarking_tools import is_negative_definite
 from src.stitching.optimization import compute_valid_A, find_lyapunov_function
-from src.stitching.chaining import build_chained_ds
+from src.stitching.chaining import build_chained_linear_ds, build_chained_segmented_ds
 from src.util.ds_tools import get_gaussian_directions
 import src.graph_utils as gu
 
 
-def construct_stitched_ds(config, norm_demo_set, ds_set, reversed_ds_set, initial, attractor):
+def construct_stitched_ds(config, gg, norm_demo_set, ds_set, reversed_ds_set, initial, attractor):
     """Constructs a stitched dynamical system based on configuration method.
 
     Args:
@@ -28,62 +28,69 @@ def construct_stitched_ds(config, norm_demo_set, ds_set, reversed_ds_set, initia
         NotImplementedError: For unsupported or invalid ds_method values.
     """
     if config.ds_method == 'sp_recompute_all':
-        return recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=True)
+        return recompute_ds(ds_set, gg, initial, attractor, config, recompute_gaussians=True)
     elif config.ds_method == 'sp_recompute_ds':
-        return recompute_ds(ds_set, initial, attractor, config, recompute_gaussians=False)
+        return recompute_ds(ds_set, gg, initial, attractor, config, recompute_gaussians=False)
     elif config.ds_method == 'sp_recompute_invalid_As':
-        return reuse_ds(ds_set, reversed_ds_set, initial, attractor, config)
+        return reuse_ds(ds_set, gg, reversed_ds_set, initial, attractor, config)
     elif config.ds_method == 'sp_recompute_P':
-        return reuse_A(ds_set, initial, attractor, config)
+        return reuse_A(ds_set, gg, initial, attractor, config)
     elif config.ds_method == 'spt_recompute_all':
-        return all_paths(ds_set, attractor, config, recompute_gaussians=True)
+        return all_paths(ds_set, gg, attractor, config, recompute_gaussians=True)
     elif config.ds_method == 'spt_recompute_ds':
-        return all_paths(ds_set, attractor, config, recompute_gaussians=False)
+        return all_paths(ds_set, gg, attractor, config, recompute_gaussians=False)
     elif config.ds_method == 'spt_recompute_invalid_As':
-        return all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config)
+        return all_paths_reuse(ds_set, gg, reversed_ds_set, initial, attractor, config)
     elif config.ds_method == 'chain':
-        return chain_ds(ds_set, initial, attractor, config)
+        return chain_ds(ds_set, gg, initial, attractor, config)
     else:
         raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
 
-def chain_ds(ds_set, initial, attractor, config):
+def chain_ds(ds_set, gg, initial, attractor, config):
     """Builds a chained DS that tracks a shortest Gaussian-graph path by switching targets."""
     stats = dict()
 
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
-    gaussians = {
-        (i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
-        for i, ds in enumerate(ds_set)
-        for j, (mu, sigma, direction, prior) in enumerate(
-            zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior)
-        )
-    }
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
-    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path(initial, attractor)
-    stats['gg compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
+
+    # ############ Precompute ########
+    #TODO accept precomputation dictionary
 
     # ############## DS ##############
     t_ds = time.time()
     try:
-        stitched_ds = build_chained_ds(
-            ds_set,
-            gg,
-            initial=initial,
-            attractor=attractor,
-            config=config,
-            shortest_path_nodes=gg_solution_nodes,
-        )
+        if config.chain.ds_method == 'segmented':
+            stitched_ds = build_chained_segmented_ds(
+                ds_set,
+                gg,
+                initial=initial,
+                attractor=attractor,
+                config=config,
+                shortest_path_nodes=gg_solution_nodes,
+            )
+        elif config.chain.ds_method == 'linear':
+            stitched_ds = build_chained_linear_ds(
+                ds_set,
+                gg,
+                initial=initial,
+                attractor=attractor,
+                config=config,
+                shortest_path_nodes=gg_solution_nodes,
+            )
+        else:
+            raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
+
     except Exception as e:
         print(f'Failed to construct Chained DS: {e}')
         stitched_ds = None
 
-    stats['ds compute time'] = time.time() - t_ds
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t_ds
+    stats['total_compute_time'] = time.time() - t0
     return stitched_ds, gg, gg_solution_nodes, stats
 
-def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
+def recompute_ds(ds_set, gg, initial, attractor, config, recompute_gaussians):
     """Builds a stitched dynamical system by following the shortest path through a Gaussian graph.
 
     Args:
@@ -104,13 +111,8 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
 
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
-    gaussians = {(i,j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
-                 for i, ds in enumerate(ds_set)
-                 for j, (mu, sigma, direction, prior) in enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
-    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path(initial, attractor)
-    stats['gg compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t_ds = time.time()
@@ -152,11 +154,11 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
     x_att = attractor
     try:
         stitched_ds = lpvds_class(filtered_x, filtered_x_dot, x_att,
-                                  rel_scale=getattr(config, 'rel_scale', 0.7),
-                                  total_scale=getattr(config, 'total_scale', 1.5),
-                                  nu_0=getattr(config, 'nu_0', 5),
-                                  kappa_0=getattr(config, 'kappa_0', 1),
-                                  psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                                  rel_scale=config.damm.rel_scale,
+                                  total_scale=config.damm.total_scale,
+                                  nu_0=config.damm.nu_0,
+                                  kappa_0=config.damm.kappa_0,
+                                  psi_dir_0=config.damm.psi_dir_0)
         if recompute_gaussians:     # compute new gaussians and linear systems (As)
             result = stitched_ds.begin()
             if not result:
@@ -170,10 +172,10 @@ def recompute_ds(ds_set, initial, attractor, config, recompute_gaussians):
         print(f'Failed to construct Stitched DS: {e}')
         stitched_ds = None
 
-    stats['ds compute time'] = time.time() - t_ds
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t_ds
+    stats['total_compute_time'] = time.time() - t0
 
-    return stitched_ds, gg, gg_solution_nodes, stats
+    return stitched_ds, gg_solution_nodes, stats
 
 def _process_node(args):
     """Helper function to process a single node in parallel.
@@ -209,25 +211,19 @@ def _process_node(args):
 
     return node_A, assigned_x, assigned_x_dot
 
-def reuse_ds(ds_set, reversed_ds_set, initial, attractor, config):
+def reuse_ds(ds_set, gg, reversed_ds_set, initial, attractor, config):
     # Initialize stats dictionary
     stats = dict()
 
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
-    gaussians = {(i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
-                 for i, ds in enumerate(ds_set)
-                 for j, (mu, sigma, direction, prior) in
-                 enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
-    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path(initial, attractor)
-    stats['gg compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t_ds = time.time()
 
-    # Select P from demo with closest attractor to current attractor
+    # Select P from demo with the closest attractor to current attractor
     P = None
     min_dist = np.inf
     for i, ds_class in enumerate(ds_set + reversed_ds_set):
@@ -283,22 +279,22 @@ def reuse_ds(ds_set, reversed_ds_set, initial, attractor, config):
     As = np.array(As)
 
     lpvds = lpvds_class(filtered_x, filtered_x_dot, attractor,
-                        rel_scale=getattr(config, 'rel_scale', 0.7),
-                        total_scale=getattr(config, 'total_scale', 1.5),
-                        nu_0=getattr(config, 'nu_0', 5),
-                        kappa_0=getattr(config, 'kappa_0', 1),
-                        psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                        rel_scale=config.damm.rel_scale,
+                        total_scale=config.damm.total_scale,
+                        nu_0=config.damm.nu_0,
+                        kappa_0=config.damm.kappa_0,
+                        psi_dir_0=config.damm.psi_dir_0)
     lpvds.init_cluster(gaussians)
     lpvds.A = np.array(As)
     lpvds.ds_opt = dsopt_class(lpvds.x, lpvds.x_dot, lpvds.x_att, lpvds.gamma, lpvds.assignment_arr)
     lpvds.ds_opt.P = P
 
-    stats['ds compute time'] = time.time() - t_ds
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t_ds
+    stats['total_compute_time'] = time.time() - t0
 
-    return lpvds, gg, gg_solution_nodes, stats
+    return lpvds, gg_solution_nodes, stats
 
-def all_paths(ds_set, attractor, config, recompute_gaussians):
+def all_paths(ds_set, gg, attractor, config, recompute_gaussians):
     """Constructs a stitched dynamical system by aggregating all node-wise shortest paths in a Gaussian graph.
 
     Args:
@@ -319,14 +315,8 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
 
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
-    gaussians = {(i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
-                 for i, ds in enumerate(ds_set)
-                 for j, (mu, sigma, direction, prior) in
-                 enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
-    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
-    stats['gg compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t0 = time.time()
@@ -368,11 +358,11 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
     x_att = attractor
     try:
         stitched_ds = lpvds_class(filtered_x, filtered_x_dot, x_att,
-                                  rel_scale=getattr(config, 'rel_scale', 0.7),
-                                  total_scale=getattr(config, 'total_scale', 1.5),
-                                  nu_0=getattr(config, 'nu_0', 5),
-                                  kappa_0=getattr(config, 'kappa_0', 1),
-                                  psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                                  rel_scale=config.damm.rel_scale,
+                                  total_scale=config.damm.total_scale,
+                                  nu_0=config.damm.nu_0,
+                                  kappa_0=config.damm.kappa_0,
+                                  psi_dir_0=config.damm.psi_dir_0)
         if recompute_gaussians:  # compute new gaussians and linear systems (As)
             result = stitched_ds.begin()
             if result is None:
@@ -390,26 +380,19 @@ def all_paths(ds_set, attractor, config, recompute_gaussians):
         print(f'Failed to construct Stitched DS: {e}')
         stitched_ds = None
 
-    stats['ds compute time'] = time.time() - t0
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t0
+    stats['total_compute_time'] = time.time() - t0
 
-    return stitched_ds, gg, gg_solution_nodes, stats
+    return stitched_ds, gg_solution_nodes, stats
 
-
-def all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config):
+def all_paths_reuse(ds_set, gg, reversed_ds_set, initial, attractor, config):
     # Initialize stats dictionary
     stats = dict()
 
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
-    gaussians = {(i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
-                 for i, ds in enumerate(ds_set)
-                 for j, (mu, sigma, direction, prior) in
-                 enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
-    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
-    stats['gg compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t_ds = time.time()
@@ -470,36 +453,30 @@ def all_paths_reuse(ds_set, reversed_ds_set, initial, attractor, config):
     As = np.array(As)
 
     lpvds = lpvds_class(filtered_x, filtered_x_dot, attractor,
-                        rel_scale=getattr(config, 'rel_scale', 0.7),
-                        total_scale=getattr(config, 'total_scale', 1.5),
-                        nu_0=getattr(config, 'nu_0', 5),
-                        kappa_0=getattr(config, 'kappa_0', 1),
-                        psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                        rel_scale=config.damm.rel_scale,
+                        total_scale=config.damm.total_scale,
+                        nu_0=config.damm.nu_0,
+                        kappa_0=config.damm.kappa_0,
+                        psi_dir_0=config.damm.psi_dir_0)
     lpvds.init_cluster(gaussians)
     lpvds.A = np.array(As)
     lpvds.ds_opt = dsopt_class(lpvds.x, lpvds.x_dot, lpvds.x_att, lpvds.gamma, lpvds.assignment_arr)
     lpvds.ds_opt.P = P
 
-    stats['ds compute time'] = time.time() - t_ds
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t_ds
+    stats['total_compute_time'] = time.time() - t0
 
-    return lpvds, gg, gg_solution_nodes, stats
+    return lpvds, gg_solution_nodes, stats
 
-def reuse_A(ds_set, initial, attractor, config):
+def reuse_A(ds_set, gg, initial, attractor, config):
 
     # Initialize stats dictionary
     stats = dict()
 
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
-    gaussians = {(i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
-                 for i, ds in enumerate(ds_set)
-                 for j, (mu, sigma, direction, prior) in
-                 enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist, param_cos=config.param_cos, bhattacharyya_threshold=config.bhattacharyya_threshold)
-    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     gg_solution_nodes = gg.shortest_path_tree(target_state=attractor)
-    stats['gg compute time'] = time.time() - t0
+    stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############
     t0 = time.time()
@@ -566,17 +543,17 @@ def reuse_A(ds_set, initial, attractor, config):
         print(f"Successfully found Lyapunov function P for all {len(As)} A matrices")
 
     lpvds = lpvds_class(filtered_x, filtered_x_dot, attractor,
-                        rel_scale=getattr(config, 'rel_scale', 0.7),
-                        total_scale=getattr(config, 'total_scale', 1.5),
-                        nu_0=getattr(config, 'nu_0', 5),
-                        kappa_0=getattr(config, 'kappa_0', 1),
-                        psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                        rel_scale=config.damm.rel_scale,
+                        total_scale=config.damm.total_scale,
+                        nu_0=config.damm.nu_0,
+                        kappa_0=config.damm.kappa_0,
+                        psi_dir_0=config.damm.psi_dir_0)
     lpvds.init_cluster(gaussians)
     lpvds.A = np.array(As)
     lpvds.ds_opt = dsopt_class(lpvds.x, lpvds.x_dot, lpvds.x_att, lpvds.gamma, lpvds.assignment_arr)
     lpvds.ds_opt.P = P
 
-    stats['ds compute time'] = time.time() - t0
-    stats['total compute time'] = time.time() - t0
+    stats['ds_compute_time'] = time.time() - t0
+    stats['total_compute_time'] = time.time() - t0
 
-    return lpvds, gg, gg_solution_nodes, stats
+    return lpvds, gg_solution_nodes, stats
