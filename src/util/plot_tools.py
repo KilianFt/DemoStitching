@@ -346,6 +346,7 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
     if dim >= 3:
         ax = plot_ds_3d(lpvds.x, x_test_list, ax=ax, att=attractor)
     else:
+        chain_cfg = getattr(config, "chain", None)
         plot_ds_2d(
             lpvds.x,
             x_test_list,
@@ -362,6 +363,10 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
             stream_density=1,
             stream_color='black',
             stream_width=0.5
+            chain_plot_mode=getattr(chain_cfg, "plot_mode", "line_regions"),
+            chain_plot_resolution=int(max(8, getattr(chain_cfg, "plot_grid_resolution", 60))),
+            show_chain_transition_lines=bool(getattr(chain_cfg, "plot_show_transition_lines", True)),
+            chain_region_alpha=float(getattr(chain_cfg, "plot_region_alpha", 0.26)),
         )
 
     # plot solution gaussians
@@ -386,9 +391,43 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + save_as + '.pdf')
+        ax.figure.savefig(save_folder + save_as + '.pdf')
+        if not external_ax:
+            plt.close(ax.figure)
 
     return ax
+
+def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
+    """Plots a GaussianGraph.
+
+    Args:
+        gg: a GaussianGraph
+    """
+    dim = _infer_graph_dim(gg)
+    external_ax = ax is not None
+    ax = _create_axis(dim, ax=ax, figsize=(8, 8))
+    if dim >= 3:
+        ax = _plot_graph_3d(ax, gg)
+    else:
+        ax = gg.plot(ax=ax)
+
+    # Apply config settings if provided
+    _apply_plot_extent(ax, config, dim)
+    if hide_axis:
+        ax.axis('off')
+    if dim < 3:
+        ax.set_aspect('equal')
+    plt.tight_layout()
+
+    if save_as is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        ax.figure.savefig(save_folder + save_as + '.pdf')
+        if not external_ax:
+            plt.close(ax.figure)
+
+    return ax
+
 
 
 # These will possibly be removed at a later stage (avoid using if an alternative above is available)
@@ -642,7 +681,274 @@ def primitive_plot_point(ax, point, color='red', marker='o', size=100, label=Non
         ax.scatter(point[0], point[1], color=color, marker=marker, s=size, label=label)
     return ax
 
-def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
+def resolve_chain_plot_mode(mode: str) -> str:
+    mode = str(mode).strip().lower()
+    aliases = {
+        "line_regions": "line_regions",
+        "hard_lines": "line_regions",
+        "hard": "line_regions",
+        "time_blend": "time_blend",
+        "blend": "time_blend",
+        "blended": "time_blend",
+    }
+    if mode not in aliases:
+        return "line_regions"
+    return aliases[mode]
+
+
+def _is_chain_ds_for_region_plot(ds) -> bool:
+    return (
+        hasattr(ds, "n_systems")
+        and hasattr(ds, "transition_centers")
+        and hasattr(ds, "transition_normals")
+        and hasattr(ds, "_velocity_for_index")
+    )
+
+
+def _chain_nominal_index_from_lines(ds, x: np.ndarray) -> int:
+    x = np.asarray(x, dtype=float).reshape(-1)
+    n_systems = int(max(1, getattr(ds, "n_systems", 1)))
+    n_trans = min(
+        n_systems - 1,
+        len(np.asarray(getattr(ds, "transition_centers", []))),
+        len(np.asarray(getattr(ds, "transition_normals", []))),
+    )
+    idx = 0
+    for k in range(n_trans):
+        center = np.asarray(ds.transition_centers[k], dtype=float).reshape(-1)
+        normal = np.asarray(ds.transition_normals[k], dtype=float).reshape(-1)
+        dim = min(center.shape[0], normal.shape[0], x.shape[0])
+        if dim <= 0:
+            break
+        signed = float(np.dot(x[:dim] - center[:dim], normal[:dim]))
+        if signed >= 0.0:
+            idx += 1
+        else:
+            break
+    return int(np.clip(idx, 0, n_systems - 1))
+
+
+def _chain_transition_progress(ds, boundary_idx: int, x: np.ndarray) -> float:
+    centers = np.asarray(ds.transition_centers, dtype=float)
+    normals = np.asarray(ds.transition_normals, dtype=float)
+    if boundary_idx < 0 or boundary_idx >= len(centers) or boundary_idx >= len(normals):
+        return 1.0
+
+    center = np.asarray(centers[boundary_idx], dtype=float).reshape(-1)
+    normal = np.asarray(normals[boundary_idx], dtype=float).reshape(-1)
+    x = np.asarray(x, dtype=float).reshape(-1)
+    dim = min(center.shape[0], normal.shape[0], x.shape[0])
+    if dim <= 0:
+        return 1.0
+
+    signed = float(np.dot(x[:dim] - center[:dim], normal[:dim]))
+    if signed <= 0.0:
+        return 0.0
+
+    distances = np.asarray(getattr(ds, "transition_distances", []), dtype=float).reshape(-1)
+    if boundary_idx < len(distances) and np.isfinite(distances[boundary_idx]):
+        length = float(max(distances[boundary_idx], 1e-12))
+    else:
+        length = 1.0
+    return float(np.clip(signed / length, 0.0, 1.0))
+
+
+def _chain_velocity_for_idx(ds, x: np.ndarray, idx: int) -> np.ndarray:
+    idx = int(np.clip(idx, 0, int(max(1, ds.n_systems)) - 1))
+    x = np.asarray(x, dtype=float).reshape(-1)
+    velocity = np.asarray(ds._velocity_for_index(x, idx), dtype=float).reshape(-1)
+    if velocity.shape[0] != x.shape[0]:
+        raise ValueError("Chain DS velocity dimension mismatch.")
+    return velocity
+
+
+def evaluate_chain_regions(ds, points: np.ndarray, mode: str = "line_regions", base_colors: np.ndarray = None):
+    """Evaluate chain region ownership and associated field on query points."""
+    if not _is_chain_ds_for_region_plot(ds):
+        raise TypeError("Chain region evaluation requires a chain DS with transition geometry and _velocity_for_index.")
+
+    mode = resolve_chain_plot_mode(mode)
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2 or points.shape[0] == 0:
+        n_systems = int(max(1, getattr(ds, "n_systems", 1)))
+        return (
+            np.zeros_like(points),
+            np.zeros((points.shape[0],), dtype=int),
+            np.zeros((points.shape[0], n_systems), dtype=float),
+            np.zeros((points.shape[0], 4), dtype=float),
+        )
+
+    n_points = int(points.shape[0])
+    n_systems = int(max(1, ds.n_systems))
+    if base_colors is None:
+        base_colors = plt.get_cmap("tab10", n_systems)(np.arange(n_systems))
+    base_colors = np.asarray(base_colors, dtype=float)
+    if base_colors.ndim != 2 or base_colors.shape[0] < n_systems or base_colors.shape[1] < 4:
+        raise ValueError("base_colors must have shape (>=n_systems, >=4).")
+
+    region_idx = np.zeros((n_points,), dtype=int)
+    weights = np.zeros((n_points, n_systems), dtype=float)
+    velocities = np.zeros_like(points)
+
+    for i in range(n_points):
+        x = points[i]
+        idx = _chain_nominal_index_from_lines(ds, x)
+        region_idx[i] = idx
+
+        w = np.zeros((n_systems,), dtype=float)
+        w[idx] = 1.0
+        if mode == "time_blend":
+            prev_idx = idx - 1
+            if prev_idx >= 0:
+                alpha = _chain_transition_progress(ds, prev_idx, x)
+                w[:] = 0.0
+                w[prev_idx] = 1.0 - alpha
+                w[idx] = alpha
+        weights[i] = w
+
+        nonzero_idx = np.flatnonzero(w > 1e-12)
+        for k in nonzero_idx:
+            velocities[i] += w[k] * _chain_velocity_for_idx(ds, x, int(k))
+
+    rgba = weights @ base_colors[:, :4]
+    rgba = np.clip(rgba, 0.0, 1.0)
+    return velocities, region_idx, weights, rgba
+
+
+def _transition_line_endpoints_2d(center: np.ndarray, normal: np.ndarray, x_min: float, x_max: float, y_min: float, y_max: float):
+    center = np.asarray(center, dtype=float).reshape(-1)
+    normal = np.asarray(normal, dtype=float).reshape(-1)
+    if center.shape[0] < 2 or normal.shape[0] < 2:
+        return None
+    n = normal[:2]
+    n_norm = float(np.linalg.norm(n))
+    if n_norm <= 1e-12:
+        return None
+    n = n / n_norm
+    d = np.array([-n[1], n[0]], dtype=float)
+    d_norm = float(np.linalg.norm(d))
+    if d_norm <= 1e-12:
+        return None
+    d = d / d_norm
+
+    L = 2.5 * np.hypot(float(x_max - x_min), float(y_max - y_min))
+    c = center[:2]
+    p0 = c - L * d
+    p1 = c + L * d
+    return p0, p1
+
+
+def draw_chain_partition_field_2d(
+    ax,
+    ds,
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    mode: str = "line_regions",
+    plot_sample: int = 50,
+    anchor_state: np.ndarray = None,
+    region_alpha: float = 0.26,
+    stream_density: float = 2.4,
+    show_transition_lines: bool = True,
+):
+    """Draw chain DS partition background + field streamlines on a 2D axis."""
+    mode = resolve_chain_plot_mode(mode)
+    plot_sample = int(max(8, plot_sample))
+
+    x_mesh, y_mesh = np.meshgrid(
+        np.linspace(float(x_min), float(x_max), plot_sample),
+        np.linspace(float(y_min), float(y_max), plot_sample),
+    )
+    xy = np.column_stack([x_mesh.ravel(), y_mesh.ravel()])
+
+    # Build full-dim query points (freeze dimensions >2 at anchor values).
+    point_dim = max(2, int(np.asarray(ds.node_sources, dtype=float).shape[1]))
+    points = np.zeros((xy.shape[0], point_dim), dtype=float)
+    points[:, :2] = xy
+    if point_dim > 2:
+        if anchor_state is None:
+            anchor_state = np.zeros((point_dim,), dtype=float)
+        anchor_state = np.asarray(anchor_state, dtype=float).reshape(-1)
+        if anchor_state.shape[0] < point_dim:
+            padded = np.zeros((point_dim,), dtype=float)
+            padded[: anchor_state.shape[0]] = anchor_state
+            anchor_state = padded
+        points[:, 2:] = anchor_state[2:point_dim]
+
+    velocities, _, _, rgba = evaluate_chain_regions(ds, points, mode=mode)
+    u = velocities[:, 0].reshape(plot_sample, plot_sample)
+    v = velocities[:, 1].reshape(plot_sample, plot_sample)
+    rgba_img = rgba.reshape(plot_sample, plot_sample, 4)
+    rgba_img[:, :, 3] = float(np.clip(region_alpha, 0.0, 1.0))
+
+    region_image = ax.imshow(
+        rgba_img,
+        origin="lower",
+        extent=[x_min, x_max, y_min, y_max],
+        interpolation="nearest",
+        zorder=0,
+        aspect="auto",
+    )
+    stream = ax.streamplot(
+        x_mesh,
+        y_mesh,
+        u,
+        v,
+        density=float(stream_density),
+        color="black",
+        arrowsize=1.0,
+        arrowstyle="->",
+        zorder=2,
+    )
+
+    transition_lines = []
+    if bool(show_transition_lines):
+        centers = np.asarray(getattr(ds, "transition_centers", []), dtype=float)
+        normals = np.asarray(getattr(ds, "transition_normals", []), dtype=float)
+        n_lines = min(len(centers), len(normals))
+        for i in range(n_lines):
+            endpoints = _transition_line_endpoints_2d(
+                centers[i], normals[i], x_min=float(x_min), x_max=float(x_max), y_min=float(y_min), y_max=float(y_max)
+            )
+            if endpoints is None:
+                continue
+            p0, p1 = endpoints
+            line, = ax.plot(
+                [p0[0], p1[0]],
+                [p0[1], p1[1]],
+                linestyle="--",
+                linewidth=1.1,
+                color="black",
+                alpha=0.75,
+                zorder=3,
+            )
+            transition_lines.append(line)
+
+    return {
+        "region_image": region_image,
+        "stream": stream,
+        "transition_lines": transition_lines,
+        "u": u,
+        "v": v,
+    }
+
+
+def plot_ds_2d(
+    x_train,
+    x_test_list,
+    lpvds,
+    title=None,
+    ax=None,
+    x_min=None,
+    x_max=None,
+    y_min=None,
+    y_max=None,
+    chain_plot_mode: str = "line_regions",
+    chain_plot_resolution: int = 60,
+    show_chain_transition_lines: bool = True,
+    chain_region_alpha: float = 0.26,
+):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
     att = lpvds.x_att
@@ -693,11 +999,10 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
                             A[k] @ (X - att.reshape(1, -1).T))  # gamma[k].reshape(1, -1): [1, num] dim x num
             else:
                 dx += gamma[k].reshape(1, -1) * (A[k] @ (X - att.reshape(1, -1).T))
+        u = dx[0, :].reshape((plot_sample, plot_sample))
+        v = dx[1, :].reshape((plot_sample, plot_sample))
+        ax.streamplot(x_mesh, y_mesh, u, v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
 
-    u = dx[0, :].reshape((plot_sample, plot_sample))
-    v = dx[1, :].reshape((plot_sample, plot_sample))
-
-    ax.streamplot(x_mesh, y_mesh, u, v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
     ax.scatter(att[0], att[1], color='g', s=100, alpha=0.7)
     ax.set_aspect('equal')
 
