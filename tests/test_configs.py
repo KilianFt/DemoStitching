@@ -26,6 +26,10 @@ class ConfigDataclassTests(unittest.TestCase):
         cfg = StitchConfig()
         self.assertIn(cfg.gaussian_direction_method, {"mean_velocity", "a_mu"})
 
+    def test_chain_plot_grid_resolution_is_available_and_positive(self):
+        cfg = StitchConfig()
+        self.assertGreaterEqual(int(cfg.chain.plot_grid_resolution), 8)
+
 
 if __name__ == "__main__":
     unittest.main()
