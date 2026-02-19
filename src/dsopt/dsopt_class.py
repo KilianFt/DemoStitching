@@ -1,11 +1,7 @@
 import json, os, time
-import numpy  as np
+import numpy as np
 # import casadi as ca
-import cvxpy  as cp
-
-
-
-
+import cvxpy as cp
 
 
 class dsopt_class():
@@ -35,6 +31,9 @@ class dsopt_class():
 
         self.assignment_arr = assignment_arr
 
+        # retry count for CVXPY solves
+        self.max_solve_retries = 8
+
 
     def begin(self):
         begin = time.time()
@@ -43,9 +42,29 @@ class dsopt_class():
         print("Convex learning time", time.time() - begin)
         self._optimize_A()
 
-        
         return self.A
 
+
+    def _solve_with_retries(self, problem, label):
+        """Retry the exact same solver call multiple times (no method/fallback changes)."""
+        for attempt in range(1, self.max_solve_retries + 1):
+            try:
+                problem.solve()
+            except Exception as e:
+                print(e)
+                print(f"{label}: solve attempt {attempt}/{self.max_solve_retries} failed, retrying...")
+                continue
+
+            status = str(problem.status).lower()
+            if status in {"optimal", "optimal_inaccurate"}:
+                return True
+
+            print(
+                f"{label}: solve attempt {attempt}/{self.max_solve_retries} "
+                f"returned status={problem.status}, retrying..."
+            )
+
+        return False
 
 
     def _optimize_P(self):
@@ -59,7 +78,7 @@ class dsopt_class():
         for k in range(self.K):
             x_k = x[assignment_arr==k,:]
             x_dot_k = x_dot[assignment_arr==k, :]
-            
+
             if x_k.shape[0] != 0:
 
                 x_mean_k = np.mean(x_k, axis=0)
@@ -68,41 +87,26 @@ class dsopt_class():
                 x_dot_mean_k = (x_dot_mean_k / np.linalg.norm(x_dot_mean_k))
                 x_mean_vec.append(x_mean_k)
                 mean_vec.append(x_dot_mean_k)
-            
+
         x_mean_vec = np.array(x_mean_vec)
         mean_vec = np.array(mean_vec)
 
         P = cp.Variable((self.N, self.N), symmetric=True)
 
         constraints = [P >> 1e-3] # set a margin to avoid computational issue
-        objective = 0
-        # for xi, vi in zip(x_mean_vec, mean_vec):
-        #     projection = vi @ P @ xi
-        #     violation = cp.pos(projection)
-        #     objective += violation
-    
+
         projections = cp.sum(cp.multiply(x_mean_vec @ P, mean_vec), axis=1)
-        # projections = cp.sum(cp.multiply(x @ P, x_dot), axis=1)
         violations  = cp.pos(projections)
         objective   = cp.sum(violations)
 
         objective = cp.Minimize(objective)
         prob = cp.Problem(objective, constraints)
 
-        success = False
-        while not success:
-            try:
-                prob.solve()
-                success=True
-            except Exception as e:
-                print(e)
-                print(f"Problem not solved successfully. Retrying...")
-                print(mean_vec)
-                exit()
-
+        success = self._solve_with_retries(prob, "P optimization")
+        if (not success) or (P.value is None):
+            raise RuntimeError("P optimization failed after retries")
 
         P_opt = P.value
-        # print("Optimal Matrix A:\n", P_opt)
 
         self.P = P_opt
 
@@ -129,10 +133,7 @@ class dsopt_class():
 
             constraints += [A_vars[k].T @ P + P @ A_vars[k] == Q_vars[k]]
             constraints += [Q_vars[k] << epi]
-            # constraints += [cp.norm(A_vars[k], 'fro') <= max_norm]
 
-        # max_norm = 5 # this seems to not work well when the data is fast.
-        # do not restrict the norm of A
 
         for k in range(K):
             x_dot_pred_k = A_vars[k] @ self.x_sh.T
@@ -145,22 +146,19 @@ class dsopt_class():
         Objective = cp.norm(x_dot_pred.T-self.x_dot, 'fro')
 
         prob = cp.Problem(cp.Minimize(Objective), constraints)
-        
-        success = False
-        while not success:
-            try:
-                prob.solve()
-                success=True
-            except:
-                print(f"Problem not solved successfully. Retrying...")
-                exit()
+
+        success = self._solve_with_retries(prob, "A optimization")
+        if not success:
+            raise RuntimeError("A optimization failed after retries")
 
 
         A_res = np.zeros((K, N, N))
         for k in range(K):
+            if A_vars[k].value is None:
+                raise RuntimeError(f"A optimization returned no solution for mode {k}")
             A_res[k, :, :] = A_vars[k].value
             print("A_norm", np.linalg.norm(A_res[k], 'fro'))
-        
+
         self.A = A_res
 
 
@@ -169,7 +167,7 @@ class dsopt_class():
 
     def _optimize_P_legacy(self):
         """ Legacy P learning code"""
-        # Define parameters and variables 
+        # Define parameters and variables
         N = self.N
         num_constr = int(N*(N-1)/2) + N + 1
         P = ca.SX.sym('p', N, N)
@@ -179,7 +177,7 @@ class dsopt_class():
         # Define constraints
         k = 0
         for i in range(N):
-            for j in range(i + 1, N):  
+            for j in range(i + 1, N):
                 g[k] = (P[j, i] - P[i, j])   # Symmetry constraints
                 k += 1
 
@@ -187,7 +185,7 @@ class dsopt_class():
         for i in range(N):
             g[N*(N-1)/2+i] = eigen_value[i]      # Positive definiteness constraints
 
-        g[-1] = 1 - ca.sum1(eigen_value)         # Eigenvalue norm constrainst 
+        g[-1] = 1 - ca.sum1(eigen_value)         # Eigenvalue norm constrainst
 
 
         # Define constraint bounds
@@ -210,8 +208,8 @@ def _objective_P(P, x, x_dot, w = 0.0001):
     """ Eq(7) and Eq(8) in https://www.sciencedirect.com/science/article/abs/pii/S0921889014000372"""
     M, N = x.shape
 
-    dv_dx = x @ P 
-    dx_dt = x_dot 
+    dv_dx = x @ P
+    dx_dt = x_dot
 
     J_total = 0
     for i in range(M):

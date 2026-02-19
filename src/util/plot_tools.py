@@ -117,6 +117,7 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=Fa
         matplotlib.axes.Axes: The axis containing the plotted demonstration set.
     """
     dim = _infer_demo_dim(demo_set)
+    external_ax = ax is not None
     ax = _create_axis(dim, ax=ax, figsize=(8, 8))
 
     # Generate colors from colormap - one color per demonstration
@@ -138,7 +139,9 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=Fa
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + save_as + '.pdf')
+        ax.figure.savefig(save_folder + save_as + '.pdf')
+        if not external_ax:
+            plt.close(ax.figure)
 
     return ax
 
@@ -156,6 +159,7 @@ def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_
         matplotlib.axes.Axes: The axis with the plotted Gaussians and any optional data points.
     """
     dim = _infer_ds_dim(ds_set)
+    external_ax = ax is not None
     ax = _create_axis(dim, ax=ax, figsize=(8, 8))
 
     colors = plt.cm.get_cmap('tab10', len(ds_set)).colors
@@ -195,12 +199,15 @@ def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + save_as + '.pdf')
+        ax.figure.savefig(save_folder + save_as + '.pdf')
+        if not external_ax:
+            plt.close(ax.figure)
 
     return ax
 
 def plot_gg_solution(gg, solution_nodes, initial, attractor, config, ax=None, save_as=None, hide_axis=False):
     dim = _infer_graph_dim(gg)
+    external_ax = ax is not None
     ax = _create_axis(dim, ax=ax, figsize=(8, 8))
 
     if dim >= 3:
@@ -226,7 +233,9 @@ def plot_gg_solution(gg, solution_nodes, initial, attractor, config, ax=None, sa
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + save_as + '.pdf')
+        ax.figure.savefig(save_folder + save_as + '.pdf')
+        if not external_ax:
+            plt.close(ax.figure)
 
     return ax
 
@@ -244,6 +253,7 @@ def plot_ds(lpvds, x_test_list, initial, attractor, config, ax=None, save_as=Non
         matplotlib.axes.Axes: The axis with the plotted DS vector field and trajectories.
     """
     dim = int(np.asarray(lpvds.x, dtype=float).shape[1])
+    external_ax = ax is not None
     ax = _create_axis(dim, ax=ax, figsize=(8, 8))
     x_test_list = [] if x_test_list is None else x_test_list
     if dim >= 3:
@@ -281,7 +291,9 @@ def plot_ds(lpvds, x_test_list, initial, attractor, config, ax=None, save_as=Non
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + save_as + '.pdf')
+        ax.figure.savefig(save_folder + save_as + '.pdf')
+        if not external_ax:
+            plt.close(ax.figure)
 
     return ax
 
@@ -292,6 +304,7 @@ def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
         gg: a GaussianGraph
     """
     dim = _infer_graph_dim(gg)
+    external_ax = ax is not None
     ax = _create_axis(dim, ax=ax, figsize=(8, 8))
     if dim >= 3:
         ax = _plot_graph_3d(ax, gg)
@@ -309,8 +322,9 @@ def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        plt.savefig(save_folder + save_as + '.pdf')
-        plt.close()
+        ax.figure.savefig(save_folder + save_as + '.pdf')
+        if not external_ax:
+            plt.close(ax.figure)
 
     return ax
 
