@@ -98,6 +98,57 @@ class LiveUsedDatapointsTests(unittest.TestCase):
         self.assertIsNotNone(app.quiver)
         plt.close(fig)
 
+    def test_draw_ds_field_2d_chain_draws_region_and_transition_lines(self):
+        class _ChainDS:
+            n_systems = 3
+            node_sources = np.array([[-1.0, 0.0], [0.0, 0.0], [1.0, 0.0]], dtype=float)
+            transition_centers = np.array([[0.0, 0.0], [1.0, 0.0]], dtype=float)
+            transition_normals = np.array([[1.0, 0.0], [1.0, 0.0]], dtype=float)
+            transition_distances = np.array([1.0, 1.0], dtype=float)
+
+            @staticmethod
+            def _velocity_for_index(x, idx):
+                x = np.asarray(x, dtype=float).reshape(-1)
+                v = np.zeros_like(x)
+                v[0] = float(idx + 1)
+                return v
+
+        app = LiveStitchApp.__new__(LiveStitchApp)
+        fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+        app.ax = ax
+        app.is_3d = False
+        app.stream = None
+        app.quiver = None
+        app.chain_region_artist = None
+        app.chain_transition_line_artists = []
+        app.x_min, app.x_max = -1.0, 2.0
+        app.y_min, app.y_max = -1.0, 1.0
+        app.ctrl = SimpleNamespace(
+            current_ds=_ChainDS(),
+            state_dim=2,
+            current_state=np.array([0.0, 0.0]),
+            current_chain_idx=0,
+            config=SimpleNamespace(
+                ds_method="chain",
+                chain=SimpleNamespace(
+                    plot_mode="line_regions",
+                    plot_grid_resolution=18,
+                    plot_show_transition_lines=True,
+                    plot_region_alpha=0.3,
+                    ds_method="linear",
+                ),
+            ),
+        )
+
+        LiveStitchApp._draw_ds_field(app)
+
+        self.assertIsNotNone(app.stream)
+        self.assertIsNotNone(app.chain_region_artist)
+        self.assertEqual(app.chain_region_artist.get_array().shape[0], 18)
+        self.assertEqual(app.chain_region_artist.get_array().shape[1], 18)
+        self.assertEqual(len(app.chain_transition_line_artists), 2)
+        plt.close(fig)
+
     def test_draw_graph_3d_adds_edges(self):
         graph = nx.DiGraph()
         graph.add_node("a", mean=np.array([0.0, 0.0, 0.0]))

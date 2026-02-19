@@ -17,6 +17,28 @@ with following references
 
 Thanks for open sourcing your work!
 
+## Results
+
+### Ablations
+
+#### Stitching ablations
+
+
+#### Chain ablations
+Chain method ablation on X dataset:
+
+| chain_transition_trigger_method   | chain_ds_method   |   prediction_rmse_mean |   cosine_dissimilarity_mean |   dtw_distance_mean |   duration_s |
+|:----------------------------------|:------------------|-----------------------:|----------------------------:|--------------------:|-------------:|
+| distance_ratio                    | linear            |               0.100918 |                    0.195811 |             2333.61 |      76.808  |
+| distance_ratio                    | segmented         |               0.28416  |                    0.21321  |             1075.5  |      91.6978 |
+| mean_normals                      | linear            |               0.094193 |                    0.166881 |             2350.73 |      68.7855 |
+| mean_normals                      | segmented         |               0.347127 |                    0.19126  |              878.53 |     120.959  |
+
+
+Chain blend ratio ablation on X dataset:
+
+
+
 
 ## Stitching
 
@@ -200,5 +222,44 @@ python sweep.py \
   --ds-methods sp_recompute_all sp_recompute_ds chain \
   --seeds 1 2 3 \
   --output-dir results/sweep_results \
+  --timeout-s 600
+```
+
+Sweep 1: chaining method comparison (segment vs linear) x (mean_normals vs distance_ratio)
+```bash
+uv run sweep.py \
+  --mode chain_trigger \
+  --datasets dataset/stitching/robottasks_workspace_chain dataset/stitching/nodes_1 dataset/stitching/presentation2 \
+  --seeds 1 2 3 \
+  --chain-ds-methods segment linear \
+  --chain-trigger-methods mean_normals distance_ratio \
+  --output-dir results/sweep_chain_trigger \
+  --timeout-s 600
+```
+
+Sweep 2: blend-length sweep
+```bash
+uv run sweep.py \
+  --mode chain_blend \
+  --datasets dataset/stitching/X \
+  --seeds 1 2 3 \
+  --chain-blend-ratios 0.0 0.25 0.5 0.75 1.0 \
+  --chain-fixed-ds-method segmented \
+  --chain-fixed-trigger-method mean_normals \
+  --output-dir results/sweep_chain_blend \
+  --timeout-s 600
+```
+
+Sweep 3:
+
+```bash
+uv run sweep.py \
+  --mode graph_params \
+  --datasets dataset/stitching/X \
+  --ds-methods sp_recompute_ds chain \
+  --seeds 1 2 \
+  --param-dist-values 1 2 3 \
+  --param-cos-values 1 2 3 \
+  --output-dir results/sweep_graph_params \
   --timeout-s 600
 ```

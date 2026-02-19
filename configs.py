@@ -14,7 +14,7 @@ class DammConfig:
 @dataclass
 class ChainConfig:
     subsystem_edges: int = 2
-    blend_length_ratio: float = 0.1
+    blend_length_ratio: float = 0.5
     recompute_gaussians: bool = False
     ds_method: str = "segmented" # "segmented" or "linear"
     # Supported values:
@@ -29,6 +29,13 @@ class ChainConfig:
     # When False the first / last segment uses multi-node data (≥3 nodes), like the core systems.
     use_boundary_ds_initial: bool = False
     use_boundary_ds_end: bool = False
+    # Chain plotting mode (2D):
+    # - "line_regions": piecewise regions split by straight transition lines.
+    # - "time_blend": smooth color/velocity blending over transition lengths.
+    plot_mode: str = "time_blend"
+    plot_grid_resolution: int = 100
+    plot_show_transition_lines: bool = True
+    plot_region_alpha: float = 0.26
 
 # ds_method options:
 # - ["lpv-ds_recompute_all"]        Applies LPV-DS to the aggregate of all demonstrations, recomputes all from raw data

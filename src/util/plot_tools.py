@@ -249,6 +249,7 @@ def plot_ds(lpvds, x_test_list, initial, attractor, config, ax=None, save_as=Non
     if dim >= 3:
         ax = plot_ds_3d(lpvds.x, x_test_list, ax=ax, att=attractor)
     else:
+        chain_cfg = getattr(config, "chain", None)
         plot_ds_2d(
             lpvds.x,
             x_test_list,
@@ -258,6 +259,10 @@ def plot_ds(lpvds, x_test_list, initial, attractor, config, ax=None, save_as=Non
             x_max=config.plot_extent[1],
             y_min=config.plot_extent[2],
             y_max=config.plot_extent[3],
+            chain_plot_mode=getattr(chain_cfg, "plot_mode", "line_regions"),
+            chain_plot_resolution=int(max(8, getattr(chain_cfg, "plot_grid_resolution", 60))),
+            show_chain_transition_lines=bool(getattr(chain_cfg, "plot_show_transition_lines", True)),
+            chain_region_alpha=float(getattr(chain_cfg, "plot_region_alpha", 0.26)),
         )
 
     # plot initial and attractor
@@ -623,8 +628,7 @@ def primitive_plot_point(ax, point, color='red', marker='o', size=100, label=Non
         ax.scatter(point[0], point[1], color=color, marker=marker, s=size, label=label)
     return ax
 
-def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None,
-               arrowsize=1.1, include_raw_data=True, linewidth=2, marker_size=100, stream_density=3.0, stream_color='black', stream_width=1.0):
+def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
     att = lpvds.x_att
@@ -640,13 +644,34 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
         x_min, x_max = ax.get_xlim()
         y_min, y_max = ax.get_ylim()
 
-    plot_sample = 50
-    x_mesh, y_mesh = np.meshgrid(np.linspace(x_min, x_max, plot_sample), np.linspace(y_min, y_max, plot_sample))
-    X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
-
-    if hasattr(lpvds, "vector_field"):
+    if _is_chain_ds_for_region_plot(lpvds):
+        plot_sample = int(max(8, chain_plot_resolution))
+        draw_chain_partition_field_2d(
+            ax=ax,
+            ds=lpvds,
+            x_min=float(x_min),
+            x_max=float(x_max),
+            y_min=float(y_min),
+            y_max=float(y_max),
+            mode=chain_plot_mode,
+            plot_sample=plot_sample,
+            anchor_state=np.asarray(att, dtype=float).reshape(-1),
+            region_alpha=chain_region_alpha,
+            stream_density=3.0,
+            show_transition_lines=bool(show_chain_transition_lines and resolve_chain_plot_mode(chain_plot_mode) == "line_regions"),
+        )
+    elif hasattr(lpvds, "vector_field"):
+        plot_sample = 50
+        x_mesh, y_mesh = np.meshgrid(np.linspace(x_min, x_max, plot_sample), np.linspace(y_min, y_max, plot_sample))
+        X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
         dx = lpvds.vector_field(X.T).T
+        u = dx[0, :].reshape((plot_sample, plot_sample))
+        v = dx[1, :].reshape((plot_sample, plot_sample))
+        ax.streamplot(x_mesh, y_mesh, u, v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
     else:
+        plot_sample = 50
+        x_mesh, y_mesh = np.meshgrid(np.linspace(x_min, x_max, plot_sample), np.linspace(y_min, y_max, plot_sample))
+        X = np.vstack([x_mesh.ravel(), y_mesh.ravel()])
         gamma = lpvds.damm.compute_gamma(X.T)
         for k in np.arange(len(A)):
             if k == 0:
@@ -658,10 +683,8 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
     u = dx[0, :].reshape((plot_sample, plot_sample))
     v = dx[1, :].reshape((plot_sample, plot_sample))
 
-    ax.streamplot(x_mesh, y_mesh, u, v, linewidth=stream_width, density=stream_density, color=stream_color, arrowsize=arrowsize, arrowstyle="->")
-    for idx, x_test in enumerate(x_test_list):
-        ax.plot(x_test[:, 0], x_test[:, 1], color='r', linewidth=linewidth)
-    ax.scatter(att[0], att[1], color='g', s=marker_size, alpha=0.7, zorder=10)
+    ax.streamplot(x_mesh, y_mesh, u, v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
+    ax.scatter(att[0], att[1], color='g', s=100, alpha=0.7)
     ax.set_aspect('equal')
 
     if title is not None:

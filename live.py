@@ -14,6 +14,7 @@ from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.util.ds_tools import apply_lpvds_demowise, get_gaussian_directions
 from src.util.load_tools import get_demonstration_set, resolve_data_scales
+from src.util.plot_tools import draw_chain_partition_field_2d, resolve_chain_plot_mode
 
 
 @dataclass
@@ -460,6 +461,8 @@ class LiveStitchApp:
         self.chain_fit_points_artist = None
         self.chain_fit_info_text = None
         self.gaussian_center_artist = None
+        self.chain_region_artist = None
+        self.chain_transition_line_artists = []
 
         self.disturbance_keys = {
             "left": np.array([-1.0, 0.0]),
@@ -511,6 +514,22 @@ class LiveStitchApp:
         )
 
     def _remove_streamplot(self):
+        chain_region_artist = getattr(self, "chain_region_artist", None)
+        if chain_region_artist is not None:
+            try:
+                chain_region_artist.remove()
+            except Exception:
+                pass
+            self.chain_region_artist = None
+
+        transition_lines = list(getattr(self, "chain_transition_line_artists", []))
+        for line in transition_lines:
+            try:
+                line.remove()
+            except Exception:
+                pass
+        self.chain_transition_line_artists = []
+
         if self.stream is None:
             pass
         else:
@@ -556,16 +575,33 @@ class LiveStitchApp:
                 points[:, d] = anchor[d]
 
         if self.ctrl.config.ds_method == "chain":
-            idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
-            chain_method = self.ctrl.config.chain.ds_method
-            if chain_method == "segmented":
-                velocities = np.array([
-                    self.ctrl.current_ds._velocity_for_index(p, idx) for p in points
-                ])
-            else:
-                _, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
-                target = targets[idx]
-                velocities = (self.ctrl.current_ds.A_seq[idx] @ (points - target).T).T
+            plot_sample = int(max(8, getattr(self.ctrl.config.chain, "plot_grid_resolution", 60)))
+            chain_plot_mode = resolve_chain_plot_mode(
+                getattr(self.ctrl.config.chain, "plot_mode", "line_regions")
+            )
+            region_alpha = float(getattr(self.ctrl.config.chain, "plot_region_alpha", 0.26))
+            show_transition_lines = bool(
+                getattr(self.ctrl.config.chain, "plot_show_transition_lines", True)
+                and chain_plot_mode == "line_regions"
+            )
+            field_artists = draw_chain_partition_field_2d(
+                ax=self.ax,
+                ds=self.ctrl.current_ds,
+                x_min=self.x_min,
+                x_max=self.x_max,
+                y_min=self.y_min,
+                y_max=self.y_max,
+                mode=chain_plot_mode,
+                plot_sample=plot_sample,
+                anchor_state=self.ctrl.current_state,
+                region_alpha=region_alpha,
+                stream_density=2.2,
+                show_transition_lines=show_transition_lines,
+            )
+            self.chain_region_artist = field_artists["region_image"]
+            self.stream = field_artists["stream"]
+            self.chain_transition_line_artists = field_artists["transition_lines"]
+            return
         else:
             velocities = _predict_velocity_field(self.ctrl.current_ds, points)
 
@@ -1003,9 +1039,13 @@ class LiveStitchApp:
             self.ax.set_zlabel("z")
         else:
             self.ax.set_aspect("equal")
-        self.ax.set_title(
-            f"Live Stitch ({self.ctrl.config.ds_method}) | click: new goal | arrows: disturb | r: reset | cyan: fit points"
-        )
+        title = f"Live Stitch ({self.ctrl.config.ds_method}) | click: new goal | arrows: disturb | r: reset | cyan: fit points"
+        if self.ctrl.config.ds_method == "chain":
+            chain_plot_mode = resolve_chain_plot_mode(
+                getattr(self.ctrl.config.chain, "plot_mode", "line_regions")
+            )
+            title += f" | chain plot: {chain_plot_mode}"
+        self.ax.set_title(title)
         self.ax.grid(alpha=0.25)
         self.figure.tight_layout()
         self.figure.canvas.draw_idle()
@@ -1126,6 +1166,15 @@ def parse_args():
         choices=["mean_normals", "distance_ratio"],
     )
     parser.add_argument("--chain-max-subsystem-time", type=float, default=None)
+    parser.add_argument("--chain-plot-grid-resolution", type=int, default=None)
+    parser.add_argument(
+        "--chain-plot-mode",
+        type=str,
+        default=None,
+        choices=["line_regions", "time_blend"],
+    )
+    parser.add_argument("--chain-plot-hide-lines", action="store_true")
+    parser.add_argument("--chain-plot-region-alpha", type=float, default=None)
     parser.add_argument("--start-x", type=float, default=None)
     parser.add_argument("--start-y", type=float, default=None)
     parser.add_argument("--figure-width", type=float, default=10.0)
@@ -1160,6 +1209,14 @@ def main():
         config.chain.blend_length_ratio = args.chain_transition_length_ratio
     if args.chain_transition_trigger_method is not None:
         config.chain.transition_trigger_method = args.chain_transition_trigger_method
+    if args.chain_plot_grid_resolution is not None:
+        config.chain.plot_grid_resolution = int(max(8, args.chain_plot_grid_resolution))
+    if args.chain_plot_mode is not None:
+        config.chain.plot_mode = args.chain_plot_mode
+    if args.chain_plot_hide_lines:
+        config.chain.plot_show_transition_lines = False
+    if args.chain_plot_region_alpha is not None:
+        config.chain.plot_region_alpha = float(np.clip(args.chain_plot_region_alpha, 0.0, 1.0))
     config.start_x = args.start_x
     config.start_y = args.start_y
     config.figure_width = args.figure_width
