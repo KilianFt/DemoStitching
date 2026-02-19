@@ -11,7 +11,7 @@ from src.util.ds_tools import get_gaussian_directions
 import src.graph_utils as gu
 
 
-def construct_stitched_ds(config, gg, norm_demo_set, ds_set, reversed_ds_set, initial, attractor):
+def construct_stitched_ds(config, gg, norm_demo_set, ds_set, reversed_ds_set, initial, attractor, segment_ds_lookup=None):
     """Constructs a stitched dynamical system based on configuration method.
 
     Args:
@@ -42,11 +42,11 @@ def construct_stitched_ds(config, gg, norm_demo_set, ds_set, reversed_ds_set, in
     elif config.ds_method == 'spt_recompute_invalid_As':
         return all_paths_reuse(ds_set, gg, reversed_ds_set, initial, attractor, config)
     elif config.ds_method == 'chain':
-        return chain_ds(ds_set, gg, initial, attractor, config)
+        return chain_ds(ds_set, gg, initial, attractor, config, segment_ds_lookup)
     else:
         raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
 
-def chain_ds(ds_set, gg, initial, attractor, config):
+def chain_ds(ds_set, gg, initial, attractor, config, segment_ds_lookup=None):
     """Builds a chained DS that tracks a shortest Gaussian-graph path by switching targets."""
     stats = dict()
 
@@ -54,9 +54,6 @@ def chain_ds(ds_set, gg, initial, attractor, config):
     t0 = time.time()
     gg_solution_nodes = gg.shortest_path(initial, attractor)
     stats['gg_solution_compute_time'] = time.time() - t0
-
-    # ############ Precompute ########
-    #TODO accept precomputation dictionary
 
     # ############## DS ##############
     t_ds = time.time()
@@ -69,6 +66,7 @@ def chain_ds(ds_set, gg, initial, attractor, config):
                 attractor=attractor,
                 config=config,
                 shortest_path_nodes=gg_solution_nodes,
+                precomputed_edge_lookup=segment_ds_lookup
             )
         elif config.chain.ds_method == 'linear':
             stitched_ds = build_chained_linear_ds(
@@ -78,6 +76,7 @@ def chain_ds(ds_set, gg, initial, attractor, config):
                 attractor=attractor,
                 config=config,
                 shortest_path_nodes=gg_solution_nodes,
+                precomputed_edge_lookup=segment_ds_lookup,
             )
         else:
             raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
