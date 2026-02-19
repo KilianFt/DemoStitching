@@ -847,6 +847,9 @@ def draw_chain_partition_field_2d(
     y_max: float,
     mode: str = "line_regions",
     plot_sample: int = 50,
+    arrowsize: float = 1.1,
+    stream_color: str = "black",
+    stream_width: float = 1.0,
     anchor_state: np.ndarray = None,
     region_alpha: float = 0.26,
     stream_density: float = 2.4,
@@ -896,8 +899,9 @@ def draw_chain_partition_field_2d(
         u,
         v,
         density=float(stream_density),
-        color="black",
-        arrowsize=1.0,
+        color=stream_color,
+        linewidth=stream_width,
+        arrowsize=arrowsize,
         arrowstyle="->",
         zorder=2,
     )
@@ -944,6 +948,13 @@ def plot_ds_2d(
     x_max=None,
     y_min=None,
     y_max=None,
+    arrowsize=1.1,
+    include_raw_data=True,
+    linewidth=2,
+    marker_size=100,
+    stream_density=3.0,
+    stream_color='black',
+    stream_width=1.0,
     chain_plot_mode: str = "line_regions",
     chain_plot_resolution: int = 60,
     show_chain_transition_lines: bool = True,
@@ -975,9 +986,12 @@ def plot_ds_2d(
             y_max=float(y_max),
             mode=chain_plot_mode,
             plot_sample=plot_sample,
+            arrowsize=arrowsize,
+            stream_density=stream_density,
+            stream_color=stream_color,
+            stream_width=stream_width,
             anchor_state=np.asarray(att, dtype=float).reshape(-1),
             region_alpha=chain_region_alpha,
-            stream_density=3.0,
             show_transition_lines=bool(show_chain_transition_lines and resolve_chain_plot_mode(chain_plot_mode) == "line_regions"),
         )
     elif hasattr(lpvds, "vector_field"):
@@ -987,7 +1001,7 @@ def plot_ds_2d(
         dx = lpvds.vector_field(X.T).T
         u = dx[0, :].reshape((plot_sample, plot_sample))
         v = dx[1, :].reshape((plot_sample, plot_sample))
-        ax.streamplot(x_mesh, y_mesh, u, v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
+        ax.streamplot(x_mesh, y_mesh, u, v, linewidth=stream_width, density=stream_density, color=stream_color, arrowsize=arrowsize, arrowstyle="->")
     else:
         plot_sample = 50
         x_mesh, y_mesh = np.meshgrid(np.linspace(x_min, x_max, plot_sample), np.linspace(y_min, y_max, plot_sample))
@@ -1001,9 +1015,10 @@ def plot_ds_2d(
                 dx += gamma[k].reshape(1, -1) * (A[k] @ (X - att.reshape(1, -1).T))
         u = dx[0, :].reshape((plot_sample, plot_sample))
         v = dx[1, :].reshape((plot_sample, plot_sample))
-        ax.streamplot(x_mesh, y_mesh, u, v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
-
-    ax.scatter(att[0], att[1], color='g', s=100, alpha=0.7)
+        ax.streamplot(x_mesh, y_mesh, u, v, linewidth=stream_width, density=stream_density, color=stream_color, arrowsize=arrowsize, arrowstyle="->")
+    for idx, x_test in enumerate(x_test_list):
+        ax.plot(x_test[:, 0], x_test[:, 1], color='r', linewidth=linewidth)
+    ax.scatter(att[0], att[1], color='g', s=marker_size, alpha=0.7, zorder=10)
     ax.set_aspect('equal')
 
     if title is not None:
