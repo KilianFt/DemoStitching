@@ -27,7 +27,11 @@ def construct_stitched_ds(config, gg, norm_demo_set, ds_set, reversed_ds_set, in
     Raises:
         NotImplementedError: For unsupported or invalid ds_method values.
     """
-    if config.ds_method == 'sp_recompute_all':
+    if config.ds_method == "lpv-ds_recompute_all":
+        return lpvds_no_stitch(ds_set, initial, attractor, config, recompute_gaussians=True)
+    if config.ds_method == "lpv-ds_recompute_ds":
+        return lpvds_no_stitch(ds_set, initial, attractor, config, recompute_gaussians=False)
+    elif config.ds_method == 'sp_recompute_all':
         return recompute_ds(ds_set, gg, initial, attractor, config, recompute_gaussians=True)
     elif config.ds_method == 'sp_recompute_ds':
         return recompute_ds(ds_set, gg, initial, attractor, config, recompute_gaussians=False)
@@ -45,6 +49,72 @@ def construct_stitched_ds(config, gg, norm_demo_set, ds_set, reversed_ds_set, in
         return chain_ds(ds_set, gg, initial, attractor, config, segment_ds_lookup)
     else:
         raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")
+
+def lpvds_no_stitch(ds_set, initial, attractor, config, recompute_gaussians):
+
+    # Initialize stats dictionary
+    stats = dict()
+
+    # ############## DS ##############
+    t0 = time.time()
+
+    # extract all trajectory points and velocities from all DSs for re-clustering
+    all_x = []
+    all_x_dot = []
+    for ds in ds_set:
+        all_x.append(ds.x)
+        all_x_dot.append(ds.x_dot)
+    all_x = np.vstack(all_x)
+    all_x_dot = np.vstack(all_x_dot)
+    x_att = attractor
+    stitched_ds = lpvds_class(all_x, all_x_dot, x_att,
+                              rel_scale=config.damm.rel_scale,
+                              total_scale=config.damm.total_scale,
+                              nu_0=config.damm.nu_0,
+                              kappa_0=config.damm.kappa_0,
+                              psi_dir_0=config.damm.psi_dir_0)
+
+    # compute DS with or without re-clustering
+    try:
+        if recompute_gaussians:
+            result = stitched_ds.begin()
+            if not result:
+                print('Failed to construct Stitched DS: DAMM clustering failed')
+                stitched_ds = None
+
+        else: # reuse gaussians
+
+            # get gaussians and normalize priors
+            gaussians = []
+            for ds in ds_set:
+                for i in range(ds.damm.K):
+                    prior = ds.damm.Prior[i]
+                    mu = ds.damm.Mu[i]
+                    sigma = ds.damm.Sigma[i]
+                    gaussians.append({
+                        'prior': prior,  # will be normalized in init_cluster
+                        'mu': mu,
+                        'sigma': sigma,
+                        'rv': multivariate_normal(mu, sigma, allow_singular=True),
+                    })
+            total_prior = sum(g['prior'] for g in gaussians)
+            for g in gaussians:
+                g['prior'] /= total_prior
+
+            stitched_ds.init_cluster(gaussians)
+            stitched_ds._optimize()
+
+    except Exception as e:
+        print(f'Failed to construct Stitched DS: {e}')
+        stitched_ds = None
+
+    stats['gg_solution_compute_time'] = None        # for consistency in return type
+    stats['ds_compute_time'] = time.time() - t0
+    stats['total_compute_time'] = time.time() - t0  # same as ds_compute_time
+
+    return stitched_ds, [], stats
+
+
 
 def chain_ds(ds_set, gg, initial, attractor, config, segment_ds_lookup=None):
     """Builds a chained DS that tracks a shortest Gaussian-graph path by switching targets."""

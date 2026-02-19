@@ -31,6 +31,8 @@ class ChainConfig:
     use_boundary_ds_end: bool = False
 
 # ds_method options:
+# - ["ds_recompute_all"]            Applies LPV-DS to the aggregate of all demonstrations, without stitching
+# - ["ds_recompute_ds"]             Applies LPV-DS to the aggregate of all demonstrations, but reuses Gaussians from individual demos.
 # - ["sp_recompute_all"]            Uses shortest path, extracts raw traj. points, recomputes Gaussians and DS.
 # - ["sp_recompute_ds"]             Uses shortest path, keeps Gaussians but recomputes DS.
 # - ["sp_recompute_invalid_As"]     Uses shortest path, selects a P near the attractor, recomputes any incompatible As.
