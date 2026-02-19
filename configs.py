@@ -20,7 +20,7 @@ class ChainConfig:
     # Supported values:
     # - "mean_normals": transition when crossing the mean-normal plane at n1.
     # - "distance_ratio": transition when d(x,n1)/d(x,n2) >= |e1|/|e2|.
-    transition_trigger_method: str = "mean_normals"
+    transition_trigger_method: str = "distance_ratio"
     recovery_distance: float = 0.35
     enable_recovery: bool = False
     stabilization_margin: float = 1e-3
