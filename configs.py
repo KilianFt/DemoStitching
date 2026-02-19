@@ -31,8 +31,8 @@ class ChainConfig:
     use_boundary_ds_end: bool = False
 
 # ds_method options:
-# - ["ds_recompute_all"]            Applies LPV-DS to the aggregate of all demonstrations, without stitching
-# - ["ds_recompute_ds"]             Applies LPV-DS to the aggregate of all demonstrations, but reuses Gaussians from individual demos.
+# - ["lpv-ds_recompute_all"]        Applies LPV-DS to the aggregate of all demonstrations, recomputes all from raw data
+# - ["lpv-ds_recompute_ds"]         Applies LPV-DS to the aggregate of all demonstrations, reuses Gaussians.
 # - ["sp_recompute_all"]            Uses shortest path, extracts raw traj. points, recomputes Gaussians and DS.
 # - ["sp_recompute_ds"]             Uses shortest path, keeps Gaussians but recomputes DS.
 # - ["sp_recompute_invalid_As"]     Uses shortest path, selects a P near the attractor, recomputes any incompatible As.
@@ -48,7 +48,7 @@ class StitchConfig:
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None
     attractor: Optional[np.ndarray] = None
-    ds_method: str = "sp_recompute_ds"
+    ds_method: str = "sp_recompute_all"
     reverse_gaussians: bool = True
     param_dist: int = 2
     param_cos: int = 1
@@ -56,7 +56,7 @@ class StitchConfig:
     # n_demos: int = 5 # number of demonstrations to generate
     # noise_std: float = 0.05 # standard deviation of noise added to demonstrations
     plot_extent: tuple[float, float, float, float] = (0, 15, 0, 15) # (x_min, x_max, y_min, y_max)
-    n_test_simulations: int = 2 # number of test simulations for metrics
+    n_test_simulations: int = 1 # number of test simulations for metrics
     noise_std: float = 0.05
     save_fig: bool = True # standard deviation for initial position for simulation
     seed: int = 42 # 42, 100, 3215, 21

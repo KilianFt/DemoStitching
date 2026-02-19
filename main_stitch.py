@@ -5,7 +5,7 @@ from src.util.load_tools import get_demonstration_set, resolve_data_scales, infe
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.ds_tools import apply_lpvds_demowise
-from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph, plot_gg_solution, plot_ds
+from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph, plot_gg_solution, plot_ds, plot_composite
 from configs import StitchConfig
 import time
 import src.graph_utils as gu
@@ -140,6 +140,8 @@ def main():
                 plot_gg_solution(gg, gg_solution_nodes, initial, attractor, config, save_as=f'{i}_Gaussian_Graph_Solution', hide_axis=True)
                 plot_ds_set_gaussians([stitched_ds], config, initial=initial, attractor=attractor, include_trajectory=True, save_as=f'{i}_Stitched_DS_Gaussians', hide_axis=True)
                 plot_ds(stitched_ds, simulated_trajectories, initial, attractor, config, save_as=f'{i}_Stitched_DS_Simulation', hide_axis=True)
+                plot_composite(gg, gg_solution_nodes, demo_set,stitched_ds, simulated_trajectories, initial, attractor, config, save_as=f'{i}_Composite', hide_axis=True)
+
 
         # Compile and append results
         results = {'combination_id': i, 'ds_method': config.ds_method,} | stitching_stats | ds_metrics

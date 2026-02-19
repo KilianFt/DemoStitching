@@ -309,6 +309,67 @@ def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
 
     return ax
 
+def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, attractor, config, ax=None, save_as=None, hide_axis=False):
+
+    dim = _infer_graph_dim(gg)
+    ax = _create_axis(dim, ax=ax, figsize=(12, 12))
+
+    # plot raw demonstrations
+
+    colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
+    for i, demo in enumerate(demo_set):
+        ax = primitive_plot_demo(ax, demo, linewidth=8, alpha=0.5, marker_size=6, color=colors[i])
+
+    # Plot DS
+    dim = int(np.asarray(lpvds.x, dtype=float).shape[1])
+    ax = _create_axis(dim, ax=ax, figsize=(8, 8))
+    x_test_list = [] if x_test_list is None else x_test_list
+    if dim >= 3:
+        ax = plot_ds_3d(lpvds.x, x_test_list, ax=ax, att=attractor)
+    else:
+        plot_ds_2d(
+            lpvds.x,
+            x_test_list,
+            lpvds,
+            ax=ax,
+            x_min=config.plot_extent[0],
+            x_max=config.plot_extent[1],
+            y_min=config.plot_extent[2],
+            y_max=config.plot_extent[3],
+            arrowsize=2,
+            include_raw_data=False,
+            linewidth=7,
+            marker_size=200,
+            stream_density=1,
+            stream_color='black',
+            stream_width=0.5
+        )
+
+    # plot solution gaussians
+    if dim <= 2:
+        for node in solution_nodes:
+            mu, sigma, direction, _ = gg.get_gaussian(node)
+            ax = primitive_plot_gaussian(ax, mu, sigma, color='orange', direction=None, sigma_bound=None)
+
+    # plot initial and attractor
+    ax = primitive_plot_point(ax, initial, color='red')
+    ax = primitive_plot_point(ax, attractor, color='green')
+
+    # set limits
+    _apply_plot_extent(ax, config, dim)
+    if hide_axis:
+        ax.axis('off')
+    if dim < 3:
+        ax.set_aspect('equal')
+    plt.tight_layout()
+
+    # save the figure
+    if save_as is not None:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+        os.makedirs(save_folder, exist_ok=True)
+        plt.savefig(save_folder + save_as + '.pdf')
+
+    return ax
 
 
 # These will possibly be removed at a later stage (avoid using if an alternative above is available)
@@ -399,13 +460,9 @@ def plot_incremental_ds(new_data, prev_data, att, x_test_list):
 
 
 # Plotting primitives: accepts ax, adds to it, and returns it
-def primitive_plot_demo(ax, demo, color=None):
+def primitive_plot_demo(ax, demo, color=None, linewidth=1, alpha=1.0, marker_size=8):
     """Plots a single demonstration's trajectories with start and end points, optionally using a specified color.
     """
-    # Params
-    alpha = 1
-    linewidth = 1
-    marker_size = 8
 
     # Select random color if not provided
     if color is None:
@@ -418,14 +475,14 @@ def primitive_plot_demo(ax, demo, color=None):
             continue
         if x.shape[1] >= 3:
             ax.plot(x[:, 0], x[:, 1], x[:, 2], color=color, linewidth=linewidth, alpha=alpha)
-            ax.scatter(x[0, 0], x[0, 1], x[0, 2], color='green', s=marker_size * 6)
-            ax.scatter(x[-1, 0], x[-1, 1], x[-1, 2], color='red', s=marker_size * 6)
+            ax.scatter(x[0, 0], x[0, 1], x[0, 2], color='red', s=marker_size * 6)
+            ax.scatter(x[-1, 0], x[-1, 1], x[-1, 2], color='green', s=marker_size * 6)
         else:
             ax.plot(x[:, 0], x[:, 1], color=color, linewidth=linewidth, alpha=alpha)
-            # Start point (green)
-            ax.plot(x[0, 0], x[0, 1], 'go', markersize=marker_size)
-            # End point (red)
-            ax.plot(x[-1, 0], x[-1, 1], 'ro', markersize=marker_size)
+            # Start point (red)
+            ax.plot(x[0, 0], x[0, 1], 'ro', markersize=marker_size)
+            # End point (green)
+            ax.plot(x[-1, 0], x[-1, 1], 'go', markersize=marker_size)
 
     return ax
 
@@ -566,7 +623,8 @@ def primitive_plot_point(ax, point, color='red', marker='o', size=100, label=Non
         ax.scatter(point[0], point[1], color=color, marker=marker, s=size, label=label)
     return ax
 
-def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None):
+def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_max=None, y_min=None, y_max=None,
+               arrowsize=1.1, include_raw_data=True, linewidth=2, marker_size=100, stream_density=3.0, stream_color='black', stream_width=1.0):
     """ passing lpvds object to plot the streamline of DS (only in 2D)"""
     A = lpvds.A
     att = lpvds.x_att
@@ -575,9 +633,8 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
         fig = plt.figure(figsize=(16, 10))
         ax = fig.add_subplot()
 
-    ax.scatter(x_train[:, 0], x_train[:, 1], color='k', s=5, label='original data')
-    for idx, x_test in enumerate(x_test_list):
-        ax.plot(x_test[:, 0], x_test[:, 1], color='r', linewidth=2)
+    if include_raw_data:
+        ax.scatter(x_train[:, 0], x_train[:, 1], color='k', s=5, label='original data')
 
     if x_min is None or x_max is None or y_min is None or y_max is None:
         x_min, x_max = ax.get_xlim()
@@ -601,8 +658,10 @@ def plot_ds_2d(x_train, x_test_list, lpvds, title=None, ax=None, x_min=None, x_m
     u = dx[0, :].reshape((plot_sample, plot_sample))
     v = dx[1, :].reshape((plot_sample, plot_sample))
 
-    ax.streamplot(x_mesh, y_mesh, u, v, density=3.0, color="black", arrowsize=1.1, arrowstyle="->")
-    ax.scatter(att[0], att[1], color='g', s=100, alpha=0.7)
+    ax.streamplot(x_mesh, y_mesh, u, v, linewidth=stream_width, density=stream_density, color=stream_color, arrowsize=arrowsize, arrowstyle="->")
+    for idx, x_test in enumerate(x_test_list):
+        ax.plot(x_test[:, 0], x_test[:, 1], color='r', linewidth=linewidth)
+    ax.scatter(att[0], att[1], color='g', s=marker_size, alpha=0.7, zorder=10)
     ax.set_aspect('equal')
 
     if title is not None:
