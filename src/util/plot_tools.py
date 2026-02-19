@@ -65,6 +65,15 @@ def _apply_plot_extent(ax, config, dim):
             ax.set_xlim(extent[0], extent[1])
             ax.set_ylim(extent[2], extent[3])
 
+
+def _save_axis_figure(ax, save_path: str, dim: int):
+    save_kwargs = {}
+    if int(dim) >= 3:
+        # 3D exports otherwise keep large canvas whitespace independent of axis limits.
+        save_kwargs["bbox_inches"] = "tight"
+        save_kwargs["pad_inches"] = 0.02
+    ax.figure.savefig(save_path, **save_kwargs)
+
 def _plot_graph_3d(ax, gg, highlight_nodes=None):
     nodes = []
     for node_id, node_data in gg.graph.nodes(data=True):
@@ -139,7 +148,7 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=Fa
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        ax.figure.savefig(save_folder + save_as + '.pdf')
+        _save_axis_figure(ax, save_folder + save_as + '.pdf', dim)
         if not external_ax:
             plt.close(ax.figure)
 
@@ -199,7 +208,7 @@ def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        ax.figure.savefig(save_folder + save_as + '.pdf')
+        _save_axis_figure(ax, save_folder + save_as + '.pdf', dim)
         if not external_ax:
             plt.close(ax.figure)
 
@@ -233,7 +242,7 @@ def plot_gg_solution(gg, solution_nodes, initial, attractor, config, ax=None, sa
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        ax.figure.savefig(save_folder + save_as + '.pdf')
+        _save_axis_figure(ax, save_folder + save_as + '.pdf', dim)
         if not external_ax:
             plt.close(ax.figure)
 
@@ -291,7 +300,7 @@ def plot_ds(lpvds, x_test_list, initial, attractor, config, ax=None, save_as=Non
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        ax.figure.savefig(save_folder + save_as + '.pdf')
+        _save_axis_figure(ax, save_folder + save_as + '.pdf', dim)
         if not external_ax:
             plt.close(ax.figure)
 
@@ -322,7 +331,7 @@ def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        ax.figure.savefig(save_folder + save_as + '.pdf')
+        _save_axis_figure(ax, save_folder + save_as + '.pdf', dim)
         if not external_ax:
             plt.close(ax.figure)
 
@@ -331,6 +340,7 @@ def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
 def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, attractor, config, ax=None, save_as=None, hide_axis=False):
 
     dim = _infer_graph_dim(gg)
+    external_ax = ax is not None
     ax = _create_axis(dim, ax=ax, figsize=(12, 12))
 
     # plot raw demonstrations
@@ -362,7 +372,7 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
             marker_size=200,
             stream_density=1,
             stream_color='black',
-            stream_width=0.5
+            stream_width=0.5,
             chain_plot_mode=getattr(chain_cfg, "plot_mode", "line_regions"),
             chain_plot_resolution=int(max(8, getattr(chain_cfg, "plot_grid_resolution", 60))),
             show_chain_transition_lines=bool(getattr(chain_cfg, "plot_show_transition_lines", True)),
@@ -391,7 +401,7 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        ax.figure.savefig(save_folder + save_as + '.pdf')
+        _save_axis_figure(ax, save_folder + save_as + '.pdf', dim)
         if not external_ax:
             plt.close(ax.figure)
 
@@ -422,7 +432,7 @@ def plot_gaussian_graph(gg, config, ax=None, save_as=None, hide_axis=False):
     if save_as is not None:
         save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
         os.makedirs(save_folder, exist_ok=True)
-        ax.figure.savefig(save_folder + save_as + '.pdf')
+        _save_axis_figure(ax, save_folder + save_as + '.pdf', dim)
         if not external_ax:
             plt.close(ax.figure)
 

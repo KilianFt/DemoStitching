@@ -222,7 +222,7 @@ python sweep.py \
   --ds-methods sp_recompute_all sp_recompute_ds chain \
   --seeds 1 2 3 \
   --output-dir results/sweep_results \
-  --timeout-s 600
+  --timeout-s 600 --workers 12
 ```
 
 Sweep 1: chaining method comparison (segment vs linear) x (mean_normals vs distance_ratio)
@@ -234,7 +234,7 @@ uv run sweep.py \
   --chain-ds-methods segment linear \
   --chain-trigger-methods mean_normals distance_ratio \
   --output-dir results/sweep_chain_trigger \
-  --timeout-s 600
+  --timeout-s 600 --workers 12
 ```
 
 Sweep 2: blend-length sweep
@@ -247,7 +247,7 @@ uv run sweep.py \
   --chain-fixed-ds-method segmented \
   --chain-fixed-trigger-method mean_normals \
   --output-dir results/sweep_chain_blend \
-  --timeout-s 600
+  --timeout-s 600 --workers 12
 ```
 
 Sweep 3:
@@ -261,5 +261,5 @@ uv run sweep.py \
   --param-dist-values 1 2 3 \
   --param-cos-values 1 2 3 \
   --output-dir results/sweep_graph_params \
-  --timeout-s 600
+  --timeout-s 600 --workers 12
 ```

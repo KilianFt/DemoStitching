@@ -157,7 +157,7 @@ class dsopt_class():
             if A_vars[k].value is None:
                 raise RuntimeError(f"A optimization returned no solution for mode {k}")
             A_res[k, :, :] = A_vars[k].value
-            print("A_norm", np.linalg.norm(A_res[k], 'fro'))
+            # print("A_norm", np.linalg.norm(A_res[k], 'fro'))
 
         self.A = A_res
 
@@ -197,7 +197,7 @@ class dsopt_class():
         nlp = {'x': ca.vec(P), 'f': _objective_P(P, self.x_sh, self.x_dot), 'g':g}
         S = ca.nlpsol('S', 'ipopt', nlp)
         result = S(x0=_initial_guess(self.x_sh), lbg=lbg, ubg=ubg)
-        print(result['x'])
+        # print(result['x'])
         self.P = np.array(result['x']).reshape(N, N)
 
 

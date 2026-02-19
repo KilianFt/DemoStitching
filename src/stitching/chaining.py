@@ -136,6 +136,12 @@ class ChainedDS:
         self.transition_distances = np.asarray(transition_distances, dtype=float)
         self.chain_cfg = chain_cfg
         self.transition_trigger_method = chain_cfg.transition_trigger_method
+        raw_vmax = getattr(chain_cfg, "velocity_max", None)
+        if raw_vmax is None:
+            self.velocity_max = None
+        else:
+            raw_vmax = float(raw_vmax)
+            self.velocity_max = raw_vmax if np.isfinite(raw_vmax) and raw_vmax > 0.0 else None
 
         # Compatibility attributes used by existing plotting/eval code.
         self.damm = damm
@@ -161,6 +167,7 @@ class ChainedDS:
         self._state_entry_t = 0.0
         self._transition_from_idx = None
         self._transition_t0 = None
+        self._state_dim = int(self.node_sources.shape[1]) if self.node_sources.ndim == 2 else int(self.x_att.shape[0])
 
     # ---- utilities --------------------------------------------------------
 
@@ -174,6 +181,20 @@ class ChainedDS:
         """Default linear velocity: A_seq[idx] @ (x - target[idx])."""
         idx = int(np.clip(idx, 0, self.n_systems - 1))
         return self.A_seq[idx] @ (x - self.node_targets[idx])
+
+    def _clip_velocity(self, velocity: np.ndarray) -> np.ndarray:
+        v = np.asarray(velocity, dtype=float).reshape(-1)
+        if v.shape[0] != self._state_dim:
+            return np.zeros((self._state_dim,), dtype=float)
+        if not np.all(np.isfinite(v)):
+            return np.zeros((self._state_dim,), dtype=float)
+
+        if self.velocity_max is not None:
+            speed = float(np.linalg.norm(v))
+            if np.isfinite(speed) and speed > self.velocity_max and speed > 1e-12:
+                v = v * (self.velocity_max / speed)
+
+        return v
 
     # ---- trigger methods --------------------------------------------------
 
@@ -293,15 +314,15 @@ class ChainedDS:
 
     def _transition_velocity(self, x: np.ndarray, t: float) -> np.ndarray:
         idx = int(self._transition_from_idx)
-        v_current = self._velocity_for_index(x, idx)
-        v_next = self._velocity_for_index(x, idx + 1)
+        v_current = self._clip_velocity(self._velocity_for_index(x, idx))
+        v_next = self._clip_velocity(self._velocity_for_index(x, idx + 1))
 
         T = self.transition_times[idx] if idx < len(self.transition_times) else 0.0
         if T <= 1e-12:
             alpha = 1.0
         else:
             alpha = np.clip((t - self._transition_t0) / T, 0.0, 1.0)
-        v = (1.0 - alpha) * v_current + alpha * v_next
+        v = self._clip_velocity((1.0 - alpha) * v_current + alpha * v_next)
 
         if self.trigger_time(idx, t):
             self._runtime_idx = min(idx + 1, self.n_systems - 1)
@@ -318,9 +339,11 @@ class ChainedDS:
         for x in x_positions:
             idx = int(np.argmin(np.linalg.norm(self.node_sources - x.reshape(1, -1), axis=1)))
             if idx < self.n_systems - 1 and self.trigger_state(idx, x):
-                v = 0.5 * self._velocity_for_index(x, idx) + 0.5 * self._velocity_for_index(x, idx + 1)
+                v = self._clip_velocity(
+                    0.5 * self._velocity_for_index(x, idx) + 0.5 * self._velocity_for_index(x, idx + 1)
+                )
             else:
-                v = self._velocity_for_index(x, idx)
+                v = self._clip_velocity(self._velocity_for_index(x, idx))
             velocities.append(v)
         return np.vstack(velocities)
 
@@ -353,7 +376,7 @@ class ChainedLinearDS(ChainedDS):
 
         self._start_transition_if_triggered(x, t)
         if self._transition_from_idx is None:
-            velocity = self._velocity_for_index(x, self._runtime_idx)
+            velocity = self._clip_velocity(self._velocity_for_index(x, self._runtime_idx))
         else:
             velocity = self._transition_velocity(x, t)
 
@@ -420,7 +443,7 @@ class ChainedSegmentedDS(ChainedDS):
 
         self._start_transition_if_triggered(x, t)
         if self._transition_from_idx is None:
-            velocity = self._velocity_for_index(x, self._runtime_idx)
+            velocity = self._clip_velocity(self._velocity_for_index(x, self._runtime_idx))
         else:
             velocity = self._transition_velocity(x, t)
 
@@ -559,6 +582,17 @@ def _resolve_transition_profile_from_point_triples(
     transition_edge_ratios = []
     transition_times = []
     transition_distances = []
+    raw_min_transition_time = float(getattr(cfg, "min_transition_time", 1e-4))
+    if not np.isfinite(raw_min_transition_time):
+        min_transition_time = 1e-4
+    else:
+        min_transition_time = max(raw_min_transition_time, 1e-6)
+    raw_velocity_max = getattr(cfg, "velocity_max", None)
+    if raw_velocity_max is None:
+        velocity_cap = None
+    else:
+        raw_velocity_max = float(raw_velocity_max)
+        velocity_cap = raw_velocity_max if np.isfinite(raw_velocity_max) and raw_velocity_max > 0.0 else None
 
     def _unit(v: np.ndarray) -> np.ndarray:
         nv = float(np.linalg.norm(v))
@@ -595,8 +629,14 @@ def _resolve_transition_profile_from_point_triples(
         transition_length = max(cfg.blend_length_ratio * max(len_e2, 1e-12), 1e-12)
         v_center = np.asarray(nominal_velocity_fn(i, center), dtype=float).reshape(-1)
         speed = float(np.linalg.norm(v_center))
+        if not np.isfinite(speed):
+            speed = 0.0
+        if velocity_cap is not None:
+            speed = min(speed, velocity_cap)
         transition_time = transition_length / max(speed, 1e-6)
-        transition_time = float(max(transition_time, 1e-4))
+        if not np.isfinite(transition_time):
+            transition_time = min_transition_time
+        transition_time = float(max(transition_time, min_transition_time))
 
         transition_centers.append(center)
         transition_normals.append(plane_normal)

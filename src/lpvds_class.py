@@ -53,12 +53,12 @@ class lpvds_class():
         # self.gamma = self.damm.fit_scikit()
 
         assignment_arr = np.argmax(self.gamma, axis=0) # this might result in some component being empty
-        unique_elements, counts = np.unique(assignment_arr, return_counts=True)
-        for element, count in zip(unique_elements, counts):
-            print("Current element", element)
-            print("has number", count)
-            if count == 0:
-                input("Elastic update gamma gives zero count")
+        # unique_elements, counts = np.unique(assignment_arr, return_counts=True)
+        # for element, count in zip(unique_elements, counts):
+        #     print("Current element", element)
+        #     print("has number", count)
+        #     if count == 0:
+        #         input("Elastic update gamma gives zero count")
 
         # self.K     = self.gamma.shape[0] 
 

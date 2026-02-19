@@ -20,6 +20,8 @@ def compute_plot_extent_from_demo_set(
     padding_ratio: float = 0.08,
     padding_abs: float = 0.5,
 ):
+    # Keep 2D behavior unchanged, but tighten 3D framing to reduce large empty borders.
+    plot_padding_scale_3d = 0.5
     dim = 3 if int(state_dim) >= 3 else 2
     points = []
     for demo in demo_set:
@@ -46,6 +48,8 @@ def compute_plot_extent_from_demo_set(
     spans = np.maximum(maxs - mins, 1e-6)
     max_span = float(np.max(spans))
     margin = max(float(padding_abs), float(padding_ratio) * max_span)
+    if dim == 3:
+        margin = max(1e-6, margin * plot_padding_scale_3d)
     half_extent = 0.5 * max_span + margin
     center = 0.5 * (mins + maxs)
     lows = center - half_extent

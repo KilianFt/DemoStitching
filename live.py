@@ -120,6 +120,8 @@ def _compute_view_extent_3d(
     padding_ratio: float = 0.08,
     padding_abs: float = 0.5,
 ):
+    # 3D view padding is scaled down to avoid overly large borders in interactive plots.
+    view_padding_scale_3d = 0.65
     pts = np.asarray(points_xyz, dtype=float)
     if pts.ndim != 2 or pts.shape[0] == 0 or pts.shape[1] < 3:
         return -1.0, 1.0, -1.0, 1.0, -1.0, 1.0
@@ -135,6 +137,7 @@ def _compute_view_extent_3d(
     spans = np.maximum(maxs - mins, 1e-6)
     max_span = float(np.max(spans))
     margin = max(float(padding_abs), float(padding_ratio) * max_span)
+    margin = max(1e-6, margin * view_padding_scale_3d)
     half_extent = 0.5 * max_span + margin
     center = 0.5 * (mins + maxs)
     return (
@@ -1159,6 +1162,8 @@ def parse_args():
     parser.add_argument("--chain-goal-node-candidates", type=int, default=None)
     parser.add_argument("--chain-subsystem-edges", type=int, default=None)
     parser.add_argument("--chain-transition-length-ratio", type=float, default=None)
+    parser.add_argument("--chain-min-transition-time", type=float, default=None)
+    parser.add_argument("--chain-velocity-max", type=float, default=None)
     parser.add_argument(
         "--chain-transition-trigger-method",
         type=str,
@@ -1207,6 +1212,11 @@ def main():
         config.chain.subsystem_edges = args.chain_subsystem_edges
     if args.chain_transition_length_ratio is not None:
         config.chain.blend_length_ratio = args.chain_transition_length_ratio
+    if args.chain_min_transition_time is not None:
+        config.chain.min_transition_time = max(float(args.chain_min_transition_time), 1e-6)
+    if args.chain_velocity_max is not None:
+        v_max = float(args.chain_velocity_max)
+        config.chain.velocity_max = v_max if np.isfinite(v_max) and v_max > 0.0 else None
     if args.chain_transition_trigger_method is not None:
         config.chain.transition_trigger_method = args.chain_transition_trigger_method
     if args.chain_plot_grid_resolution is not None:

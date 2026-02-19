@@ -2,6 +2,8 @@ import unittest
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+import tempfile
+from unittest.mock import patch
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -138,6 +140,58 @@ class PlotTools3DTests(unittest.TestCase):
         )
         self.assertEqual(ax.name, "3d")
         plt.close(ax.figure)
+
+    def test_3d_save_uses_tight_bbox(self):
+        demo_set = [
+            SimpleNamespace(
+                trajectories=[
+                    SimpleNamespace(
+                        x=np.array([[0.0, 0.0, 0.0], [1.0, 0.8, 0.6]], dtype=float),
+                        x_dot=np.array([[1.0, 0.8, 0.6], [1.0, 0.8, 0.6]], dtype=float),
+                    )
+                ]
+            )
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = SimpleNamespace(
+                plot_extent=(-1.0, 2.0, -1.0, 2.0, -1.0, 2.0),
+                dataset_path=str(tmpdir),
+                ds_method="sp_recompute_ds",
+                gaussian_direction_method="mean_velocity",
+            )
+            with patch("matplotlib.figure.Figure.savefig") as mock_savefig:
+                ax = plot_demonstration_set(demo_set, cfg, save_as="tmp_plot", hide_axis=True)
+            self.assertGreaterEqual(mock_savefig.call_count, 1)
+            _, kwargs = mock_savefig.call_args
+            self.assertEqual(kwargs.get("bbox_inches"), "tight")
+            self.assertAlmostEqual(float(kwargs.get("pad_inches")), 0.02)
+            plt.close(ax.figure)
+
+    def test_2d_save_keeps_default_bbox_behavior(self):
+        demo_set = [
+            SimpleNamespace(
+                trajectories=[
+                    SimpleNamespace(
+                        x=np.array([[0.0, 0.0], [1.0, 0.8]], dtype=float),
+                        x_dot=np.array([[1.0, 0.8], [1.0, 0.8]], dtype=float),
+                    )
+                ]
+            )
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = SimpleNamespace(
+                plot_extent=(-1.0, 2.0, -1.0, 2.0),
+                dataset_path=str(tmpdir),
+                ds_method="sp_recompute_ds",
+                gaussian_direction_method="mean_velocity",
+            )
+            with patch("matplotlib.figure.Figure.savefig") as mock_savefig:
+                ax = plot_demonstration_set(demo_set, cfg, save_as="tmp_plot", hide_axis=True)
+            self.assertGreaterEqual(mock_savefig.call_count, 1)
+            _, kwargs = mock_savefig.call_args
+            self.assertNotIn("bbox_inches", kwargs)
+            self.assertNotIn("pad_inches", kwargs)
+            plt.close(ax.figure)
 
 
 if __name__ == "__main__":

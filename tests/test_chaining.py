@@ -1,8 +1,15 @@
 import unittest
+from pathlib import Path
+import sys
+from types import MethodType
 from typing import Optional
 
 import networkx as nx
 import numpy as np
+
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from configs import StitchConfig
 from src.stitching.chaining import build_chained_ds
@@ -53,6 +60,7 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         attractor: Optional[np.ndarray] = None,
         chain_ds_method: str = "linear",
         precomputed_edge_lookup: Optional[dict] = None,
+        chain_overrides: Optional[dict] = None,
     ):
         path_states = np.asarray(path_states, dtype=float)
         if attractor is None:
@@ -74,6 +82,9 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         cfg.chain.ds_method = chain_ds_method
         cfg.chain.enable_recovery = False
         cfg.chain.blend_length_ratio = 0.10
+        if chain_overrides is not None:
+            for key, value in chain_overrides.items():
+                setattr(cfg.chain, key, value)
 
         chained = build_chained_ds(
             ds_set,
@@ -238,6 +249,93 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(float(chained.transition_edge_ratios[0]), expected_r, places=8)
         self.assertFalse(chained.trigger_state(0, np.array([2.2, 0.0])))
         self.assertTrue(chained.trigger_state(0, np.array([2.9, 0.0])))
+
+    def test_transition_times_respect_configured_minimum(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+            ]
+        )
+        chained, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_overrides={
+                "blend_length_ratio": 0.01,
+                "min_transition_time": 0.5,
+            },
+        )
+        self.assertIsNotNone(chained)
+        self.assertGreater(chained.transition_times.size, 0)
+        self.assertTrue(np.all(chained.transition_times >= 0.5 - 1e-12))
+
+    def test_linear_velocity_is_clipped_by_vmax_without_a_capping(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+            ]
+        )
+        chained, initial, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_overrides={"velocity_max": 0.2},
+        )
+        self.assertIsNotNone(chained)
+        chained.A_seq[0] = -1e8 * np.eye(2)
+        x_next, velocity, _ = chained.step_once(initial.copy(), dt=0.02)
+        self.assertTrue(np.all(np.isfinite(velocity)))
+        self.assertTrue(np.all(np.isfinite(x_next)))
+        self.assertLessEqual(float(np.linalg.norm(velocity)), 0.2 + 1e-12)
+
+    def test_non_finite_velocity_is_safely_zeroed_and_clipped(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+            ]
+        )
+        chained, initial, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_overrides={"velocity_max": 0.25},
+        )
+        self.assertIsNotNone(chained)
+        chained.A_seq[0][:] = np.nan
+        _, velocity, _ = chained.step_once(initial.copy(), dt=0.02)
+        self.assertTrue(np.all(np.isfinite(velocity)))
+        self.assertLessEqual(float(np.linalg.norm(velocity)), 0.25 + 1e-12)
+
+    def test_segmented_chain_uses_same_velocity_safeguards(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.2],
+                [3.0, 0.1],
+            ]
+        )
+        chained, initial, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+            chain_overrides={"velocity_max": 0.3},
+        )
+        self.assertIsNotNone(chained)
+
+        def _huge_velocity(_self, x, idx):
+            return np.array([1e7, -1e7], dtype=float)
+
+        chained._velocity_for_index = MethodType(_huge_velocity, chained)
+        _, velocity, _ = chained.step_once(initial.copy(), dt=0.02)
+        self.assertTrue(np.all(np.isfinite(velocity)))
+        self.assertLessEqual(float(np.linalg.norm(velocity)), 0.3 + 1e-12)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,10 @@ class ChainConfig:
     enable_recovery: bool = False
     stabilization_margin: float = 1e-3
     lmi_tolerance: float = 5e-5
+    # Lower bound on time-based transitions between consecutive subsystems.
+    min_transition_time: float = 0.02
+    # Optional speed clip on chain velocity (None disables clipping).
+    velocity_max: Optional[float] = 6.0
     # Boundary A matrices (single-node data, separate linear system).
     # When False the first / last segment uses multi-node data (≥3 nodes), like the core systems.
     use_boundary_ds_initial: bool = False

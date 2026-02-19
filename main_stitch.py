@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 from src.stitching.metrics import save_results_dataframe, calculate_ds_metrics
 from src.util.load_tools import get_demonstration_set, resolve_data_scales, infer_state_dim_from_demo_set, compute_plot_extent_from_demo_set
@@ -36,8 +37,10 @@ def simulate_trajectories(ds, initial, config):
 
     return simulated_trajectories
 
-def main():
-    config = StitchConfig()
+def main(config: StitchConfig | None = None, results_path: str | None = None):
+    if config is None:
+        config = StitchConfig()
+
     np.random.seed(config.seed)
     pre_computation_results = dict()
 
@@ -52,14 +55,16 @@ def main():
     )
     state_dim = infer_state_dim_from_demo_set(demo_set)
     config.plot_extent = compute_plot_extent_from_demo_set(demo_set, state_dim=state_dim)
-    plot_demonstration_set(demo_set, config, save_as='Demonstrations_Raw', hide_axis=True)
+    if config.save_fig:
+        plot_demonstration_set(demo_set, config, save_as='Demonstrations_Raw', hide_axis=True)
 
     #  ============= Fit a DS to each demonstration =============
     t0 = time.time()
     ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config.damm)
     pre_computation_results['ds_compute_time'] = time.time() - t0
-    plot_demonstration_set(norm_demo_set, config, save_as='Demonstrations_Norm', hide_axis=True)
-    plot_ds_set_gaussians(ds_set, config, include_trajectory=True, save_as='Demonstrations_Gaussians', hide_axis=True)
+    if config.save_fig:
+        plot_demonstration_set(norm_demo_set, config, save_as='Demonstrations_Norm', hide_axis=True)
+        plot_ds_set_gaussians(ds_set, config, include_trajectory=True, save_as='Demonstrations_Gaussians', hide_axis=True)
 
     #  ============= Construct Gaussian Graph =============
     t0 = time.time()
@@ -72,12 +77,14 @@ def main():
                           bhattacharyya_threshold=config.bhattacharyya_threshold)
     gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
     pre_computation_results['gg_compute_time'] = time.time() - t0
-    plot_gaussian_graph(gg, config, save_as='Gaussian_Graph', hide_axis=True)
+    if config.save_fig:
+        plot_gaussian_graph(gg, config, save_as='Gaussian_Graph', hide_axis=True)
 
     #  ============= Pre-compute segment DSs (for chaining only) =============
     t0 = time.time()
     segment_ds_lookup = dict()
-    if config.ds_method == "chain":
+    precompute_chain_segments = bool(getattr(config, "chain_precompute_segments", True))
+    if config.ds_method == "chain" and precompute_chain_segments:
 
         all_segments_to_precompute = gg.get_all_simple_paths(nr_edges=config.chain.subsystem_edges)
         for segment in all_segments_to_precompute:
@@ -86,8 +93,11 @@ def main():
             segment_nodes = tuple(e[0] for e in segment) + (segment[-1][1],)
 
             # compute the segment DS and store in lookup
-            segment_ds = _compute_segment_DS(ds_set, gg, segment_nodes, config)
-            segment_ds_lookup[segment_nodes] = segment_ds
+            try:
+                segment_ds = _compute_segment_DS(ds_set, gg, segment_nodes, config)
+                segment_ds_lookup[segment_nodes] = segment_ds
+            except Exception as exc:
+                print(f"Warning: failed to precompute segment {segment_nodes}: {exc}")
 
 
     pre_computation_results['precomputation_time'] = time.time() - t0
@@ -100,9 +110,15 @@ def main():
 
         # Construct Gaussian Graph and Stitched DS
         print('Constructing Gaussian Graph and Stitched DS...')
-        stitched_ds, gg_solution_nodes, stitching_stats = construct_stitched_ds(
+        stitch_result = construct_stitched_ds(
             config, gg, norm_demo_set, ds_set, reversed_ds_set, initial, attractor, segment_ds_lookup=segment_ds_lookup,
         )
+        if isinstance(stitch_result, tuple) and len(stitch_result) == 4:
+            stitched_ds, _gg_obj, gg_solution_nodes, stitching_stats = stitch_result
+        elif isinstance(stitch_result, tuple) and len(stitch_result) == 3:
+            stitched_ds, gg_solution_nodes, stitching_stats = stitch_result
+        else:
+            raise RuntimeError("construct_stitched_ds returned unexpected result shape")
 
         if stitched_ds is None or not hasattr(stitched_ds, 'damm') or stitched_ds.damm is None or not hasattr(stitched_ds.damm, 'Mu'):
             print(f"Warning: Skipping Stitched DS object with incomplete DAMM clustering")
@@ -161,10 +177,13 @@ def main():
 
     # Save Results to CSV
     if all_results:
-        results_path = save_folder + f"results_{config.seed}.csv"
-        save_results_dataframe(all_results, results_path)
+        final_results_path = results_path or (save_folder + f"results_{config.seed}.csv")
+        os.makedirs(os.path.dirname(final_results_path), exist_ok=True)
+        save_results_dataframe(all_results, final_results_path)
     else:
         print("No results to save.")
+
+    return all_results
 
 
 if __name__ == "__main__":

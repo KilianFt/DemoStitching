@@ -68,6 +68,22 @@ class LiveUsedDatapointsTests(unittest.TestCase):
         self.assertLessEqual(x_min, 1.0 - 0.2)
         self.assertGreaterEqual(z_max, 7.0 + 0.2)
 
+    def test_compute_view_extent_3d_is_compacter_than_legacy_padding(self):
+        pts = np.array(
+            [
+                [1.0, 2.0, 3.0],
+                [3.0, 4.0, 7.0],
+            ]
+        )
+        x_min, x_max, y_min, y_max, z_min, z_max = _compute_view_extent_3d(
+            pts, padding_ratio=0.1, padding_abs=0.2
+        )
+        width = x_max - x_min
+        legacy_width = 2.0 * (0.5 * 4.0 + max(0.2, 0.1 * 4.0))  # max_span=4
+        self.assertLess(width, legacy_width)
+        self.assertAlmostEqual(width, y_max - y_min, places=8)
+        self.assertAlmostEqual(width, z_max - z_min, places=8)
+
     def test_draw_ds_field_3d_creates_quiver(self):
         class _DS:
             @staticmethod
