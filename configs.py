@@ -37,9 +37,10 @@ class ChainConfig:
     use_boundary_ds_initial: bool = False
     use_boundary_ds_end: bool = False
     # Chain plotting mode (2D):
-    # - "line_regions": hard partitions split by mean-normal transition lines.
-    # - "time_blend": blends adjacent DSs in transition zones; draws lines only
-    #   for boundaries without a transition zone.
+    # - "line_regions": hard partitions from nearest path segment
+    #   (line-segment Voronoi).
+    # - "time_blend": same ownership, with blending across adjacent transition
+    #   boundaries; draws black separators where no transition zone exists.
     plot_mode: str = "line_regions"
     plot_grid_resolution: int = 500
     # Display only a corridor around the chain path (2D Euclidean distance).
@@ -70,7 +71,7 @@ class StitchConfig:
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None
     attractor: Optional[np.ndarray] = None
-    ds_method: str = "sp_recompute_all"
+    ds_method: str = "chain"
     reverse_gaussians: bool = True
     param_dist: int = 2
     param_cos: int = 1

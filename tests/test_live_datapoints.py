@@ -167,7 +167,8 @@ class LiveUsedDatapointsTests(unittest.TestCase):
         self.assertIsNotNone(app.chain_region_artist)
         self.assertEqual(app.chain_region_artist.get_array().shape[0], 18)
         self.assertEqual(app.chain_region_artist.get_array().shape[1], 18)
-        self.assertEqual(len(app.chain_transition_line_artists), 2)
+        self.assertEqual(len(app.chain_transition_line_artists), 1)
+        self.assertGreater(len(app.chain_transition_line_artists[0].get_segments()), 0)
         plt.close(fig)
 
     def test_draw_ds_field_2d_chain_active_ds_mode_draws_only_active_field(self):

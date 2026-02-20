@@ -142,11 +142,28 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
             simulated_trajectories = simulate_trajectories(stitched_ds, initial, config)
 
             # Calculate DS metrics
-            # TODO we should make sure to use the correct x and xdot for spt method here (not all x and x_dot)
+            # For spt methods, evaluate only against shortest-path data (not the full tree).
             print('Calculating DS metrics...')
+            if config.ds_method.startswith('spt'):
+                sp_nodes = gg.shortest_path(initial, attractor)
+                sp_x_parts, sp_xd_parts = [], []
+                for node_id in sp_nodes:
+                    ds_idx, gaussian_idx = node_id
+                    mask = ds_set[ds_idx].assignment_arr == gaussian_idx
+                    ax = ds_set[ds_idx].x[mask]
+                    axd = ds_set[ds_idx].x_dot[mask]
+                    if node_id in gg.gaussian_reversal_map:
+                        axd = -axd
+                    sp_x_parts.append(ax)
+                    sp_xd_parts.append(axd)
+                x_ref = np.vstack(sp_x_parts)
+                x_dot_ref = np.vstack(sp_xd_parts)
+            else:
+                x_ref = stitched_ds.x
+                x_dot_ref = stitched_ds.x_dot
             ds_metrics = calculate_ds_metrics(
-                x_ref=stitched_ds.x,
-                x_dot_ref=stitched_ds.x_dot,
+                x_ref=x_ref,
+                x_dot_ref=x_dot_ref,
                 ds=stitched_ds,
                 sim_trajectories=simulated_trajectories,
                 initial=initial,

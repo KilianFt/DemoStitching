@@ -160,7 +160,7 @@ class ChainedDS:
         self.assignment_arr = np.argmax(gamma, axis=0).astype(int)
 
         self.tol = 10e-3
-        self.max_iter = 10000
+        self.max_iter = 100000
         self.last_sim_indices = None
 
         # Common runtime state.
@@ -277,14 +277,21 @@ class ChainedDS:
         gamma_history = []
         index_history = [self._runtime_idx]
 
-        for _ in range(self.max_iter):
+        converged = False
+        for i in range(self.max_iter):
             if np.linalg.norm(x - self.x_att) < self.tol:
+                converged = True
                 break
 
             x, _, idx = self.step_once(x, dt=dt)
             trajectory.append(x.copy())
             index_history.append(idx)
             gamma_history.append(self.damm.compute_gamma(x.reshape(1, -1))[:, 0])
+
+        if converged:
+            print("Converged within max iteration")
+        else:
+            print("Exceed max iteration")
 
         self.last_sim_indices = np.array(index_history, dtype=int)
         return np.vstack(trajectory), np.array(gamma_history)

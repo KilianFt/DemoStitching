@@ -710,97 +710,12 @@ def resolve_chain_plot_mode(mode: str) -> str:
 
 
 def _is_chain_ds_for_region_plot(ds) -> bool:
+    has_segment_geometry = hasattr(ds, "node_sources") or hasattr(ds, "state_sequence")
     return (
         hasattr(ds, "n_systems")
-        and hasattr(ds, "transition_centers")
-        and hasattr(ds, "transition_normals")
+        and has_segment_geometry
         and hasattr(ds, "_velocity_for_index")
     )
-
-
-def _chain_nominal_index_from_lines(ds, x: np.ndarray) -> int:
-    idx_line, _ = _chain_line_state(ds, x)
-    return int(idx_line)
-
-
-def _chain_nominal_index_from_lines_with_regime_fallback(ds, x: np.ndarray) -> int:
-    x = np.asarray(x, dtype=float).reshape(-1)
-    n_systems = int(max(1, getattr(ds, "n_systems", 1)))
-    n_trans = min(
-        n_systems - 1,
-        len(np.asarray(getattr(ds, "transition_centers", []))),
-        len(np.asarray(getattr(ds, "transition_normals", []))),
-    )
-    if n_trans <= 0:
-        return 0
-
-    idx_line, ambiguous = _chain_line_state(ds, x)
-    if not ambiguous:
-        return idx_line
-
-    if x.shape[0] < 2:
-        return idx_line
-    xy = x[:2].reshape(1, 2)
-    # Keep fallback local to the adjacent regimes around the line-prefix
-    # boundary. This avoids non-local color islands that contradict the
-    # transition-line interpretation.
-    left_idx = int(np.clip(idx_line, 0, n_systems - 1))
-    right_idx = int(np.clip(left_idx + 1, 0, n_systems - 1))
-    if right_idx == left_idx:
-        return left_idx
-
-    dist = np.full((n_systems,), np.inf, dtype=float)
-    for idx in (left_idx, right_idx):
-        seg = _chain_regime_segment_2d(ds, idx)
-        if seg is None:
-            continue
-        a, b = seg
-        dist[idx] = _distance_points_to_segment_2d(xy, a, b)[0]
-    finite = np.isfinite(dist)
-    if np.any(finite):
-        return int(np.argmin(dist))
-    return idx_line
-
-
-def _chain_line_state(ds, x: np.ndarray):
-    x = np.asarray(x, dtype=float).reshape(-1)
-    n_systems = int(max(1, getattr(ds, "n_systems", 1)))
-    n_trans = min(
-        n_systems - 1,
-        len(np.asarray(getattr(ds, "transition_centers", []))),
-        len(np.asarray(getattr(ds, "transition_normals", []))),
-    )
-    if n_trans <= 0:
-        return 0, False
-
-    crossed = []
-    for k in range(n_trans):
-        center = np.asarray(ds.transition_centers[k], dtype=float).reshape(-1)
-        normal = np.asarray(ds.transition_normals[k], dtype=float).reshape(-1)
-        dim = min(center.shape[0], normal.shape[0], x.shape[0])
-        if dim <= 0:
-            crossed.append(False)
-            continue
-        signed = float(np.dot(x[:dim] - center[:dim], normal[:dim]))
-        crossed.append(bool(signed >= 0.0))
-
-    idx_line = 0
-    for c in crossed:
-        if c:
-            idx_line += 1
-        else:
-            break
-    idx_line = int(np.clip(idx_line, 0, n_systems - 1))
-
-    seen_false = False
-    ambiguous = False
-    for c in crossed:
-        if not c:
-            seen_false = True
-        elif seen_false:
-            ambiguous = True
-            break
-    return idx_line, ambiguous
 
 
 def _chain_velocity_for_idx(ds, x: np.ndarray, idx: int) -> np.ndarray:
@@ -810,35 +725,6 @@ def _chain_velocity_for_idx(ds, x: np.ndarray, idx: int) -> np.ndarray:
     if velocity.shape[0] != x.shape[0]:
         raise ValueError("Chain DS velocity dimension mismatch.")
     return velocity
-
-
-def _chain_transition_progress(ds, boundary_idx: int, x: np.ndarray) -> float:
-    centers = np.asarray(getattr(ds, "transition_centers", []), dtype=float)
-    normals = np.asarray(getattr(ds, "transition_normals", []), dtype=float)
-    if boundary_idx < 0 or boundary_idx >= len(centers) or boundary_idx >= len(normals):
-        return 1.0
-
-    center = np.asarray(centers[boundary_idx], dtype=float).reshape(-1)
-    normal = np.asarray(normals[boundary_idx], dtype=float).reshape(-1)
-    x = np.asarray(x, dtype=float).reshape(-1)
-    dim = min(center.shape[0], normal.shape[0], x.shape[0])
-    if dim <= 0:
-        return 1.0
-
-    signed = float(np.dot(x[:dim] - center[:dim], normal[:dim]))
-    if signed <= 0.0:
-        return 0.0
-
-    distances = np.asarray(getattr(ds, "transition_distances", []), dtype=float).reshape(-1)
-    if boundary_idx < len(distances):
-        distance = float(distances[boundary_idx])
-        if not np.isfinite(distance) or distance <= 1e-12:
-            return 1.0
-        transition_length = distance
-    else:
-        transition_length = 1.0
-
-    return float(np.clip(signed / transition_length, 0.0, 1.0))
 
 
 def _boundary_has_transition_zone(ds, boundary_idx: int) -> bool:
@@ -855,56 +741,39 @@ def _boundary_has_transition_zone(ds, boundary_idx: int) -> bool:
     return False
 
 
-def _is_local_to_transition_neighborhood(ds, boundary_idx: int, x: np.ndarray) -> bool:
-    x = np.asarray(x, dtype=float).reshape(-1)
-    if x.shape[0] < 2:
-        return True
-    distances = np.asarray(getattr(ds, "transition_distances", []), dtype=float).reshape(-1)
-    if boundary_idx >= len(distances):
-        return True
-    transition_length = float(distances[boundary_idx])
-    if not np.isfinite(transition_length) or transition_length <= 1e-12:
-        return True
-
-    xy = x[:2].reshape(1, 2)
-    seg_left = _chain_regime_segment_2d(ds, boundary_idx)
-    seg_right = _chain_regime_segment_2d(ds, boundary_idx + 1)
-    dists = []
-    if seg_left is not None:
-        dists.append(float(_distance_points_to_segment_2d(xy, seg_left[0], seg_left[1])[0]))
-    if seg_right is not None:
-        dists.append(float(_distance_points_to_segment_2d(xy, seg_right[0], seg_right[1])[0]))
-    if len(dists) == 0:
-        return True
-    neighborhood_scale = 1.5
-    return float(min(dists)) <= neighborhood_scale * transition_length
-
-
-def _closest_regime_info_2d(ds, x: np.ndarray):
-    x = np.asarray(x, dtype=float).reshape(-1)
-    if x.shape[0] < 2:
-        return None, np.inf, np.array([], dtype=float)
-    xy = x[:2].reshape(1, 2)
+def _chain_segment_distances_2d(ds, points_xy: np.ndarray) -> np.ndarray:
+    points_xy = np.asarray(points_xy, dtype=float)
+    if points_xy.ndim != 2 or points_xy.shape[0] == 0 or points_xy.shape[1] < 2:
+        n_systems = int(max(1, getattr(ds, "n_systems", 1)))
+        return np.full((points_xy.shape[0], n_systems), np.inf, dtype=float)
+    n_points = int(points_xy.shape[0])
     n_systems = int(max(1, getattr(ds, "n_systems", 1)))
-    dist = np.full((n_systems,), np.inf, dtype=float)
+    dist_matrix = np.full((n_points, n_systems), np.inf, dtype=float)
     for idx in range(n_systems):
         seg = _chain_regime_segment_2d(ds, idx)
         if seg is None:
             continue
         a, b = seg
-        dist[idx] = float(_distance_points_to_segment_2d(xy, a, b)[0])
-    finite = np.isfinite(dist)
-    if not np.any(finite):
-        return None, np.inf, dist
-    idx = int(np.argmin(dist))
-    return idx, float(dist[idx]), dist
+        dist_matrix[:, idx] = _distance_points_to_segment_2d(points_xy[:, :2], a, b)
+    return dist_matrix
 
 
-def _draw_nonadjacent_region_boundaries_2d(
+def _transition_blend_width(ds, boundary_idx: int) -> float:
+    distances = np.asarray(getattr(ds, "transition_distances", []), dtype=float).reshape(-1)
+    if boundary_idx < len(distances):
+        d = float(distances[boundary_idx])
+        if np.isfinite(d) and d > 1e-12:
+            return 1.5 * d
+    return 0.0
+
+
+def _draw_region_boundaries_2d(
     ax,
     region_idx_img: np.ndarray,
     x_vec: np.ndarray,
     y_vec: np.ndarray,
+    ds,
+    mode: str,
     x_min: float,
     x_max: float,
     y_min: float,
@@ -928,29 +797,45 @@ def _draw_nonadjacent_region_boundaries_2d(
     dy = float(y_vec[1] - y_vec[0])
     segments = []
 
+    def _should_draw(a: int, b: int) -> bool:
+        if int(a) == int(b):
+            return False
+        if mode == "line_regions":
+            return True
+        if abs(int(a) - int(b)) > 1:
+            return True
+        boundary_idx = min(int(a), int(b))
+        return not _boundary_has_transition_zone(ds, boundary_idx)
+
     left = region[:, :-1]
     right = region[:, 1:]
-    mask_v = (left != right) & (np.abs(left - right) > 1)
-    if np.any(mask_v):
-        ii, jj = np.nonzero(mask_v)
-        x_mid = 0.5 * (x_vec[jj] + x_vec[jj + 1])
-        y_ctr = y_vec[ii]
-        y0 = np.maximum(y_ctr - 0.5 * dy, y_min)
-        y1 = np.minimum(y_ctr + 0.5 * dy, y_max)
+    if np.any(left != right):
+        ii, jj = np.nonzero(left != right)
         for k in range(ii.size):
-            segments.append([(x_mid[k], y0[k]), (x_mid[k], y1[k])])
+            a = int(left[ii[k], jj[k]])
+            b = int(right[ii[k], jj[k]])
+            if not _should_draw(a, b):
+                continue
+            x_mid = 0.5 * (x_vec[jj[k]] + x_vec[jj[k] + 1])
+            y_ctr = y_vec[ii[k]]
+            y0 = max(float(y_ctr - 0.5 * dy), float(y_min))
+            y1 = min(float(y_ctr + 0.5 * dy), float(y_max))
+            segments.append([(x_mid, y0), (x_mid, y1)])
 
     low = region[:-1, :]
     up = region[1:, :]
-    mask_h = (low != up) & (np.abs(low - up) > 1)
-    if np.any(mask_h):
-        ii, jj = np.nonzero(mask_h)
-        y_mid = 0.5 * (y_vec[ii] + y_vec[ii + 1])
-        x_ctr = x_vec[jj]
-        x0 = np.maximum(x_ctr - 0.5 * dx, x_min)
-        x1 = np.minimum(x_ctr + 0.5 * dx, x_max)
+    if np.any(low != up):
+        ii, jj = np.nonzero(low != up)
         for k in range(ii.size):
-            segments.append([(x0[k], y_mid[k]), (x1[k], y_mid[k])])
+            a = int(low[ii[k], jj[k]])
+            b = int(up[ii[k], jj[k]])
+            if not _should_draw(a, b):
+                continue
+            y_mid = 0.5 * (y_vec[ii[k]] + y_vec[ii[k] + 1])
+            x_ctr = x_vec[jj[k]]
+            x0 = max(float(x_ctr - 0.5 * dx), float(x_min))
+            x1 = min(float(x_ctr + 0.5 * dx), float(x_max))
+            segments.append([(x0, y_mid), (x1, y_mid)])
 
     if len(segments) == 0:
         return None
@@ -985,7 +870,7 @@ def _default_chain_region_colors(n_systems: int) -> np.ndarray:
 def evaluate_chain_regions(ds, points: np.ndarray, mode: str = "line_regions", base_colors: np.ndarray = None):
     """Evaluate chain region ownership and associated field on query points."""
     if not _is_chain_ds_for_region_plot(ds):
-        raise TypeError("Chain region evaluation requires a chain DS with transition geometry and _velocity_for_index.")
+        raise TypeError("Chain region evaluation requires a chain DS with segment geometry and _velocity_for_index.")
 
     mode = resolve_chain_plot_mode(mode)
     points = np.asarray(points, dtype=float)
@@ -1009,92 +894,56 @@ def evaluate_chain_regions(ds, points: np.ndarray, mode: str = "line_regions", b
     region_idx = np.zeros((n_points,), dtype=int)
     weights = np.zeros((n_points, n_systems), dtype=float)
     velocities = np.zeros_like(points)
+    points_xy = points[:, :2] if points.shape[1] >= 2 else np.zeros((n_points, 2), dtype=float)
+    dist_matrix = _chain_segment_distances_2d(ds, points_xy)
+
+    if np.any(np.isfinite(dist_matrix)):
+        valid = np.any(np.isfinite(dist_matrix), axis=1)
+        nearest_idx = np.zeros((n_points,), dtype=int)
+        nearest_idx[valid] = np.argmin(dist_matrix[valid], axis=1)
+    else:
+        nearest_idx = np.zeros((n_points,), dtype=int)
+    region_idx[:] = nearest_idx
+    weights[np.arange(n_points), nearest_idx] = 1.0
+
+    if mode == "time_blend" and n_systems >= 2:
+        second_dist = dist_matrix.copy()
+        second_dist[np.arange(n_points), nearest_idx] = np.inf
+        has_second = np.any(np.isfinite(second_dist), axis=1)
+        second_idx = np.zeros((n_points,), dtype=int)
+        second_idx[has_second] = np.argmin(second_dist[has_second], axis=1)
+
+        adjacent = has_second & (np.abs(second_idx - nearest_idx) == 1)
+        if np.any(adjacent):
+            boundary_idx = np.minimum(nearest_idx, second_idx)
+            for b_idx in np.unique(boundary_idx[adjacent]):
+                if not _boundary_has_transition_zone(ds, int(b_idx)):
+                    adjacent[boundary_idx == int(b_idx)] = False
+
+        if np.any(adjacent):
+            d0 = dist_matrix[np.arange(n_points), nearest_idx]
+            d1 = second_dist[np.arange(n_points), second_idx]
+            gap = d1 - d0
+            widths = np.zeros((n_points,), dtype=float)
+            for b_idx in np.unique(np.minimum(nearest_idx[adjacent], second_idx[adjacent])):
+                widths[np.minimum(nearest_idx, second_idx) == int(b_idx)] = _transition_blend_width(ds, int(b_idx))
+
+            blend_mask = adjacent & np.isfinite(gap) & (widths > 1e-12)
+            if np.any(blend_mask):
+                alpha = np.clip(0.5 + 0.5 * gap / np.maximum(widths, 1e-12), 0.0, 1.0)
+                rows = np.nonzero(blend_mask)[0]
+                weights[rows, :] = 0.0
+                weights[rows, nearest_idx[rows]] = alpha[rows]
+                weights[rows, second_idx[rows]] = 1.0 - alpha[rows]
 
     for i in range(n_points):
-        x = points[i]
-        # Mean-normal line partition first; ambiguous regions fallback to nearest regime segment.
-        idx_line, ambiguous = _chain_line_state(ds, x)
-        idx = _chain_nominal_index_from_lines_with_regime_fallback(ds, x)
-        idx_closest = int(idx)
-        closest_idx_2d, _, _ = _closest_regime_info_2d(ds, x)
-        if closest_idx_2d is not None:
-            idx_closest = int(closest_idx_2d)
-        if mode == "time_blend" and ambiguous and closest_idx_2d is not None:
-            idx = int(idx_closest)
-
-        w = np.zeros((n_systems,), dtype=float)
-        w[idx] = 1.0
-        blended = False
-        if mode == "time_blend":
-            prev_idx = idx - 1
-            if (
-                prev_idx >= 0
-                and not ambiguous
-                and int(idx) == int(idx_line)
-                and _boundary_has_transition_zone(ds, prev_idx)
-                and _is_local_to_transition_neighborhood(ds, prev_idx, x)
-            ):
-                alpha = _chain_transition_progress(ds, prev_idx, x)
-                w[:] = 0.0
-                w[prev_idx] = 1.0 - alpha
-                w[idx] = alpha
-                blended = True
-
-        region_idx[i] = int(idx)
-        weights[i] = w
-
-        nonzero_idx = np.flatnonzero(w > 1e-12)
+        nonzero_idx = np.flatnonzero(weights[i] > 1e-12)
         for k in nonzero_idx:
-            velocities[i] += w[k] * _chain_velocity_for_idx(ds, x, int(k))
+            velocities[i] += weights[i, k] * _chain_velocity_for_idx(ds, points[i], int(k))
 
     rgba = weights @ base_colors[:, :4]
     rgba = np.clip(rgba, 0.0, 1.0)
     return velocities, region_idx, weights, rgba
-
-
-def _transition_line_endpoints_2d(center: np.ndarray, normal: np.ndarray, x_min: float, x_max: float, y_min: float, y_max: float):
-    center = np.asarray(center, dtype=float).reshape(-1)
-    normal = np.asarray(normal, dtype=float).reshape(-1)
-    if center.shape[0] < 2 or normal.shape[0] < 2:
-        return None
-    n = normal[:2]
-    n_norm = float(np.linalg.norm(n))
-    if n_norm <= 1e-12:
-        return None
-    n = n / n_norm
-    d = np.array([-n[1], n[0]], dtype=float)
-    d_norm = float(np.linalg.norm(d))
-    if d_norm <= 1e-12:
-        return None
-    d = d / d_norm
-
-    L = 2.5 * np.hypot(float(x_max - x_min), float(y_max - y_min))
-    c = center[:2]
-    p0 = c - L * d
-    p1 = c + L * d
-    return p0, p1
-
-
-def _transition_line_segment_2d(center: np.ndarray, normal: np.ndarray, half_length: float):
-    center = np.asarray(center, dtype=float).reshape(-1)
-    normal = np.asarray(normal, dtype=float).reshape(-1)
-    if center.shape[0] < 2 or normal.shape[0] < 2:
-        return None
-    n = normal[:2]
-    n_norm = float(np.linalg.norm(n))
-    if n_norm <= 1e-12:
-        return None
-    n = n / n_norm
-    d = np.array([-n[1], n[0]], dtype=float)
-    d_norm = float(np.linalg.norm(d))
-    if d_norm <= 1e-12:
-        return None
-    d = d / d_norm
-    L = float(max(half_length, 1e-12))
-    c = center[:2]
-    p0 = c - L * d
-    p1 = c + L * d
-    return p0, p1
 
 
 def _distance_points_to_segment_2d(points_xy: np.ndarray, a_xy: np.ndarray, b_xy: np.ndarray) -> np.ndarray:
@@ -1111,10 +960,70 @@ def _distance_points_to_segment_2d(points_xy: np.ndarray, a_xy: np.ndarray, b_xy
     return np.linalg.norm(points_xy - proj, axis=1)
 
 
+def _chain_transition_core_segments_2d(ds):
+    """Build non-overlapping core edges from transition triples, if available.
+
+    For boundary i between systems i and i+1 we use:
+      - start_i -> center_i for system i
+      - center_last -> end_last for the final system
+    where start/end come from transition ratio nodes and center from
+    transition centers. This decouples spatial partitioning from the
+    internal subsystem fitting window.
+    """
+    n_systems = int(max(1, getattr(ds, "n_systems", 1)))
+    if n_systems < 2:
+        return None
+
+    centers = np.asarray(getattr(ds, "transition_centers", []), dtype=float)
+    starts = np.asarray(getattr(ds, "transition_ratio_start_nodes", []), dtype=float)
+    ends = np.asarray(getattr(ds, "transition_ratio_nodes", []), dtype=float)
+
+    if centers.ndim == 1:
+        centers = centers.reshape(1, -1)
+    if starts.ndim == 1:
+        starts = starts.reshape(1, -1)
+    if ends.ndim == 1:
+        ends = ends.reshape(1, -1)
+
+    n_boundaries = n_systems - 1
+    if (
+        centers.ndim != 2
+        or starts.ndim != 2
+        or ends.ndim != 2
+        or centers.shape[0] < n_boundaries
+        or starts.shape[0] < n_boundaries
+        or ends.shape[0] < n_boundaries
+    ):
+        return None
+
+    def _safe_xy(arr, row_idx):
+        v = np.asarray(arr[row_idx], dtype=float).reshape(-1)
+        if v.shape[0] < 2 or not np.all(np.isfinite(v[:2])):
+            return None
+        return v[:2].copy()
+
+    segments = []
+    for i in range(n_systems):
+        if i < n_systems - 1:
+            a = _safe_xy(starts, i)
+            b = _safe_xy(centers, i)
+        else:
+            a = _safe_xy(centers, n_systems - 2)
+            b = _safe_xy(ends, n_systems - 2)
+        if a is None or b is None:
+            return None
+        segments.append((a, b))
+    return segments
+
+
 def _chain_regime_segment_2d(ds, idx: int):
     idx = int(idx)
     n_systems = int(max(1, getattr(ds, "n_systems", 1)))
     idx = int(np.clip(idx, 0, n_systems - 1))
+
+    core_segments = _chain_transition_core_segments_2d(ds)
+    if core_segments is not None and 0 <= idx < len(core_segments):
+        return core_segments[idx]
 
     src = np.asarray(getattr(ds, "node_sources", []), dtype=float)
     tgt = np.asarray(getattr(ds, "node_targets", []), dtype=float)
@@ -1152,14 +1061,7 @@ def _distance_points_to_assigned_regime_2d(ds, points_xy: np.ndarray, region_idx
         return np.zeros((0,), dtype=float)
 
     n_systems = int(max(1, getattr(ds, "n_systems", 1)))
-    dist_matrix = np.full((n_points, n_systems), np.inf, dtype=float)
-    for idx in range(n_systems):
-        seg = _chain_regime_segment_2d(ds, idx)
-        if seg is None:
-            continue
-        a, b = seg
-        dist_matrix[:, idx] = _distance_points_to_segment_2d(points_xy, a, b)
-
+    dist_matrix = _chain_segment_distances_2d(ds, points_xy)
     idx_clipped = np.clip(region_idx, 0, n_systems - 1)
     return dist_matrix[np.arange(n_points), idx_clipped]
 
@@ -1253,67 +1155,24 @@ def draw_chain_partition_field_2d(
 
     transition_lines = []
     if bool(show_transition_lines):
-        line_half_length = None
-        if path_bandwidth is not None and np.isfinite(path_bandwidth) and path_bandwidth > 0.0:
-            line_half_length = float(path_bandwidth)
-        centers = np.asarray(getattr(ds, "transition_centers", []), dtype=float)
-        normals = np.asarray(getattr(ds, "transition_normals", []), dtype=float)
-        distances = np.asarray(getattr(ds, "transition_distances", []), dtype=float).reshape(-1)
-        times = np.asarray(getattr(ds, "transition_times", []), dtype=float).reshape(-1)
-        n_lines = min(len(centers), len(normals))
-        for i in range(n_lines):
-            if mode == "time_blend":
-                has_spatial_transition = (
-                    i < len(distances)
-                    and np.isfinite(distances[i])
-                    and float(distances[i]) > 1e-12
-                )
-                has_temporal_transition = (
-                    i < len(times)
-                    and np.isfinite(times[i])
-                    and float(times[i]) > 1e-12
-                )
-                if has_spatial_transition or has_temporal_transition:
-                    # Transition zone is visualized through color blending.
-                    continue
-            if line_half_length is None:
-                endpoints = _transition_line_endpoints_2d(
-                    centers[i], normals[i], x_min=float(x_min), x_max=float(x_max), y_min=float(y_min), y_max=float(y_max)
-                )
-            else:
-                endpoints = _transition_line_segment_2d(
-                    centers[i], normals[i], half_length=line_half_length
-                )
-            if endpoints is None:
-                continue
-            p0, p1 = endpoints
-            line, = ax.plot(
-                [p0[0], p1[0]],
-                [p0[1], p1[1]],
-                linestyle="-",
-                linewidth=1.6,
-                color="black",
-                alpha=0.95,
-                zorder=3,
-            )
-            transition_lines.append(line)
-        if mode == "time_blend":
-            nonadjacent_boundary_artist = _draw_nonadjacent_region_boundaries_2d(
-                ax=ax,
-                region_idx_img=region_idx.reshape(plot_sample, plot_sample),
-                x_vec=x_vec,
-                y_vec=y_vec,
-                x_min=float(x_min),
-                x_max=float(x_max),
-                y_min=float(y_min),
-                y_max=float(y_max),
-                linewidth=1.6,
-                color="black",
-                alpha=0.95,
-                zorder=3.0,
-            )
-            if nonadjacent_boundary_artist is not None:
-                transition_lines.append(nonadjacent_boundary_artist)
+        boundary_artist = _draw_region_boundaries_2d(
+            ax=ax,
+            region_idx_img=region_idx.reshape(plot_sample, plot_sample),
+            x_vec=x_vec,
+            y_vec=y_vec,
+            ds=ds,
+            mode=mode,
+            x_min=float(x_min),
+            x_max=float(x_max),
+            y_min=float(y_min),
+            y_max=float(y_max),
+            linewidth=1.6,
+            color="black",
+            alpha=0.95,
+            zorder=3.0,
+        )
+        if boundary_artist is not None:
+            transition_lines.append(boundary_artist)
 
     return {
         "region_image": region_image,

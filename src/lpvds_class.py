@@ -29,7 +29,7 @@ class lpvds_class():
 
         # simulation parameters
         self.tol = 10E-3
-        self.max_iter = 10000
+        self.max_iter = 100000
 
         # define output path
         file_path           = os.path.dirname(os.path.realpath(__file__))  
@@ -259,7 +259,7 @@ class lpvds_class():
         instance.dim = instance.x_att.shape[1]
         instance.K = 1
         instance.tol = 10E-3
-        instance.max_iter = 100000
+        instance.max_iter = 10000
         instance.A = np.tile(-1.0 * np.eye(instance.dim), (instance.K, 1, 1))
         
         return instance

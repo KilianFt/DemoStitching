@@ -40,6 +40,14 @@ class _DummyChainDS:
             ],
             dtype=float,
         )
+        self.node_targets = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ],
+            dtype=float,
+        )
         self.transition_centers = np.array(
             [
                 [0.0, 0.0],
@@ -88,15 +96,16 @@ class ChainPlotRegionTests(unittest.TestCase):
         np.testing.assert_allclose(np.sum(weights, axis=1), np.ones(points.shape[0]), atol=1e-8)
         np.testing.assert_allclose(np.max(weights, axis=1), np.ones(points.shape[0]), atol=1e-8)
 
-    def test_line_regions_follow_mean_normal_lines_not_node_distance(self):
+    def test_line_regions_follow_segment_voronoi_not_transition_geometry(self):
         ds = _DummyChainDS()
-        # Move source nodes so nearest-node ownership would differ, but line partition should stay unchanged.
-        ds.node_sources = np.array([[-10.0, 0.0], [10.0, 0.0], [20.0, 0.0]], dtype=float)
-        points = np.array([[0.90, 0.0]], dtype=float)
+        # Transition geometry points all to the last system, but segment-distance
+        # Voronoi ownership should still choose the closest segment.
+        ds.transition_centers = np.array([[-100.0, 0.0], [-50.0, 0.0]], dtype=float)
+        points = np.array([[-0.80, 0.0]], dtype=float)
         _, region_idx, weights, _ = evaluate_chain_regions(ds, points, mode="line_regions")
 
-        self.assertEqual(int(region_idx[0]), 1)
-        self.assertAlmostEqual(float(weights[0, 1]), 1.0, places=8)
+        self.assertEqual(int(region_idx[0]), 0)
+        self.assertAlmostEqual(float(weights[0, 0]), 1.0, places=8)
 
     def test_ambiguous_line_intersection_region_uses_nearest_regime_segment(self):
         ds = _DummyChainDS()
@@ -138,7 +147,7 @@ class ChainPlotRegionTests(unittest.TestCase):
         self.assertAlmostEqual(float(weights[0, 1]), 1.0, places=8)
         self.assertAlmostEqual(float(velocities[0, 0]), 2.0, places=8)
 
-    def test_ambiguous_fallback_stays_local_to_adjacent_regimes(self):
+    def test_line_regions_uses_global_closest_segment_even_if_normals_are_nonmonotonic(self):
         ds = _DummyChainDS()
         ds.n_systems = 4
         ds.node_sources = np.array(
@@ -159,7 +168,7 @@ class ChainPlotRegionTests(unittest.TestCase):
             ],
             dtype=float,
         )
-        # Non-monotonic crossing at x=2.1: [False, True, True].
+        # Non-monotonic transition geometry should not affect segment Voronoi ownership.
         ds.transition_centers = np.array(
             [
                 [5.0, 0.0],
@@ -179,8 +188,26 @@ class ChainPlotRegionTests(unittest.TestCase):
         points = np.array([[2.1, 0.0]], dtype=float)
         velocities, region_idx, weights, _ = evaluate_chain_regions(ds, points, mode="line_regions")
 
-        # The nearest global regime would be index 2, but fallback must stay local
-        # to the boundary pair around idx_line (indices 0/1), so it picks 1.
+        self.assertEqual(int(region_idx[0]), 2)
+        self.assertAlmostEqual(float(weights[0, 2]), 1.0, places=8)
+        self.assertAlmostEqual(float(velocities[0, 0]), 3.0, places=8)
+
+    def test_line_regions_prefers_non_overlapping_core_edges_from_transition_triples(self):
+        ds = _DummyChainDS()
+        ds.n_systems = 2
+        # Overlapping internal fit windows (naive fallback):
+        # DS0: [0,2], DS1: [1,3]
+        ds.node_sources = np.array([[0.0, 0.0], [1.0, 0.0]], dtype=float)
+        ds.node_targets = np.array([[2.0, 0.0], [3.0, 0.0]], dtype=float)
+        # Core-edge reduction from transition triples:
+        # DS0: [0,1], DS1: [1,2]
+        ds.transition_centers = np.array([[1.0, 0.0]], dtype=float)
+        ds.transition_ratio_start_nodes = np.array([[0.0, 0.0]], dtype=float)
+        ds.transition_ratio_nodes = np.array([[2.0, 0.0]], dtype=float)
+
+        points = np.array([[1.8, 0.0]], dtype=float)
+        velocities, region_idx, weights, _ = evaluate_chain_regions(ds, points, mode="line_regions")
+
         self.assertEqual(int(region_idx[0]), 1)
         self.assertAlmostEqual(float(weights[0, 1]), 1.0, places=8)
         self.assertAlmostEqual(float(velocities[0, 0]), 2.0, places=8)
@@ -203,8 +230,7 @@ class ChainPlotRegionTests(unittest.TestCase):
                 return v
 
         ds = _LongChainDS(25)
-        points = np.array([[r - 0.5, 0.0] for r in range(1, ds.n_systems)], dtype=float)
-        points = np.vstack([np.array([[-0.5, 0.0]], dtype=float), points])
+        points = np.array([[float(r) + 0.5, 0.0] for r in range(ds.n_systems)], dtype=float)
         _, region_idx, _, rgba = evaluate_chain_regions(ds, points, mode="line_regions")
         self.assertEqual(region_idx.shape[0], ds.n_systems)
         self.assertEqual(len(np.unique(region_idx)), ds.n_systems)
@@ -216,11 +242,30 @@ class ChainPlotRegionTests(unittest.TestCase):
         velocities, region_idx, weights, _ = evaluate_chain_regions(ds, points, mode="time_blend")
 
         self.assertEqual(int(region_idx[0]), 1)
-        # signed distance to first line = 0.25, transition distance = 1.0
-        # => alpha = 0.25; v = 0.75*v0 + 0.25*v1 = 0.75*1 + 0.25*2 = 1.25
-        self.assertAlmostEqual(float(weights[0, 0]), 0.75, places=8)
-        self.assertAlmostEqual(float(weights[0, 1]), 0.25, places=8)
-        self.assertAlmostEqual(float(velocities[0, 0]), 1.25, places=8)
+        # Segment-distance blend around the 0/1 Voronoi boundary.
+        self.assertGreater(float(weights[0, 1]), 0.5)
+        self.assertGreater(float(weights[0, 0]), 0.0)
+        self.assertLess(float(weights[0, 0]), 0.5)
+        self.assertAlmostEqual(float(np.sum(weights[0])), 1.0, places=8)
+        self.assertGreater(float(velocities[0, 0]), 1.0)
+        self.assertLess(float(velocities[0, 0]), 2.0)
+
+    def test_time_blend_prefers_core_edges_from_transition_triples(self):
+        ds = _DummyChainDS()
+        ds.n_systems = 2
+        ds.node_sources = np.array([[0.0, 0.0], [1.0, 0.0]], dtype=float)
+        ds.node_targets = np.array([[2.0, 0.0], [3.0, 0.0]], dtype=float)
+        ds.transition_centers = np.array([[1.0, 0.0]], dtype=float)
+        ds.transition_ratio_start_nodes = np.array([[0.0, 0.0]], dtype=float)
+        ds.transition_ratio_nodes = np.array([[2.0, 0.0]], dtype=float)
+        ds.transition_distances = np.array([0.1], dtype=float)
+
+        points = np.array([[1.8, 0.0]], dtype=float)
+        velocities, region_idx, weights, _ = evaluate_chain_regions(ds, points, mode="time_blend")
+
+        self.assertEqual(int(region_idx[0]), 1)
+        self.assertAlmostEqual(float(weights[0, 1]), 1.0, places=8)
+        self.assertAlmostEqual(float(velocities[0, 0]), 2.0, places=8)
 
     def test_time_blend_draws_lines_only_for_non_transition_boundaries(self):
         ds = _DummyChainDS()
@@ -297,36 +342,37 @@ class ChainPlotRegionTests(unittest.TestCase):
         points = np.array([[3.0, 0.2]], dtype=float)
         velocities, region_idx, weights, _ = evaluate_chain_regions(ds, points, mode="time_blend")
 
-        # Ambiguous intersection should remain closest-DS ownership (no blending).
+        # Closest segment is DS-1; depending on numerical tie-breaking of the
+        # second-closest segment, this may blend slightly or remain hard.
         self.assertEqual(int(region_idx[0]), 1)
-        self.assertAlmostEqual(float(weights[0, 1]), 1.0, places=8)
+        self.assertGreaterEqual(float(weights[0, 1]), 0.5)
         self.assertAlmostEqual(float(np.sum(weights[0])), 1.0, places=8)
-        self.assertAlmostEqual(float(velocities[0, 0]), 2.0, places=8)
+        self.assertGreater(float(velocities[0, 0]), 1.0)
+        self.assertLess(float(velocities[0, 0]), 3.0)
 
-    def test_time_blend_reverts_to_closest_ds_far_from_transition_neighborhood(self):
+    def test_time_blend_remains_smooth_near_voronoi_boundary_off_path(self):
         ds = _DummyChainDS()
         points = np.array([[0.25, 5.0]], dtype=float)
         velocities, region_idx, weights, _ = evaluate_chain_regions(ds, points, mode="time_blend")
 
-        # Same x as blending case, but far from path/transition neighborhood:
-        # should use hard assignment only.
+        # Off-path, but still close to the 0/1 Voronoi boundary => smooth blend.
         self.assertEqual(int(region_idx[0]), 1)
-        self.assertAlmostEqual(float(weights[0, 1]), 1.0, places=8)
-        self.assertAlmostEqual(float(weights[0, 0]), 0.0, places=8)
-        self.assertAlmostEqual(float(velocities[0, 0]), 2.0, places=8)
+        self.assertGreater(float(weights[0, 1]), 0.5)
+        self.assertGreater(float(weights[0, 0]), 0.0)
+        self.assertAlmostEqual(float(np.sum(weights[0])), 1.0, places=8)
 
-    def test_time_blend_keeps_line_assignment_when_no_intersection_ambiguity(self):
+    def test_time_blend_follows_segment_voronoi_when_transition_geometry_disagrees(self):
         ds = _DummyChainDS()
-        # Force line assignment to last DS almost everywhere, independent of proximity.
+        # Force transition geometry to suggest last DS almost everywhere.
         ds.transition_centers = np.array([[-100.0, 0.0], [-50.0, 0.0]], dtype=float)
         ds.transition_distances = np.array([0.25, 0.25], dtype=float)
         points = np.array([[-0.8, 0.0]], dtype=float)
         velocities, region_idx, weights, _ = evaluate_chain_regions(ds, points, mode="time_blend")
 
-        # No mean-normal intersection ambiguity: keep line-based assignment.
-        self.assertEqual(int(region_idx[0]), 2)
-        self.assertAlmostEqual(float(weights[0, 2]), 1.0, places=8)
-        self.assertAlmostEqual(float(velocities[0, 0]), 3.0, places=8)
+        # Segment-Voronoi ownership remains with DS-0.
+        self.assertEqual(int(region_idx[0]), 0)
+        self.assertAlmostEqual(float(weights[0, 0]), 1.0, places=8)
+        self.assertAlmostEqual(float(velocities[0, 0]), 1.0, places=8)
 
     def test_time_blend_draws_nonadjacent_no_transition_boundaries(self):
         ds = _DummyChainDS()
@@ -349,8 +395,8 @@ class ChainPlotRegionTests(unittest.TestCase):
             show_transition_lines=True,
             path_bandwidth=None,
         )
-        # Explicit boundary lines (2) + extra nonadjacent sampled-boundary collection.
-        self.assertGreaterEqual(len(artists["transition_lines"]), 3)
+        self.assertEqual(len(artists["transition_lines"]), 1)
+        self.assertGreater(len(artists["transition_lines"][0].get_segments()), 0)
         plt.close(fig)
 
     def test_draw_chain_partition_field_draws_lines_in_line_mode(self):
@@ -372,12 +418,8 @@ class ChainPlotRegionTests(unittest.TestCase):
 
         self.assertIsNotNone(artists["region_image"])
         self.assertIsNotNone(artists["stream"])
-        self.assertEqual(len(artists["transition_lines"]), 2)
-        for line in artists["transition_lines"]:
-            x_data = np.asarray(line.get_xdata(), dtype=float)
-            y_data = np.asarray(line.get_ydata(), dtype=float)
-            seg_len = float(np.hypot(x_data[1] - x_data[0], y_data[1] - y_data[0]))
-            self.assertAlmostEqual(seg_len, 0.5, places=7)  # 2 * path_bandwidth
+        self.assertEqual(len(artists["transition_lines"]), 1)
+        self.assertGreater(len(artists["transition_lines"][0].get_segments()), 0)
         self.assertIn("corridor_mask", artists)
         self.assertGreater(int(np.sum(artists["corridor_mask"])), 0)
         self.assertLess(int(np.sum(artists["corridor_mask"])), artists["corridor_mask"].size)
@@ -407,10 +449,8 @@ class ChainPlotRegionTests(unittest.TestCase):
         self.assertTrue(np.all(rgba[:, :, 3] > 0.0))
         plt.close(fig)
 
-    def test_corridor_mask_uses_active_ds_regime_not_any_path_segment(self):
+    def test_corridor_mask_uses_distance_to_assigned_voronoi_segment(self):
         ds = _DummyChainDS()
-        # Force line partition to select last DS almost everywhere.
-        ds.transition_centers = np.array([[-100.0, 0.0], [-50.0, 0.0]], dtype=float)
         fig, ax = plt.subplots(1, 1, figsize=(4, 4))
         x_min, x_max, y_min, y_max = -1.0, 2.0, -1.0, 1.0
         plot_sample = 21
@@ -430,12 +470,12 @@ class ChainPlotRegionTests(unittest.TestCase):
         x_vec = np.linspace(x_min, x_max, plot_sample)
         y_vec = np.linspace(y_min, y_max, plot_sample)
         ix_near_zero = int(np.argmin(np.abs(x_vec - 0.0)))
-        ix_near_one = int(np.argmin(np.abs(x_vec - 1.0)))
         iy_zero = int(np.argmin(np.abs(y_vec - 0.0)))
-        # Near x=0: close to early path, but far from active DS-2 regime -> should be masked out.
-        self.assertFalse(bool(mask[iy_zero, ix_near_zero]))
-        # Near x=1: close to active DS-2 regime -> should be visible.
-        self.assertTrue(bool(mask[iy_zero, ix_near_one]))
+        iy_far = int(np.argmin(np.abs(y_vec - 0.5)))
+        # On-path near a segment should be visible.
+        self.assertTrue(bool(mask[iy_zero, ix_near_zero]))
+        # Far from the assigned segment should be masked.
+        self.assertFalse(bool(mask[iy_far, ix_near_zero]))
         plt.close(fig)
 
     def test_plot_ds_chain_uses_partition_background(self):
@@ -473,7 +513,7 @@ class ChainPlotRegionTests(unittest.TestCase):
         self.assertGreaterEqual(len(ax.images), 1)
         self.assertEqual(ax.images[0].get_array().shape[0], 31)
         self.assertEqual(ax.images[0].get_array().shape[1], 31)
-        self.assertGreaterEqual(len(ax.lines), 3)
+        self.assertGreaterEqual(len(ax.collections), 1)
         plt.close(ax.figure)
 
 

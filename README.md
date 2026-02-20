@@ -215,34 +215,47 @@ The system includes an interactive UI for selecting initial and goal positions:
 5. **Clear Goals**: Make sure trajectories clearly converge to their intended goals
 
 ## Sweep
-
+Overall method comparison
 ```bash
 python sweep.py \
   --datasets dataset/stitching/X dataset/stitching/2d_large dataset/stitching/pcgmm_3d_workspace_simple \
   --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds chain \
-  --seeds 1 2 \
+  --seeds 1 2 3 \
   --output-dir results/sweep_results \
   --timeout-s 600 --workers 10
 ```
 
-Sweep 1: chaining method comparison (segment vs linear) x (mean_normals vs distance_ratio)
+Sweep 1: Graph parameters sweep
+```bash
+uv run sweep.py \
+  --mode graph_params \
+  --datasets dataset/stitching/X \
+  --ds-methods sp_recompute_ds chain \
+  --seeds 1 2 3 \
+  --param-dist-values 1 2 3 \
+  --param-cos-values 1 2 3 \
+  --output-dir results/graph_params \
+  --timeout-s 600 --workers 12
+```
+
+Sweep 2: chaining method comparison (segment vs linear) x (mean_normals vs distance_ratio)
 ```bash
 uv run sweep.py \
   --mode chain_trigger \
   --datasets dataset/stitching/X \
-  --seeds 1 2 3 4 \
+  --seeds 1 2 3 \
   --chain-ds-methods segment linear \
   --chain-trigger-methods mean_normals distance_ratio \
   --output-dir results/chain_trigger \
   --timeout-s 600 --workers 12
 ```
 
-Sweep 2: blend-length sweep
+Sweep 3: blend-length sweep
 ```bash
 uv run sweep.py \
   --mode chain_blend \
   --datasets dataset/stitching/X \
-  --seeds 1 2 3 4 \
+  --seeds 1 2 3 \
   --chain-blend-ratios 0.0 0.1 0.25 0.5 0.75 1.0 \
   --chain-fixed-ds-method segmented \
   --chain-fixed-trigger-method mean_normals \
@@ -250,16 +263,3 @@ uv run sweep.py \
   --timeout-s 600 --workers 12
 ```
 
-Sweep 3:
-
-```bash
-uv run sweep.py \
-  --mode graph_params \
-  --datasets dataset/stitching/X \
-  --ds-methods sp_recompute_ds chain \
-  --seeds 1 2 \
-  --param-dist-values 1 2 3 \
-  --param-cos-values 1 2 3 \
-  --output-dir results/sweep_graph_params \
-  --timeout-s 600 --workers 12
-```
