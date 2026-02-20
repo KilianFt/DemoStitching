@@ -1,0 +1,77 @@
+{
+  "name": "pcgmm_3d_workspace_simple",
+  "task_data_dir": "dataset/pc-gmm-data",
+  "n_trajectories_per_task": 4,
+  "n_points": 220,
+  "seed": 19,
+  "selection_mode": "diverse",
+  "demonstrations": [
+    {
+      "demo_dir": "dataset/stitching/pcgmm_3d_workspace_simple/demonstration_0",
+      "task_file": "3D_Cshape_top.mat",
+      "role": "corridor to shared hub",
+      "start_anchor": [
+        -1.05,
+        -0.45,
+        0.25
+      ],
+      "end_anchor": [
+        -0.2,
+        0.2,
+        0.45
+      ],
+      "source_indices": [
+        0,
+        1,
+        10,
+        12
+      ]
+    },
+    {
+      "demo_dir": "dataset/stitching/pcgmm_3d_workspace_simple/demonstration_1",
+      "task_file": "3D_viapoint_1.mat",
+      "role": "hub to upper branch",
+      "start_anchor": [
+        -0.2,
+        0.2,
+        0.45
+      ],
+      "end_anchor": [
+        0.55,
+        0.72,
+        0.55
+      ],
+      "source_indices": [
+        1,
+        14,
+        3,
+        20
+      ]
+    },
+    {
+      "demo_dir": "dataset/stitching/pcgmm_3d_workspace_simple/demonstration_2",
+      "task_file": "3D_viapoint_2.mat",
+      "role": "hub to lower branch",
+      "start_anchor": [
+        -0.2,
+        0.2,
+        0.45
+      ],
+      "end_anchor": [
+        0.78,
+        -0.28,
+        0.55
+      ],
+      "source_indices": [
+        7,
+        2,
+        14,
+        9
+      ]
+    }
+  ],
+  "visualizations": {
+    "individual_tasks_3d": "dataset/stitching/pcgmm_3d_workspace_simple/pcgmm_simple_tasks_individual_3d.png",
+    "combined_workspace_3d": "dataset/stitching/pcgmm_3d_workspace_simple/pcgmm_simple_workspace_combined_3d.png"
+  }
+}

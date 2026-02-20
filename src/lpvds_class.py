@@ -113,8 +113,9 @@ class lpvds_class():
         return new_x, new_x_dot, new_gmm_struct
 
 
-    def _step(self, x, dt):
-        x_dot     = np.zeros((x.shape[1], 1))
+    def velocity(self, x):
+        """Pure velocity field at position x (shape (1, dim)). Returns (dim, 1)."""
+        x_dot = np.zeros((x.shape[1], 1))
 
         if self.damm is None:
             gamma = np.ones((self.K, 1))
@@ -122,7 +123,12 @@ class lpvds_class():
             gamma = self.damm.compute_gamma(x)
 
         for k in range(self.K):
-            x_dot  += gamma[k, 0] * self.A[k] @ (x - self.x_att).T
+            x_dot += gamma[k, 0] * self.A[k] @ (x - self.x_att).T
+
+        return x_dot, gamma
+
+    def _step(self, x, dt):
+        x_dot, gamma = self.velocity(x)
         x_next = x + x_dot.T * dt
 
         return x_next, gamma, x_dot
@@ -253,7 +259,7 @@ class lpvds_class():
         instance.dim = instance.x_att.shape[1]
         instance.K = 1
         instance.tol = 10E-3
-        instance.max_iter = 10000
+        instance.max_iter = 100000
         instance.A = np.tile(-1.0 * np.eye(instance.dim), (instance.K, 1, 1))
         
         return instance

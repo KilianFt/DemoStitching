@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import concurrent.futures as cf
 import contextlib
@@ -7,7 +9,7 @@ import multiprocessing as mp
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -15,7 +17,7 @@ import pandas as pd
 from configs import StitchConfig
 
 
-RunMainFn = Callable[[StitchConfig, str], list[dict] | None]
+RunMainFn = Callable[[StitchConfig, str], Optional[List[dict]]]
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,6 @@ class SweepConfig:
     n_test_simulations: int = 3
     timeout_s: float = 0.0
     workers: int = 1
-    copy_figures: bool = False
     save_fig: bool = False
     chain_precompute_segments: bool = False
     mode: str = "standard"
@@ -146,123 +147,69 @@ def _summarize_run_metrics(
 
 
 def _iter_run_specs(cfg: SweepConfig):
+    """Yield one spec dict per run.  Only mode-relevant keys are included."""
+
+    def _base(dataset_path, ds_method, seed, **extra):
+        return {"dataset_path": dataset_path, "ds_method": ds_method, "seed": int(seed), **extra}
+
     if cfg.mode == "standard":
-        for dataset_path in cfg.datasets:
-            for ds_method in cfg.ds_methods:
-                for seed in cfg.seeds:
-                    yield {
-                        "dataset_path": dataset_path,
-                        "ds_method": ds_method,
-                        "seed": int(seed),
-                        "chain_ds_method": None,
-                        "chain_trigger_method": None,
-                        "chain_blend_ratio": None,
-                        "param_dist": None,
-                        "param_cos": None,
-                        "rel_scale": None,
-                    }
+        for dp in cfg.datasets:
+            for dm in cfg.ds_methods:
+                for s in cfg.seeds:
+                    yield _base(dp, dm, s)
         return
 
     if cfg.mode == "graph_params":
-        for dataset_path in cfg.datasets:
-            for ds_method in cfg.ds_methods:
-                for param_dist in cfg.param_dist_values:
-                    for param_cos in cfg.param_cos_values:
-                        for seed in cfg.seeds:
-                            yield {
-                                "dataset_path": dataset_path,
-                                "ds_method": ds_method,
-                                "seed": int(seed),
-                                "chain_ds_method": None,
-                                "chain_trigger_method": None,
-                                "chain_blend_ratio": None,
-                                "param_dist": float(param_dist),
-                                "param_cos": float(param_cos),
-                                "rel_scale": None,
-                            }
+        for dp in cfg.datasets:
+            for dm in cfg.ds_methods:
+                for pd_val in cfg.param_dist_values:
+                    for pc_val in cfg.param_cos_values:
+                        for s in cfg.seeds:
+                            yield _base(dp, dm, s, param_dist=float(pd_val), param_cos=float(pc_val))
         return
 
     if cfg.mode == "rel_scale":
-        for dataset_path in cfg.datasets:
-            for ds_method in cfg.ds_methods:
-                for rel_scale in cfg.rel_scale_values:
-                    for seed in cfg.seeds:
-                        yield {
-                            "dataset_path": dataset_path,
-                            "ds_method": ds_method,
-                            "seed": int(seed),
-                            "chain_ds_method": None,
-                            "chain_trigger_method": None,
-                            "chain_blend_ratio": None,
-                            "param_dist": None,
-                            "param_cos": None,
-                            "rel_scale": float(rel_scale),
-                        }
+        for dp in cfg.datasets:
+            for dm in cfg.ds_methods:
+                for rs in cfg.rel_scale_values:
+                    for s in cfg.seeds:
+                        yield _base(dp, dm, s, rel_scale=float(rs))
         return
 
     if cfg.mode == "chain_trigger":
-        for dataset_path in cfg.datasets:
-            for chain_ds_method in cfg.chain_ds_methods:
-                for chain_trigger_method in cfg.chain_trigger_methods:
-                    for seed in cfg.seeds:
-                        yield {
-                            "dataset_path": dataset_path,
-                            "ds_method": "chain",
-                            "seed": int(seed),
-                            "chain_ds_method": chain_ds_method,
-                            "chain_trigger_method": chain_trigger_method,
-                            "chain_blend_ratio": None,
-                            "param_dist": None,
-                            "param_cos": None,
-                            "rel_scale": None,
-                        }
+        for dp in cfg.datasets:
+            for cdm in cfg.chain_ds_methods:
+                for ctm in cfg.chain_trigger_methods:
+                    for s in cfg.seeds:
+                        yield _base(dp, "chain", s, chain_ds_method=cdm, chain_trigger_method=ctm)
         return
 
     if cfg.mode == "chain_blend":
-        for dataset_path in cfg.datasets:
-            for chain_blend_ratio in cfg.chain_blend_ratios:
-                for seed in cfg.seeds:
-                    yield {
-                        "dataset_path": dataset_path,
-                        "ds_method": "chain",
-                        "seed": int(seed),
-                        "chain_ds_method": cfg.chain_fixed_ds_method,
-                        "chain_trigger_method": cfg.chain_fixed_trigger_method,
-                        "chain_blend_ratio": float(chain_blend_ratio),
-                        "param_dist": None,
-                        "param_cos": None,
-                        "rel_scale": None,
-                    }
+        for dp in cfg.datasets:
+            for cbr in cfg.chain_blend_ratios:
+                for s in cfg.seeds:
+                    yield _base(dp, "chain", s,
+                                chain_ds_method=cfg.chain_fixed_ds_method,
+                                chain_trigger_method=cfg.chain_fixed_trigger_method,
+                                chain_blend_ratio=float(cbr))
         return
 
     raise ValueError(f"Unsupported sweep mode: {cfg.mode}")
 
 
+# Optional per-run parameter keys (may or may not be present in a spec dict).
+_OPTIONAL_SPEC_KEYS = (
+    "chain_ds_method", "chain_trigger_method", "chain_blend_ratio",
+    "param_dist", "param_cos", "rel_scale",
+)
+
+
 def _combo_tag(spec: dict[str, object]) -> str:
-    dataset_slug = _dataset_slug(str(spec["dataset_path"]))
-    ds_method = str(spec["ds_method"])
-    seed = int(spec["seed"])
-
-    chain_ds_method = spec["chain_ds_method"]
-    chain_trigger_method = spec["chain_trigger_method"]
-    chain_blend_ratio = spec["chain_blend_ratio"]
-    param_dist = spec["param_dist"]
-    param_cos = spec["param_cos"]
-    rel_scale = spec["rel_scale"]
-
-    tag = f"{dataset_slug}__{ds_method}__seed_{seed}"
-    if chain_ds_method is not None:
-        tag += f"__chain_ds_{chain_ds_method}"
-    if chain_trigger_method is not None:
-        tag += f"__trigger_{chain_trigger_method}"
-    if chain_blend_ratio is not None:
-        tag += f"__blend_{_float_tag(float(chain_blend_ratio))}"
-    if param_dist is not None:
-        tag += f"__param_dist_{_float_tag(float(param_dist))}"
-    if param_cos is not None:
-        tag += f"__param_cos_{_float_tag(float(param_cos))}"
-    if rel_scale is not None:
-        tag += f"__rel_scale_{_float_tag(float(rel_scale))}"
+    tag = f"{_dataset_slug(str(spec['dataset_path']))}__{spec['ds_method']}__seed_{spec['seed']}"
+    for key in _OPTIONAL_SPEC_KEYS:
+        val = spec.get(key)
+        if val is not None:
+            tag += f"__{key}_{_float_tag(float(val)) if isinstance(val, float) else val}"
     return tag
 
 
@@ -274,25 +221,18 @@ def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchCon
     stitch_cfg.n_test_simulations = int(cfg.n_test_simulations)
     stitch_cfg.save_fig = bool(cfg.save_fig)
 
-    chain_ds_method = spec["chain_ds_method"]
-    chain_trigger_method = spec["chain_trigger_method"]
-    chain_blend_ratio = spec["chain_blend_ratio"]
-    param_dist = spec["param_dist"]
-    param_cos = spec["param_cos"]
-    rel_scale = spec["rel_scale"]
-
-    if chain_ds_method is not None:
-        stitch_cfg.chain.ds_method = str(chain_ds_method)
-    if chain_trigger_method is not None:
-        stitch_cfg.chain.transition_trigger_method = str(chain_trigger_method)
-    if chain_blend_ratio is not None:
-        stitch_cfg.chain.blend_length_ratio = float(chain_blend_ratio)
-    if param_dist is not None:
-        stitch_cfg.param_dist = float(param_dist)
-    if param_cos is not None:
-        stitch_cfg.param_cos = float(param_cos)
-    if rel_scale is not None:
-        stitch_cfg.damm.rel_scale = float(rel_scale)
+    _setters: dict[str, Callable] = {
+        "chain_ds_method": lambda v: setattr(stitch_cfg.chain, "ds_method", str(v)),
+        "chain_trigger_method": lambda v: setattr(stitch_cfg.chain, "transition_trigger_method", str(v)),
+        "chain_blend_ratio": lambda v: setattr(stitch_cfg.chain, "blend_length_ratio", float(v)),
+        "param_dist": lambda v: setattr(stitch_cfg, "param_dist", float(v)),
+        "param_cos": lambda v: setattr(stitch_cfg, "param_cos", float(v)),
+        "rel_scale": lambda v: setattr(stitch_cfg.damm, "rel_scale", float(v)),
+    }
+    for key, setter in _setters.items():
+        val = spec.get(key)
+        if val is not None:
+            setter(val)
 
     setattr(stitch_cfg, "chain_precompute_segments", bool(cfg.chain_precompute_segments))
     return stitch_cfg
@@ -381,6 +321,76 @@ def _run_main_with_timeout(
     return str(payload.get("error", "runner_error")), False
 
 
+# ── Column names in the summary CSV that map to optional spec keys ──────────
+_SPEC_KEY_TO_COL = {
+    "chain_ds_method": ("chain_ds_method", str, ""),
+    "chain_trigger_method": ("chain_transition_trigger_method", str, ""),
+    "chain_blend_ratio": ("chain_blend_length_ratio", float, np.nan),
+    "param_dist": ("param_dist", float, np.nan),
+    "param_cos": ("param_cos", float, np.nan),
+    "rel_scale": ("rel_scale", float, np.nan),
+}
+
+
+def _build_result_row(
+    cfg: SweepConfig,
+    spec: dict[str, object],
+    run_index: int,
+    *,
+    status: str,
+    failure_reason: str = "",
+    error_message: str = "",
+    timed_out: bool = False,
+    duration_s: float = math.nan,
+    results_csv_source: str = "",
+    metrics: dict[str, float] | None = None,
+) -> dict:
+    """Build one row of the sweep summary CSV."""
+    dataset_path = str(spec["dataset_path"])
+    row: dict = {
+        "run_index": int(run_index),
+        "dataset_path": dataset_path,
+        "dataset_slug": _dataset_slug(dataset_path),
+        "sweep_mode": cfg.mode,
+        "ds_method": str(spec["ds_method"]),
+    }
+    for spec_key, (col_name, col_type, default) in _SPEC_KEY_TO_COL.items():
+        val = spec.get(spec_key)
+        row[col_name] = col_type(val) if val is not None else default
+    row.update({
+        "seed": int(spec["seed"]),
+        "n_test_simulations": int(cfg.n_test_simulations),
+        "status": status,
+        "failure_reason": failure_reason,
+        "error_message": error_message,
+        "timed_out": timed_out,
+        "duration_s": duration_s,
+        "results_csv_source": results_csv_source,
+        **(metrics or _empty_metric_summary()),
+    })
+    return row
+
+
+def _enrich_raw_csv(csv_path: Path, spec: dict[str, object], cfg: SweepConfig) -> None:
+    """Inject sweep metadata columns into a per-run result CSV so it is self-describing."""
+    if not csv_path.exists():
+        return
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return
+    df.insert(0, "dataset_path", str(spec["dataset_path"]))
+    df.insert(1, "dataset_slug", _dataset_slug(str(spec["dataset_path"])))
+    df.insert(2, "sweep_mode", cfg.mode)
+    df.insert(3, "seed", int(spec["seed"]))
+    # Add optional parameters that were varied in this sweep.
+    for key in _OPTIONAL_SPEC_KEYS:
+        val = spec.get(key)
+        if val is not None and key not in df.columns:
+            df[key] = val
+    df.to_csv(csv_path, index=False)
+
+
 def _run_single_spec(
     cfg: SweepConfig,
     spec: dict[str, object],
@@ -390,17 +400,6 @@ def _run_single_spec(
     total_runs: int,
     announce_start: bool = True,
 ) -> dict:
-    dataset_path = str(spec["dataset_path"])
-    ds_method = str(spec["ds_method"])
-    seed = int(spec["seed"])
-    chain_ds_method = spec["chain_ds_method"]
-    chain_trigger_method = spec["chain_trigger_method"]
-    chain_blend_ratio = spec["chain_blend_ratio"]
-    param_dist = spec["param_dist"]
-    param_cos = spec["param_cos"]
-    rel_scale = spec["rel_scale"]
-
-    dataset_slug = _dataset_slug(dataset_path)
     combo_tag = _combo_tag(spec)
     if announce_start:
         print(f"[{run_index}/{total_runs}] Running {combo_tag}")
@@ -451,6 +450,9 @@ def _run_single_spec(
         run_ok = False
         failure_reason = "no_metric_values"
 
+    # Enrich the raw CSV with sweep metadata so it is self-describing.
+    _enrich_raw_csv(run_results_csv, spec, cfg)
+
     # Avoid figure accumulation if a run accidentally opens figures.
     try:
         import matplotlib.pyplot as plt
@@ -459,60 +461,25 @@ def _run_single_spec(
     except Exception:
         pass
 
-    return {
-        "run_index": int(run_index),
-        "dataset_path": dataset_path,
-        "dataset_slug": dataset_slug,
-        "sweep_mode": cfg.mode,
-        "ds_method": ds_method,
-        "chain_ds_method": "" if chain_ds_method is None else str(chain_ds_method),
-        "chain_transition_trigger_method": "" if chain_trigger_method is None else str(chain_trigger_method),
-        "chain_blend_length_ratio": np.nan if chain_blend_ratio is None else float(chain_blend_ratio),
-        "param_dist": np.nan if param_dist is None else float(param_dist),
-        "param_cos": np.nan if param_cos is None else float(param_cos),
-        "rel_scale": np.nan if rel_scale is None else float(rel_scale),
-        "seed": int(seed),
-        "n_test_simulations": int(cfg.n_test_simulations),
-        "status": "ok" if run_ok else "failed",
-        "failure_reason": "" if run_ok else failure_reason,
-        "error_message": run_error,
-        "timed_out": bool(timed_out),
-        "duration_s": float(elapsed),
-        "results_csv_source": str(run_results_csv) if run_results_csv.exists() else "",
-        **metric_summary,
-    }
+    return _build_result_row(
+        cfg, spec, run_index,
+        status="ok" if run_ok else "failed",
+        failure_reason="" if run_ok else failure_reason,
+        error_message=run_error,
+        timed_out=bool(timed_out),
+        duration_s=float(elapsed),
+        results_csv_source=str(run_results_csv) if run_results_csv.exists() else "",
+        metrics=metric_summary,
+    )
 
 
 def _internal_failure_row(cfg: SweepConfig, spec: dict[str, object], run_index: int, error_message: str) -> dict:
-    dataset_path = str(spec["dataset_path"])
-    chain_ds_method = spec["chain_ds_method"]
-    chain_trigger_method = spec["chain_trigger_method"]
-    chain_blend_ratio = spec["chain_blend_ratio"]
-    param_dist = spec["param_dist"]
-    param_cos = spec["param_cos"]
-    rel_scale = spec["rel_scale"]
-    return {
-        "run_index": int(run_index),
-        "dataset_path": dataset_path,
-        "dataset_slug": _dataset_slug(dataset_path),
-        "sweep_mode": cfg.mode,
-        "ds_method": str(spec["ds_method"]),
-        "chain_ds_method": "" if chain_ds_method is None else str(chain_ds_method),
-        "chain_transition_trigger_method": "" if chain_trigger_method is None else str(chain_trigger_method),
-        "chain_blend_length_ratio": np.nan if chain_blend_ratio is None else float(chain_blend_ratio),
-        "param_dist": np.nan if param_dist is None else float(param_dist),
-        "param_cos": np.nan if param_cos is None else float(param_cos),
-        "rel_scale": np.nan if rel_scale is None else float(rel_scale),
-        "seed": int(spec["seed"]),
-        "n_test_simulations": int(cfg.n_test_simulations),
-        "status": "failed",
-        "failure_reason": "runner_error",
-        "error_message": str(error_message),
-        "timed_out": False,
-        "duration_s": math.nan,
-        "results_csv_source": "",
-        **_empty_metric_summary(),
-    }
+    return _build_result_row(
+        cfg, spec, run_index,
+        status="failed",
+        failure_reason="runner_error",
+        error_message=str(error_message),
+    )
 
 
 def run_sweep(cfg: SweepConfig, run_main_fn: RunMainFn = _default_run_main) -> pd.DataFrame:
@@ -576,7 +543,27 @@ def run_sweep(cfg: SweepConfig, run_main_fn: RunMainFn = _default_run_main) -> p
     out_csv = output_root / "sweep_results.csv"
     df.to_csv(out_csv, index=False)
     print(f"\nSweep finished. Saved summary CSV: {out_csv.resolve()}")
+    print(f"Per-run CSVs (with metadata): {raw_results_dir.resolve()}/")
     return df
+
+
+def load_raw_results(output_dir: str) -> pd.DataFrame:
+    """Load and concatenate all per-run CSVs from <output_dir>/raw_results/.
+
+    Each CSV already contains sweep metadata columns (dataset_slug, seed, etc.)
+    injected by the sweep runner, so the returned DataFrame is ready for
+    groupby / plotting.
+
+    Usage (e.g. in a notebook)::
+
+        from sweep import load_raw_results
+        df = load_raw_results("results/sweep_chain_trigger")
+    """
+    raw_dir = Path(output_dir) / "raw_results"
+    csvs = sorted(raw_dir.glob("*.csv"))
+    if not csvs:
+        raise FileNotFoundError(f"No CSV files found in {raw_dir}")
+    return pd.concat([pd.read_csv(f) for f in csvs], ignore_index=True)
 
 
 def _parse_args() -> SweepConfig:
@@ -642,9 +629,6 @@ def _parse_args() -> SweepConfig:
         action="store_true",
         help="Enable chain segment precomputation (disabled by default for speed).",
     )
-
-    # Kept for CLI compatibility; ignored in direct mode.
-    parser.add_argument("--no-copy-figures", action="store_true", help=argparse.SUPPRESS)
 
     parser.add_argument(
         "--chain-ds-methods",
@@ -733,7 +717,6 @@ def _parse_args() -> SweepConfig:
         n_test_simulations=int(args.n_test_simulations),
         timeout_s=float(args.timeout_s),
         workers=max(1, int(args.workers)),
-        copy_figures=not args.no_copy_figures,
         save_fig=bool(args.save_fig),
         chain_precompute_segments=bool(args.chain_precompute_segments),
         mode=args.mode,

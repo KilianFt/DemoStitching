@@ -25,19 +25,30 @@ class ChainConfig:
     enable_recovery: bool = False
     stabilization_margin: float = 1e-3
     lmi_tolerance: float = 5e-5
+    # Use spatial (position-based) alpha alongside time-based alpha during
+    # transitions.  Prevents oscillation when x outruns the time-based blend.
+    use_spatial_alpha: bool = False
     # Lower bound on time-based transitions between consecutive subsystems.
-    min_transition_time: float = 0.02
+    min_transition_time: float = 1e-5
     # Optional speed clip on chain velocity (None disables clipping).
-    velocity_max: Optional[float] = 6.0
+    velocity_max: Optional[float] = None
     # Boundary A matrices (single-node data, separate linear system).
     # When False the first / last segment uses multi-node data (≥3 nodes), like the core systems.
     use_boundary_ds_initial: bool = False
     use_boundary_ds_end: bool = False
     # Chain plotting mode (2D):
-    # - "line_regions": piecewise regions split by straight transition lines.
-    # - "time_blend": smooth color/velocity blending over transition lengths.
-    plot_mode: str = "time_blend"
-    plot_grid_resolution: int = 100
+    # - "line_regions": hard partitions split by mean-normal transition lines.
+    # - "time_blend": blends adjacent DSs in transition zones; draws lines only
+    #   for boundaries without a transition zone.
+    plot_mode: str = "line_regions"
+    plot_grid_resolution: int = 500
+    # Display only a corridor around the chain path (2D Euclidean distance).
+    # None disables masking and fills the full plotted area.
+    plot_path_bandwidth: Optional[float] = None
+    # Live-only chain field visualization:
+    # - "partition": region partition + lines.
+    # - "active_ds": full field of currently active subsystem only.
+    live_field_mode: str = "partition"
     plot_show_transition_lines: bool = True
     plot_region_alpha: float = 0.26
 

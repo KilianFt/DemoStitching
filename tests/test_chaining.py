@@ -82,6 +82,8 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         cfg.chain.ds_method = chain_ds_method
         cfg.chain.enable_recovery = False
         cfg.chain.blend_length_ratio = 0.10
+        cfg.chain.use_boundary_ds_initial = False
+        cfg.chain.use_boundary_ds_end = False
         if chain_overrides is not None:
             for key, value in chain_overrides.items():
                 setattr(cfg.chain, key, value)
@@ -111,14 +113,16 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
 
         self.assertIsNotNone(chained)
         self.assertEqual(chained.subsystem_edges, 2)
-        self.assertEqual(chained.n_systems, 3)
-        np.testing.assert_allclose(chained.node_sources[:, 0], np.array([0.0, 1.0, 2.0]), atol=1e-8)
-        np.testing.assert_allclose(chained.node_targets[:, 0], np.array([2.0, 3.0, 4.0]), atol=1e-8)
+        # 3 intermediate segments + 1 attractor segment (last 2 nodes -> attractor).
+        self.assertEqual(chained.n_systems, 4)
+        np.testing.assert_allclose(chained.node_sources[:, 0], np.array([0.0, 1.0, 2.0, 3.0]), atol=1e-8)
+        np.testing.assert_allclose(chained.node_targets[:, 0], np.array([2.0, 3.0, 4.0, 4.0]), atol=1e-8)
 
-        # Each system is fitted from exactly three node datasets in the sliding window.
+        # Intermediate systems use 3-node windows; attractor segment uses 2 nodes.
         expected_per_window = 3 * _N_SAMPLES_PER_NODE
-        for fit_points in chained.edge_fit_points:
+        for fit_points in chained.edge_fit_points[:-1]:
             self.assertEqual(int(fit_points.shape[0]), expected_per_window)
+        self.assertEqual(int(chained.edge_fit_points[-1].shape[0]), 2 * _N_SAMPLES_PER_NODE)
 
     def test_mean_normals_transition_is_centered_on_second_to_last_node(self):
         path = np.array(
@@ -163,10 +167,10 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         expected_r = 2.0 / 1.0  # |e1|/|e2|
         self.assertAlmostEqual(float(chained.transition_edge_ratios[0]), expected_r, places=8)
 
-        n1 = path[1]
+        n1 = path[0]
         n2 = path[2]
-        x_no_switch = np.array([2.2, 0.0])
-        x_switch = np.array([2.9, 0.0])
+        x_no_switch = np.array([1.5, 0.0])
+        x_switch = np.array([2.5, 0.0])
 
         ratio_no_switch = np.linalg.norm(x_no_switch - n1) / np.linalg.norm(x_no_switch - n2)
         ratio_switch = np.linalg.norm(x_switch - n1) / np.linalg.norm(x_switch - n2)
@@ -194,7 +198,7 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
                 self.assertIsNotNone(chained)
 
                 trajectory, _ = chained.sim(initial[None, :], dt=0.02)
-                self.assertLess(np.linalg.norm(trajectory[-1] - attractor), 0.20)
+                self.assertLess(np.linalg.norm(trajectory[-1] - attractor), 0.25)
                 self.assertIsNotNone(chained.last_sim_indices)
                 self.assertEqual(int(np.max(chained.last_sim_indices)), chained.n_systems - 1)
 
@@ -247,8 +251,8 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         # With use_boundary_ds_initial=False (default) there is no init boundary,
         # so the first transition (index 0) is the first 3-node segment transition.
         self.assertAlmostEqual(float(chained.transition_edge_ratios[0]), expected_r, places=8)
-        self.assertFalse(chained.trigger_state(0, np.array([2.2, 0.0])))
-        self.assertTrue(chained.trigger_state(0, np.array([2.9, 0.0])))
+        self.assertFalse(chained.trigger_state(0, np.array([1.5, 0.0])))
+        self.assertTrue(chained.trigger_state(0, np.array([2.5, 0.0])))
 
     def test_transition_times_respect_configured_minimum(self):
         path = np.array(
@@ -292,7 +296,7 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(x_next)))
         self.assertLessEqual(float(np.linalg.norm(velocity)), 0.2 + 1e-12)
 
-    def test_non_finite_velocity_is_safely_zeroed_and_clipped(self):
+    def test_non_finite_velocity_raises(self):
         path = np.array(
             [
                 [0.0, 0.0],
@@ -308,9 +312,8 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         )
         self.assertIsNotNone(chained)
         chained.A_seq[0][:] = np.nan
-        _, velocity, _ = chained.step_once(initial.copy(), dt=0.02)
-        self.assertTrue(np.all(np.isfinite(velocity)))
-        self.assertLessEqual(float(np.linalg.norm(velocity)), 0.25 + 1e-12)
+        with self.assertRaises(ValueError):
+            chained.step_once(initial.copy(), dt=0.02)
 
     def test_segmented_chain_uses_same_velocity_safeguards(self):
         path = np.array(

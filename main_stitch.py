@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import os
 
@@ -33,7 +35,7 @@ def simulate_trajectories(ds, initial, config):
                range(config.n_test_simulations)]
     simulated_trajectories = []
     for x_0 in x_inits:
-        simulated_trajectories.append(ds.sim(x_0[None, :], dt=0.1)[0])
+        simulated_trajectories.append(ds.sim(x_0[None, :], dt=0.01)[0])
 
     return simulated_trajectories
 

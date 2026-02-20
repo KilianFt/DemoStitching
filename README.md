@@ -218,22 +218,22 @@ The system includes an interactive UI for selecting initial and goal positions:
 
 ```bash
 python sweep.py \
-  --datasets dataset/stitching/X dataset/stitching/robottasks_obstacle_bottle2shelf_side dataset/stitching/robottasks_workspace_chain \
-  --ds-methods sp_recompute_all sp_recompute_ds chain \
-  --seeds 1 2 3 \
+  --datasets dataset/stitching/X dataset/stitching/2d_large dataset/stitching/pcgmm_3d_workspace_simple \
+  --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds chain \
+  --seeds 1 2 \
   --output-dir results/sweep_results \
-  --timeout-s 600 --workers 12
+  --timeout-s 600 --workers 10
 ```
 
 Sweep 1: chaining method comparison (segment vs linear) x (mean_normals vs distance_ratio)
 ```bash
 uv run sweep.py \
   --mode chain_trigger \
-  --datasets dataset/stitching/robottasks_workspace_chain dataset/stitching/nodes_1 dataset/stitching/presentation2 \
-  --seeds 1 2 3 \
+  --datasets dataset/stitching/X \
+  --seeds 1 2 3 4 \
   --chain-ds-methods segment linear \
   --chain-trigger-methods mean_normals distance_ratio \
-  --output-dir results/sweep_chain_trigger \
+  --output-dir results/chain_trigger \
   --timeout-s 600 --workers 12
 ```
 
@@ -242,8 +242,8 @@ Sweep 2: blend-length sweep
 uv run sweep.py \
   --mode chain_blend \
   --datasets dataset/stitching/X \
-  --seeds 1 2 3 \
-  --chain-blend-ratios 0.0 0.25 0.5 0.75 1.0 \
+  --seeds 1 2 3 4 \
+  --chain-blend-ratios 0.0 0.1 0.25 0.5 0.75 1.0 \
   --chain-fixed-ds-method segmented \
   --chain-fixed-trigger-method mean_normals \
   --output-dir results/sweep_chain_blend \
