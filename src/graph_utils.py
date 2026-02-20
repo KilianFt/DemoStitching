@@ -388,16 +388,38 @@ class GaussianGraph:
 
         return ax
 
-    def get_all_simple_paths(self, nr_edges):
+    def get_all_simple_paths(self, nr_edges, remove_reversal_pairs=True):
         """Returns a list of all simple paths in the graph with a specified number of edges."""
 
         def get_simple_paths(curr_edges):
+
 
             # recursion termination
             if len(curr_edges) == nr_edges:
                 return {curr_edges}
 
-            out_edges = [e for e in self.graph.out_edges(curr_edges[-1][1]) if e not in curr_edges]
+            out_edges = [e for e in self.graph.out_edges(curr_edges[-1][1]) if e not in curr_edges and e]
+
+            if remove_reversal_pairs:
+                current_nodes = [curr_edges[0][0]] + [e[1] for e in curr_edges]
+                edges_to_remove = []
+
+                for e in out_edges:
+                    is_reversed = e[1] in self.gaussian_reversal_map
+
+                    if is_reversed:
+                        normal_node = self.gaussian_reversal_map[e[1]]
+                        if normal_node in current_nodes:
+                            edges_to_remove.append(e)
+
+                    else:
+                        reverse_node = next((n for n, rev in self.gaussian_reversal_map.items() if rev == e[1]), None)
+                        if reverse_node in current_nodes:
+                            edges_to_remove.append(e)
+
+                out_edges = [e for e in out_edges if e not in edges_to_remove]
+
+
             new_paths = set()
             for e in out_edges:
                 new_paths.update(
@@ -413,3 +435,88 @@ class GaussianGraph:
             )
 
         return paths
+
+    def get_random_path(self, nr_edges, start_node=None, return_nodes=False):
+        """Returns a random path in the graph with a specified number of edges."""
+
+        if start_node is None:
+            start_edge = list(self.graph.edges)[np.random.choice(len(self.graph.edges))]
+        else:
+            out_edges = [e for e in self.graph.out_edges(start_node)]
+            if not out_edges:
+                raise ValueError(f"No outgoing edges from start node {start_node}")
+            start_edge = list(out_edges)[np.random.choice(len(out_edges))]
+
+        path = [start_edge]
+        for i in range(nr_edges-1):
+            out_edges = [e for e in self.graph.out_edges(path[-1][1]) if e != path[-1]]
+
+            if not out_edges:
+                break  # no more edges to follow, end path here
+
+            next_edge = list(out_edges)[np.random.choice(len(out_edges))]
+            path.append(next_edge)
+
+        if return_nodes:
+            return [e[0] for e in path] + [path[-1][1]]
+        else:
+            return path
+
+    def get_random_bounding_path(self, initial_state, target_state, jumps):
+
+
+        random_nodes = [list(self.graph.nodes)[np.random.choice(len(self.graph.nodes))] for _ in range(jumps)]
+
+        INIT = '__TEMP_INITIAL__'
+        TARGET = '__TEMP_TARGET__'
+
+        self.graph.add_node(INIT, mean=initial_state)
+        for node in self.graph.nodes():
+            if node == INIT:
+                continue
+
+            edge_weight = self.compute_edge_weight(initial_state, self.graph.nodes[node]['direction'],
+                                                   self.graph.nodes[node]['mean'])
+            gaussian_eval = multivariate_normal.pdf(initial_state, mean=self.graph.nodes[node]['mean'],
+                                                    cov=self.graph.nodes[node]['covariance'])
+            edge_weight = edge_weight / max(gaussian_eval, 1e-6) if edge_weight is not None else None
+
+            if edge_weight is not None:
+                self.graph.add_edge(INIT, node, weight=edge_weight)
+
+        # Add temporary target node
+        self.graph.add_node(TARGET, mean=target_state)
+        # Connect to all other nodes with edge weights based on distance and directionality
+        for node in self.graph.nodes():
+            if node == INIT or node == TARGET:
+                continue
+
+            edge_weight = self.compute_edge_weight(self.graph.nodes[node]['mean'], self.graph.nodes[node]['direction'],
+                                                   target_state)
+            gaussian_eval = multivariate_normal.pdf(target_state, mean=self.graph.nodes[node]['mean'],
+                                                    cov=self.graph.nodes[node]['covariance'])
+            edge_weight = edge_weight / max(gaussian_eval, 1e-6) if edge_weight is not None else None
+
+            if edge_weight is not None:
+                self.graph.add_edge(node, TARGET, weight=edge_weight)
+
+
+        node_sequence = [INIT] + random_nodes + [TARGET]
+        path = []
+        for _ in range(10):
+            for i in range(len(node_sequence)-1):
+                try:
+                    sub_path = nx.shortest_path(self.graph, source=node_sequence[i], target=node_sequence[i+1], weight='weight')
+                    path.extend(sub_path[:-1])
+
+                except:
+                    path = []
+                    continue  # no path exists, skip
+            break
+        path = path[1:]  # remove initial node from path
+
+        # Remove temporary nodes
+        self.graph.remove_node(INIT)
+        self.graph.remove_node(TARGET)
+
+        return path
