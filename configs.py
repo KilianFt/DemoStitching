@@ -7,7 +7,7 @@ import numpy as np
 class DammConfig:
     rel_scale: float = 0.1
     total_scale: float = 1.0
-    nu_0: int = 5 # TODO should this be ndim * 2?
+    nu_0: int = 5 # NOTE should this be ndim * 2?
     kappa_0: float = 0.1
     psi_dir_0: float = 0.1
 
@@ -15,7 +15,7 @@ class DammConfig:
 class ChainConfig:
     subsystem_edges: int = 2
     blend_length_ratio: float = 0.5
-    recompute_gaussians: bool = False
+    recompute_gaussians: bool = False # This is automatically set to true for "chain_all"
     ds_method: str = "segmented" # "segmented" or "linear"
     # Supported values:
     # - "mean_normals": transition when crossing the mean-normal plane at n1.
@@ -63,12 +63,14 @@ class ChainConfig:
 # - ["spt_recompute_all"]           Uses shortest path tree, otherwise same as corresponding "sp" method.
 # - ["spt_recompute_ds"]            Uses shortest path tree, otherwise same as corresponding "sp" method.
 # - ["spt_recompute_invalid_As"]    Uses shortest path tree, otherwise same as corresponding "sp" method.
-# - ["chain"]                       Fit one linear DS per path node and switch/blend between them online.
+# - ["chain"]                       Fit one linear DS per path node and switch/blend between them online (reuses Gaussians).
+# - ["chain_all"]                   Same as "chain" but recomputes Gaussians from raw data.
 
 @dataclass
 class StitchConfig:
     dataset_path: str = "./dataset/stitching/X"
     force_preprocess: bool = True
+    chain_precompute_segments: bool = True
     initial: Optional[np.ndarray] = None
     attractor: Optional[np.ndarray] = None
     ds_method: str = "chain"

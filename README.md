@@ -3,7 +3,7 @@ This code builds on top of the following repositories:
 1. [LPVDS](https://github.com/sunan-sun/lpvds)
 2. [DAMM](https://github.com/SunannnSun/damm)
 3. [DSOPT](https://github.com/sunan-sun/dsopt)
-4. [Robottask dataset](https://github.com/sayantanauddy/clfd-snode)
+<!-- 4. [Robottask dataset](https://github.com/sayantanauddy/clfd-snode) -->
 
 with following references
 
@@ -13,7 +13,7 @@ with following references
 
 > [3] Li, T., Sun, S., Aditya, S. S., & Figueroa, N. (2025). Elastic Motion Policy: An Adaptive Dynamical System for Robust and Efficient One-Shot Imitation Learning. arXiv preprint arXiv:2503.08029.
 
-> [4] Auddy, S.*, Hollenstein, J.*, Saveriano, M., Rodríguez-Sánchez, A., & Piater, J. (2025). Scalable and Efficient Continual Learning from Demonstration via a Hypernetwork-generated Stable Dynamics Model. arXiv preprint arXiv:2311.03600.
+<!-- > [4] Auddy, S.*, Hollenstein, J.*, Saveriano, M., Rodríguez-Sánchez, A., & Piater, J. (2025). Scalable and Efficient Continual Learning from Demonstration via a Hypernetwork-generated Stable Dynamics Model. arXiv preprint arXiv:2311.03600. -->
 
 Thanks for open sourcing your work!
 
@@ -21,20 +21,23 @@ Thanks for open sourcing your work!
 
 ### Ablations
 
+#### Graph parameters
+|    |   param_dist |   param_cos | prediction_rmse   | cosine_dissimilarity   | dtw_distance_mean   | trajectory_length_mean   |   fail_pct |
+|---:|-------------:|------------:|:------------------|:-----------------------|:--------------------|:-------------------------|-----------:|
+|  0 |            1 |           1 | 0.16 ± 0.16       | 0.15 ± 0.12            | 15002.67 ± 37472.52 | 24258.99 ± 21037.19      |          0 |
+|  1 |            1 |           2 | 0.19 ± 0.20       | 0.16 ± 0.11            | 10024.01 ± 18427.61 | 21856.61 ± 14230.70      |          0 |
+|  2 |            1 |           3 | 0.20 ± 0.24       | 0.15 ± 0.10            | 10108.10 ± 20713.89 | 25025.68 ± 21749.24      |          0 |
+|  3 |            2 |           1 | 0.17 ± 0.19       | 0.14 ± 0.09            | 14241.96 ± 32374.74 | 20457.52 ± 10837.13      |          0 |
+|  4 |            2 |           2 | 0.21 ± 0.26       | 0.16 ± 0.11            | 12798.64 ± 25081.65 | 22029.43 ± 15681.16      |          0 |
+|  5 |            2 |           3 | 0.20 ± 0.70       | 0.14 ± 0.10            | 17957.16 ± 43033.15 | 25993.52 ± 22869.55      |          0 |
+|  6 |            3 |           1 | 0.24 ± 0.33       | 0.17 ± 0.13            | 12460.12 ± 24583.44 | 20898.43 ± 11265.63      |          0 |
+|  7 |            3 |           2 | 0.19 ± 0.21       | 0.17 ± 0.12            | 14932.67 ± 35549.72 | 20860.70 ± 13091.26      |          0 |
+|  8 |            3 |           3 | 0.18 ± 0.18       | 0.15 ± 0.10            | 8810.19 ± 13612.30  | 20337.63 ± 13417.32      |          0 |
+
 #### Stitching ablations
 
 
 #### Chain ablations
-Chain method ablation on X dataset:
-
-| chain_transition_trigger_method   | chain_ds_method   |   prediction_rmse_mean |   cosine_dissimilarity_mean |   dtw_distance_mean |   duration_s |
-|:----------------------------------|:------------------|-----------------------:|----------------------------:|--------------------:|-------------:|
-| distance_ratio                    | linear            |               0.100918 |                    0.195811 |             2333.61 |      76.808  |
-| distance_ratio                    | segmented         |               0.28416  |                    0.21321  |             1075.5  |      91.6978 |
-| mean_normals                      | linear            |               0.094193 |                    0.166881 |             2350.73 |      68.7855 |
-| mean_normals                      | segmented         |               0.347127 |                    0.19126  |              878.53 |     120.959  |
-
-
 Chain blend ratio ablation on X dataset:
 
 
@@ -219,10 +222,10 @@ Overall method comparison
 ```bash
 python sweep.py \
   --datasets dataset/stitching/X dataset/stitching/2d_large dataset/stitching/pcgmm_3d_workspace_simple \
-  --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds chain \
+  --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds chain chain_all \
   --seeds 1 2 3 \
   --output-dir results/sweep_results \
-  --timeout-s 600 --workers 10
+  --timeout-s 600 --workers 8 --save-fig
 ```
 
 Sweep 1: Graph parameters sweep
@@ -231,35 +234,32 @@ uv run sweep.py \
   --mode graph_params \
   --datasets dataset/stitching/X \
   --ds-methods sp_recompute_ds chain \
-  --seeds 1 2 3 \
+  --seeds 1 2 \
   --param-dist-values 1 2 3 \
   --param-cos-values 1 2 3 \
   --output-dir results/graph_params \
-  --timeout-s 600 --workers 12
+  --timeout-s 600 --workers 8
 ```
 
-Sweep 2: chaining method comparison (segment vs linear) x (mean_normals vs distance_ratio)
-```bash
-uv run sweep.py \
-  --mode chain_trigger \
-  --datasets dataset/stitching/X \
-  --seeds 1 2 3 \
-  --chain-ds-methods segment linear \
-  --chain-trigger-methods mean_normals distance_ratio \
-  --output-dir results/chain_trigger \
-  --timeout-s 600 --workers 12
-```
-
-Sweep 3: blend-length sweep
+Sweep 2: chain blend-length sweep
 ```bash
 uv run sweep.py \
   --mode chain_blend \
   --datasets dataset/stitching/X \
-  --seeds 1 2 3 \
+  --seeds 1 2 \
   --chain-blend-ratios 0.0 0.1 0.25 0.5 0.75 1.0 \
   --chain-fixed-ds-method segmented \
   --chain-fixed-trigger-method mean_normals \
   --output-dir results/sweep_chain_blend \
-  --timeout-s 600 --workers 12
+  --timeout-s 600 --workers 8
 ```
 
+Sweep 3: all vs ds
+```bash
+python sweep.py \
+  --datasets dataset/stitching/X \
+  --ds-methods spt_recompute_all spt_recompute_ds sp_recompute_all sp_recompute_ds \
+  --seeds 1 2 \
+  --output-dir results/all_vs_ds \
+  --timeout-s 600 --workers 8
+```

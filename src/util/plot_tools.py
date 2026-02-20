@@ -348,9 +348,10 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
 
     # plot raw demonstrations
 
-    colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
-    for i, demo in enumerate(demo_set):
-        ax = primitive_plot_demo(ax, demo, linewidth=6, alpha=0.5, marker_size=6, color=colors[i])
+    if not getattr(config, 'ds_method', '').startswith('chain'):
+        colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
+        for i, demo in enumerate(demo_set):
+            ax = primitive_plot_demo(ax, demo, linewidth=6, alpha=0.5, marker_size=6, color=colors[i])
 
     # Plot DS
     dim = int(np.asarray(lpvds.x, dtype=float).shape[1])

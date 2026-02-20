@@ -45,7 +45,9 @@ def construct_stitched_ds(config, gg, norm_demo_set, ds_set, reversed_ds_set, in
         return all_paths(ds_set, gg, attractor, config, recompute_gaussians=False)
     elif config.ds_method == 'spt_recompute_invalid_As':
         return all_paths_reuse(ds_set, gg, reversed_ds_set, initial, attractor, config)
-    elif config.ds_method == 'chain':
+    elif config.ds_method in ('chain', 'chain_all'):
+        if config.ds_method == 'chain_all':
+            config.chain.recompute_gaussians = True
         return chain_ds(ds_set, gg, initial, attractor, config, segment_ds_lookup)
     else:
         raise NotImplementedError(f"Invalid ds_method: {config.ds_method}")

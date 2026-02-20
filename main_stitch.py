@@ -185,7 +185,8 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
         # Print
         if stitched_ds is not None:
             print(f'Successful Stitched DS construction: {stitching_stats["total_compute_time"]:.2f} s')
-            print(f'  Gaussian Graph: {stitching_stats["gg_solution_compute_time"]:.2f} s, ')
+            gg_time = stitching_stats.get("gg_solution_compute_time")
+            print(f'  Gaussian Graph: {gg_time:.2f} s, ' if gg_time is not None else '  Gaussian Graph: N/A')
             print(f'  Stitched DS: {stitching_stats["ds_compute_time"]:.2f} s')
             print(f'Metrics:')
             print(f'  RMSE: {ds_metrics["prediction_rmse"]:.4f}')
