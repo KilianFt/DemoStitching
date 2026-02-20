@@ -347,7 +347,7 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
 
     colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
     for i, demo in enumerate(demo_set):
-        ax = primitive_plot_demo(ax, demo, linewidth=8, alpha=0.5, marker_size=6, color=colors[i])
+        ax = primitive_plot_demo(ax, demo, linewidth=6, alpha=0.5, marker_size=6, color=colors[i])
 
     # Plot DS
     dim = int(np.asarray(lpvds.x, dtype=float).shape[1])
@@ -554,13 +554,12 @@ def primitive_plot_demo(ax, demo, color=None, linewidth=1, alpha=1.0, marker_siz
 
     return ax
 
-def primitive_plot_gaussian(ax, mu, sigma, color=None, sigma_bound=2, resolution=200, direction=None):
+def primitive_plot_gaussian(ax, mu, sigma, color=None, sigma_bound=2, sigma_bound_linewidth=0.25, resolution=200, direction=None):
     mu = np.asarray(mu, dtype=float).reshape(-1)
     sigma = np.asarray(sigma, dtype=float)
 
     # Params
     sigma_bound_color = 'black'
-    sigma_bound_linewidth = 0.25
     direction_arrow_color = 'white'
     direction_arrow_size = 0.1
     sigma_extent = 3  # extent of the grid in terms of std deviations
