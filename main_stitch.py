@@ -46,7 +46,10 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
     np.random.seed(config.seed)
     pre_computation_results = dict()
 
-    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+    if config.save_folder_override:
+        save_folder = config.save_folder_override
+    else:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
 
     # ============= Load/create a set of demonstrations =============
     data_position_scale, data_velocity_scale = resolve_data_scales(config)

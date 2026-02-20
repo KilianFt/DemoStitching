@@ -84,6 +84,7 @@ class StitchConfig:
     n_test_simulations: int = 1 # number of test simulations for metrics
     noise_std: float = 0.05
     save_fig: bool = True # standard deviation for initial position for simulation
+    save_folder_override: Optional[str] = None
     seed: int = 42 # 42, 100, 3215, 21
     data_position_scale: float = 1.0
     data_velocity_scale: Optional[float] = None

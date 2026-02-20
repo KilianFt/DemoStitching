@@ -1,4 +1,6 @@
 # Demonstration stitching
+This is the official implementation of our stitching framework that enables stitching together demonstrations for different tasks in a shared workspace. We do this by first learning Gaussian mixture models from the demonstrations and then building a graph-based dynamical system that can navigate between different initial and goal positions.
+
 This code builds on top of the following repositories:
 1. [LPVDS](https://github.com/sunan-sun/lpvds)
 2. [DAMM](https://github.com/SunannnSun/damm)
@@ -19,35 +21,19 @@ Thanks for open sourcing your work!
 
 ## Results
 
-### Ablations
 
-#### Graph parameters
-|    |   param_dist |   param_cos | prediction_rmse   | cosine_dissimilarity   | dtw_distance_mean   | trajectory_length_mean   |   fail_pct |
-|---:|-------------:|------------:|:------------------|:-----------------------|:--------------------|:-------------------------|-----------:|
-|  0 |            1 |           1 | 0.16 ± 0.16       | 0.15 ± 0.12            | 15002.67 ± 37472.52 | 24258.99 ± 21037.19      |          0 |
-|  1 |            1 |           2 | 0.19 ± 0.20       | 0.16 ± 0.11            | 10024.01 ± 18427.61 | 21856.61 ± 14230.70      |          0 |
-|  2 |            1 |           3 | 0.20 ± 0.24       | 0.15 ± 0.10            | 10108.10 ± 20713.89 | 25025.68 ± 21749.24      |          0 |
-|  3 |            2 |           1 | 0.17 ± 0.19       | 0.14 ± 0.09            | 14241.96 ± 32374.74 | 20457.52 ± 10837.13      |          0 |
-|  4 |            2 |           2 | 0.21 ± 0.26       | 0.16 ± 0.11            | 12798.64 ± 25081.65 | 22029.43 ± 15681.16      |          0 |
-|  5 |            2 |           3 | 0.20 ± 0.70       | 0.14 ± 0.10            | 17957.16 ± 43033.15 | 25993.52 ± 22869.55      |          0 |
-|  6 |            3 |           1 | 0.24 ± 0.33       | 0.17 ± 0.13            | 12460.12 ± 24583.44 | 20898.43 ± 11265.63      |          0 |
-|  7 |            3 |           2 | 0.19 ± 0.21       | 0.17 ± 0.12            | 14932.67 ± 35549.72 | 20860.70 ± 13091.26      |          0 |
-|  8 |            3 |           3 | 0.18 ± 0.18       | 0.15 ± 0.10            | 8810.19 ± 13612.30  | 20337.63 ± 13417.32      |          0 |
-
-#### Stitching ablations
-
-
-#### Chain ablations
+### Chain blend ablations
 Chain blend ratio ablation on X dataset:
+|    |   chain_blend_ratio | prediction_rmse   | cosine_dissimilarity   | dtw_distance_mean    | trajectory_length_mean   |
+|---:|--------------------:|:------------------|:-----------------------|:---------------------|:-------------------------|
+|  0 |                0    | 0.28 ± 0.33       | 0.20 ± 0.13            | 60398.87 ± 372691.65 | 21904.61 ± 17603.52      |
+|  1 |                0.25 | 0.31 ± 0.19       | 0.26 ± 0.15            | 7554.27 ± 6696.75    | 18558.24 ± 8537.02       |
+|  2 |                0.5  | 0.22 ± 0.15       | 0.22 ± 0.14            | 6304.31 ± 5646.79    | 22077.16 ± 19668.61      |
+|  3 |                0.75 | 0.41 ± 0.54       | 0.22 ± 0.12            | 8695.16 ± 10298.26   | 24602.11 ± 24662.31      |
+|  4 |                1    | 0.27 ± 0.37       | 0.23 ± 0.14            | 6934.35 ± 6503.77    | 23049.79 ± 19980.41      |
 
 
-
-
-## Stitching
-
-The stitching framework allows you to connect multiple trajectory demonstrations by learning Gaussian mixture models and building a graph-based dynamical system that can navigate between different initial and goal positions.
-
-### Quick Start
+## Quick Start
 ```bash
 uv run main_stitch.py
 ```
@@ -60,7 +46,13 @@ pip install -r requirements.txt
 python main_stitch.py
 ```
 
-### How It Works
+To run an interactive demo run
+```bash
+uv run live.py --dataset-path dataset/stitching/X --ds-method chain
+```
+
+
+## How It Works
 
 `main_stitch.py` implements a complete pipeline for trajectory stitching:
 
@@ -71,164 +63,63 @@ python main_stitch.py
 5. **Dynamical System**: Generate smooth trajectories using Linear Parameter Varying Dynamical Systems (LPV-DS)
 6. **Evaluation**: Test all combinations of start/goal positions and generate visualizations
 
-### Configuration Options
+The system is configured through the `StitchConfig` dataclass in `configs.py`.
 
-The system is configured through the `Config` dataclass in `main_stitch.py`:
 
-```python
-@dataclass
-class Config:
-    input_opt: Optional[int] = 3              # Data source option (1, 2, or 3)
-    data_file: Optional[str] = "test_4"       # Custom data file name (for option 3)
-    initial: Optional[np.ndarray] = None      # Fixed initial position (if None, uses all combinations)
-    attractor: Optional[np.ndarray] = None    # Fixed goal position (if None, uses all combinations)
-    ds_method: str = "recompute_all"          # DS computation method
-    reverse_gaussians: bool = True            # Duplicate gaussians with reversed directions
-    param_dist: int = 3                       # Distance parameter for graph connectivity
-    param_cos: int = 3                        # Directionality parameter for graph connectivity
-    x_min: float = 0                          # Plot bounds
-    x_max: float = 20
-    y_min: float = 0
-    y_max: float = 20
-    save_fig: bool = True                     # Save generated plots
-```
 
-### Data Input Options
+### DS Method Options
+The `ds_method` parameter controls how the dynamical system is computed:
 
-When running `main_stitch.py`, you'll be prompted to choose a data source:
+- **"lpv-ds_recompute_all"**: Applies LPV-DS to the aggregate of all demonstrations, recomputes all from raw data
+- **"lpv-ds_recompute_ds"**: Applies LPV-DS to the aggregate of all demonstrations, reuses Gaussians.
+- **"sp_recompute_all"**: Uses shortest path, extracts raw traj. points, recomputes Gaussians and DS.
+- **"sp_recompute_ds"**: Uses shortest path, keeps Gaussians but recomputes DS.
+- **"sp_recompute_invalid_As"**: Uses shortest path, selects a P near the attractor, recomputes any incompatible As.
+- **"sp_recompute_P"**: Uses shortest path, keeps Gaussians and As, tries to find a P.
+- **"spt_recompute_all"**: Uses shortest path tree, otherwise same as corresponding "sp" method.
+- **"spt_recompute_ds"**: Uses shortest path tree, otherwise same as corresponding "sp" method.
+- **"spt_recompute_invalid_As"**: Uses shortest path tree, otherwise same as corresponding "sp" method.
+- **"chain"**: Fit one linear DS per path node and switch/blend between them online (reuses Gaussians).
+- **"chain_all"**: Same as "chain" but recomputes Gaussians from raw data
 
-#### Option 1: X-trajectory Sets
-Pre-defined diagonal trajectory patterns for testing.
-
-#### Option 2: Three Separate Trajectories
-Pre-defined trajectories with crossings that lead to different goals.
-
-#### Option 3: Custom Drawn Trajectories
-Draw your own trajectories interactively using the trajectory drawer tool.
 
 ### Drawing Custom Trajectories
+When a dataset you set is not present, you can draw your own trajectories:
 
-To create your own trajectory data:
-
-1. **Choose Option 3** when prompted
-2. **Interactive Drawing**: 
+**Interactive Drawing**: 
    - The trajectory drawer will open an interactive matplotlib window
    - Click and drag to draw trajectories
    - Press 'r' to reset current trajectory
    - Press 'u' to undo last point
    - Press 'n' to start a new trajectory
    - Close the window when finished
-3. **Save Your Data**: You'll be prompted to save your trajectories with a custom filename
-4. **Automatic Processing**: The system will:
+**Save Your Data**: You'll be prompted to save your trajectories with a custom filename
+**Automatic Processing**: The system will:
    - Generate multiple noisy demonstrations from your drawn trajectories
    - Fit Gaussian mixture models to the data
    - Cache the results for future use
 
-#### Loading Existing Custom Data
-
-To reuse previously drawn trajectories:
-
-1. Set `data_file` in the Config to your saved filename (without extension)
-2. The system will automatically load `./dataset/stitching/{data_file}_traj.pkl`
-3. If the file doesn't exist, you'll be prompted to draw new trajectories
-
-### DS Method Options
-
-The `ds_method` parameter controls how the dynamical system is computed:
-
-- **"recompute_all"**: Recompute the entire DS using the shortest path (most accurate)
-- **"recompute_ds"**: Only recompute the DS parameters, reuse Gaussian structure
-- **"reuse"**: Reuse pre-computed A matrices from individual Gaussians (fastest)
-- **"all_paths_all"**: Aggregate all node-wise shortest paths and relearn DS
-- **"all_paths_ds"**: Aggregate all node-wise shortest paths and relearn only linear maps
-- **"all_paths_reuse"**: Aggregate all node-wise shortest paths with A reuse
-- **"chain"**: One linear DS per path node, then online switch/blend to next node target
-
-For chaining, the main control parameters are:
-- **"subsystem_edges"**: Number of edges to include in each subsystem
-- **"blend_length_ratio"**: Ratio of blend length to subsystem length
-- **"transition_trigger_method"**: Method for triggering transitions
-
-### Composite Robot-Task Dataset
-
-Build the connected workspace dataset with `obstaclerotate` as the central corridor:
-- `pouring` starts at the obstacle start anchor,
-- `pan2stove` starts at the obstacle end anchor,
-- `openbox` branches from the obstacle midpoint.
-
-```bash
-uv run python build_workspace_dataset.py \
-  --output-dir dataset/stitching/robottasks_workspace_chain
-```
-
-This generates `demonstration_*` folders and `workspace_plan.json` in:
-- `dataset/stitching/robottasks_workspace_chain`
-
-### Output and Visualization
-
-The system generates comprehensive visualizations saved to `./figures/stitching/{data_hash}/{ds_method}/`:
-
-- **graph.png**: The connectivity graph between Gaussians
-- **gaussians.png**: Visualization of learned Gaussian mixture components
-- **ds_X.png**: Dynamical system trajectories for each start/goal combination
-
-### Example Usage
-
-```python
-# Example 1: Use custom drawn trajectories
-config = Config(
-    input_opt=3,
-    data_file="my_custom_trajectories",
-    ds_method="recompute_all"
-)
-
-# Example 2: Test specific start/goal positions
-config = Config(
-    input_opt=2,
-    initial=np.array([4, 15]),
-    attractor=np.array([14, 2]),
-    ds_method="reuse"
-)
-
-# Example 3: Batch processing with custom bounds
-config = Config(
-    input_opt=3,
-    data_file="workspace_trajectories",
-    x_min=-5, x_max=25,
-    y_min=-5, y_max=25,
-    save_fig=True
-)
-```
-
-### Interactive Initial/Goal Selection
-
-The system includes an interactive UI for selecting initial and goal positions:
-
-- **Visual Interface**: Shows all learned Gaussians as blue circles
-- **Drag-and-Drop**: Green point (initial) and red point (goal) can be moved intuitively
-- **Real-time Feedback**: Positions update as you drag
-- **Confirmation**: Click "Confirm Selection" to proceed
-
-### Tips for Best Results
-
+#### Tips for Best Results
 1. **Draw Smooth Trajectories**: Avoid sharp corners or erratic movements
 2. **Multiple Demonstrations**: Draw several similar trajectories to improve learning
 3. **Overlap Regions**: Ensure trajectories have some overlapping regions for connectivity
 4. **Consistent Speed**: Try to maintain consistent drawing speed for better velocity estimation
 5. **Clear Goals**: Make sure trajectories clearly converge to their intended goals
 
+
 ## Sweep
-Overall method comparison
+Here the commands to reproduce the results:
+### Overall method comparison
 ```bash
-python sweep.py \
+uv run sweep.py \
   --datasets dataset/stitching/X dataset/stitching/2d_large dataset/stitching/pcgmm_3d_workspace_simple \
   --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds chain chain_all \
   --seeds 1 2 3 \
-  --output-dir results/sweep_results \
-  --timeout-s 600 --workers 8 --save-fig
+  --output-dir results/methods \
+  --timeout-s 2000 --workers 8 --save-fig
 ```
 
-Sweep 1: Graph parameters sweep
+<!-- Sweep 1: Graph parameters sweep
 ```bash
 uv run sweep.py \
   --mode graph_params \
@@ -239,27 +130,17 @@ uv run sweep.py \
   --param-cos-values 1 2 3 \
   --output-dir results/graph_params \
   --timeout-s 600 --workers 8
-```
+``` -->
 
-Sweep 2: chain blend-length sweep
+### Chain blend-length sweep
 ```bash
 uv run sweep.py \
   --mode chain_blend \
   --datasets dataset/stitching/X \
   --seeds 1 2 \
-  --chain-blend-ratios 0.0 0.1 0.25 0.5 0.75 1.0 \
+  --chain-blend-ratios 0.0 0.25 0.5 0.75 1.0 \
   --chain-fixed-ds-method segmented \
-  --chain-fixed-trigger-method mean_normals \
-  --output-dir results/sweep_chain_blend \
-  --timeout-s 600 --workers 8
-```
-
-Sweep 3: all vs ds
-```bash
-python sweep.py \
-  --datasets dataset/stitching/X \
-  --ds-methods spt_recompute_all spt_recompute_ds sp_recompute_all sp_recompute_ds \
-  --seeds 1 2 \
-  --output-dir results/all_vs_ds \
-  --timeout-s 600 --workers 8
+  --chain-fixed-trigger-method distance_ratio \
+  --output-dir results/chain_blend \
+  --timeout-s 600 --workers 10
 ```

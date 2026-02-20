@@ -220,6 +220,9 @@ def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchCon
     stitch_cfg.seed = int(spec["seed"])
     stitch_cfg.n_test_simulations = int(cfg.n_test_simulations)
     stitch_cfg.save_fig = bool(cfg.save_fig)
+    if stitch_cfg.save_fig:
+        combo_tag = _combo_tag(spec)
+        stitch_cfg.save_folder_override = str(Path(cfg.output_dir) / "figures" / combo_tag) + "/"
 
     _setters: dict[str, Callable] = {
         "chain_ds_method": lambda v: setattr(stitch_cfg.chain, "ds_method", str(v)),
@@ -280,7 +283,10 @@ def _run_main_with_timeout(
         daemon=True,
     )
     proc.start()
-    proc.join(timeout=float(timeout_s))
+    # Poll in short intervals so KeyboardInterrupt is not blocked.
+    deadline = time.perf_counter() + float(timeout_s)
+    while proc.is_alive() and time.perf_counter() < deadline:
+        proc.join(timeout=0.5)
 
     if proc.is_alive():
         proc.terminate()
@@ -493,18 +499,24 @@ def run_sweep(cfg: SweepConfig, run_main_fn: RunMainFn = _default_run_main) -> p
     rows_by_index: dict[int, dict] = {}
 
     max_workers = max(1, int(getattr(cfg, "workers", 1)))
+    interrupted = False
     if max_workers <= 1 or total_runs <= 1:
         for run_index, spec in enumerate(specs, start=1):
-            row = _run_single_spec(
-                cfg=cfg,
-                spec=spec,
-                run_main_fn=run_main_fn,
-                raw_results_dir=raw_results_dir,
-                run_index=run_index,
-                total_runs=total_runs,
-                announce_start=True,
-            )
-            rows_by_index[run_index] = row
+            try:
+                row = _run_single_spec(
+                    cfg=cfg,
+                    spec=spec,
+                    run_main_fn=run_main_fn,
+                    raw_results_dir=raw_results_dir,
+                    run_index=run_index,
+                    total_runs=total_runs,
+                    announce_start=True,
+                )
+                rows_by_index[run_index] = row
+            except KeyboardInterrupt:
+                print(f"\nInterrupted at run {run_index}/{total_runs}. Saving partial results...")
+                interrupted = True
+                break
     else:
         print(f"Using {max_workers} sweep workers")
         future_to_meta = {}
@@ -525,15 +537,22 @@ def run_sweep(cfg: SweepConfig, run_main_fn: RunMainFn = _default_run_main) -> p
                 future_to_meta[future] = (run_index, spec, combo_tag)
 
             completed = 0
-            for future in cf.as_completed(future_to_meta):
-                run_index, spec, combo_tag = future_to_meta[future]
-                completed += 1
-                try:
-                    row = future.result()
-                except Exception as exc:
-                    row = _internal_failure_row(cfg, spec, run_index, f"{type(exc).__name__}: {exc}")
-                rows_by_index[run_index] = row
-                print(f"[done {completed}/{total_runs}] {combo_tag} -> {row['status']}")
+            try:
+                for future in cf.as_completed(future_to_meta):
+                    run_index, spec, combo_tag = future_to_meta[future]
+                    completed += 1
+                    try:
+                        row = future.result()
+                    except Exception as exc:
+                        row = _internal_failure_row(cfg, spec, run_index, f"{type(exc).__name__}: {exc}")
+                    rows_by_index[run_index] = row
+                    print(f"[done {completed}/{total_runs}] {combo_tag} -> {row['status']}")
+            except KeyboardInterrupt:
+                print(f"\nInterrupted after {completed}/{total_runs} runs. Cancelling pending...")
+                interrupted = True
+                for f in future_to_meta:
+                    f.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
 
     rows = [rows_by_index[i] for i in sorted(rows_by_index.keys())]
     for row in rows:
