@@ -13,7 +13,26 @@ from configs import StitchConfig
 import time
 import src.graph_utils as gu
 from src.util.ds_tools import get_gaussian_directions
-from src.stitching.chaining import _compute_segment_DS
+from src.stitching.chaining import _compute_segment_DS, _resolve_triplet_fit_data_mode
+
+
+def _extract_gaussian_node_indices(node_id):
+    """Return (ds_idx, gaussian_idx) from a graph node id.
+
+    Supports normal Gaussian nodes like ``(i, j)`` and reversed nodes like
+    ``(i, j, "reversed")`` by taking the first two entries.
+    """
+    if isinstance(node_id, np.ndarray):
+        node_tuple = tuple(node_id.tolist())
+    elif isinstance(node_id, (tuple, list)):
+        node_tuple = tuple(node_id)
+    else:
+        raise TypeError(f"Unsupported Gaussian node id type: {type(node_id)}")
+
+    if len(node_tuple) < 2:
+        raise ValueError(f"Gaussian node id must have at least 2 entries, got: {node_tuple!r}")
+
+    return int(node_tuple[0]), int(node_tuple[1])
 
 
 def simulate_trajectories(ds, initial, config):
@@ -90,6 +109,7 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
     segment_ds_lookup = dict()
     precompute_chain_segments = bool(getattr(config, "chain_precompute_segments", True))
     if config.ds_method == "chain" and precompute_chain_segments:
+        triplet_fit_mode = _resolve_triplet_fit_data_mode(config.chain)
 
         all_segments_to_precompute = gg.get_all_simple_paths(nr_edges=config.chain.subsystem_edges)
         for segment in all_segments_to_precompute:
@@ -100,7 +120,9 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
             # compute the segment DS and store in lookup
             try:
                 segment_ds = _compute_segment_DS(ds_set, gg, segment_nodes, config)
-                segment_ds_lookup[segment_nodes] = segment_ds
+                segment_ds_lookup[(segment_nodes, triplet_fit_mode)] = segment_ds
+                if triplet_fit_mode == "all_nodes":
+                    segment_ds_lookup[segment_nodes] = segment_ds
             except Exception as exc:
                 print(f"Warning: failed to precompute segment {segment_nodes}: {exc}")
 
@@ -151,7 +173,7 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
                 sp_nodes = gg.shortest_path(initial, attractor)
                 sp_x_parts, sp_xd_parts = [], []
                 for node_id in sp_nodes:
-                    ds_idx, gaussian_idx = node_id
+                    ds_idx, gaussian_idx = _extract_gaussian_node_indices(node_id)
                     mask = ds_set[ds_idx].assignment_arr == gaussian_idx
                     ax = ds_set[ds_idx].x[mask]
                     axd = ds_set[ds_idx].x_dot[mask]

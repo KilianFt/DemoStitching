@@ -124,6 +124,31 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
             self.assertEqual(int(fit_points.shape[0]), expected_per_window)
         self.assertEqual(int(chained.edge_fit_points[-1].shape[0]), 2 * _N_SAMPLES_PER_NODE)
 
+    def test_linear_triplet_fit_mode_first_two_nodes_uses_only_prefix_data(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="linear",
+            chain_overrides={"triplet_fit_data_mode": "first_two_nodes"},
+        )
+
+        self.assertIsNotNone(chained)
+        self.assertEqual(getattr(chained, "triplet_fit_data_mode", None), "first_two_nodes")
+        expected_per_window = 2 * _N_SAMPLES_PER_NODE
+        # 3 triplet systems + 1 attractor segment; all are two-node fits in this mode.
+        self.assertEqual(chained.n_systems, 4)
+        for fit_points in chained.edge_fit_points:
+            self.assertEqual(int(fit_points.shape[0]), expected_per_window)
+
     def test_mean_normals_transition_is_centered_on_second_to_last_node(self):
         path = np.array(
             [
@@ -231,6 +256,30 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         self.assertEqual(trajectory.ndim, 2)
         self.assertEqual(gamma_history.ndim, 2)
         self.assertLess(np.linalg.norm(trajectory[-1] - attractor), 0.25)
+
+    def test_segmented_triplet_fit_mode_first_two_nodes_uses_only_prefix_data(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+            chain_overrides={"triplet_fit_data_mode": "first_two_nodes"},
+        )
+        self.assertIsNotNone(chained)
+        self.assertEqual(getattr(chained, "triplet_fit_data_mode", None), "first_two_nodes")
+        expected_per_window = 2 * _N_SAMPLES_PER_NODE
+        # 3 intermediate triplets + 1 attractor segment.
+        self.assertEqual(chained.n_systems, 4)
+        for fit_points in chained.edge_fit_points:
+            self.assertEqual(int(fit_points.shape[0]), expected_per_window)
 
     def test_segmented_chain_uses_same_configurable_trigger_policy(self):
         path = np.array(

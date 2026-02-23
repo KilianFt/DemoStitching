@@ -312,6 +312,57 @@ class SweepScriptTests(unittest.TestCase):
             self.assertTrue(np.all(df["status"].to_numpy() == "ok"))
             self.assertIn("Using 3 sweep workers", out_buf.getvalue())
 
+    def test_chain_timing_summary_uses_solution_and_precompute_parts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_timing"
+            dataset.mkdir(parents=True, exist_ok=True)
+
+            def timing_runner(stitch_cfg, results_path):
+                rows = [
+                    {
+                        "ds_compute_time": 1.25,
+                        "gg_compute_time": 2.50,
+                        "precomputation_time": 3.75,
+                    },
+                    {
+                        "combination_id": 0,
+                        "ds_method": stitch_cfg.ds_method,
+                        "prediction_rmse": 0.5,
+                        "cosine_dissimilarity": 0.4,
+                        "dtw_distance_mean": 0.3,
+                        "distance_to_attractor_mean": 0.2,
+                        "gg_solution_compute_time": 4.5,
+                        "ds_compute_time": 5.5,
+                        "total_compute_time": 10.0,
+                    },
+                ]
+                pd.DataFrame(rows).to_csv(results_path, index=False)
+                return rows
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=("chain",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="standard",
+            )
+            df = run_sweep(cfg, run_main_fn=timing_runner)
+
+            self.assertEqual(len(df), 1)
+            row = df.iloc[0]
+            self.assertEqual(row["status"], "ok")
+            self.assertEqual(int(row["n_eval_rows"]), 1)
+            self.assertEqual(int(row["n_precompute_rows"]), 1)
+            self.assertAlmostEqual(float(row["gg_solution_compute_time_mean"]), 4.5)
+            # Backward-compatible aggregate now falls back to gg_solution_compute_time.
+            self.assertAlmostEqual(float(row["gg_compute_time_mean"]), 4.5)
+            self.assertAlmostEqual(float(row["ds_compute_time_mean"]), 5.5)
+            self.assertAlmostEqual(float(row["total_compute_time_mean"]), 10.0)
+            self.assertAlmostEqual(float(row["pre_ds_compute_time_mean"]), 1.25)
+            self.assertAlmostEqual(float(row["pre_gg_compute_time_mean"]), 2.5)
+            self.assertAlmostEqual(float(row["precomputation_time_mean"]), 3.75)
+
 
 if __name__ == "__main__":
     unittest.main()

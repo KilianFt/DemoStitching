@@ -113,12 +113,11 @@ Here the commands to reproduce the results:
 ```bash
 uv run sweep.py \
   --datasets dataset/stitching/X dataset/stitching/2d_large dataset/stitching/pcgmm_3d_workspace_simple \
-  --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds chain chain_all \
-  --seeds 1 2 3 \
+  --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds spt_recompute_all spt_recompute_ds chain chain_all \
+  --seeds 1 \
   --output-dir results/methods \
   --timeout-s 2000 --workers 8 --save-fig
 ```
-
 <!-- Sweep 1: Graph parameters sweep
 ```bash
 uv run sweep.py \

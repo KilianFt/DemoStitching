@@ -98,32 +98,68 @@ def _extract_eval_rows(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _extract_precompute_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Rows that contain setup/precompute timings but no evaluation combo."""
+    if "combination_id" in df.columns:
+        return df[df["combination_id"].isna()]
+    # Fallback: if no combination_id exists, treat rows without ds_method as precompute.
+    if "ds_method" in df.columns:
+        ds = df["ds_method"].astype(str).str.strip()
+        return df[df["ds_method"].isna() | (ds == "")]
+    return df.iloc[0:0]
+
+
 def _empty_metric_summary() -> dict[str, float]:
     return {
         "n_result_rows": 0,
         "n_eval_rows": 0,
+        "n_precompute_rows": 0,
         "prediction_rmse_mean": math.nan,
         "cosine_dissimilarity_mean": math.nan,
         "dtw_distance_mean": math.nan,
         "distance_to_attractor_mean": math.nan,
+        "gg_solution_compute_time_mean": math.nan,
         "ds_compute_time_mean": math.nan,
         "gg_compute_time_mean": math.nan,
         "total_compute_time_mean": math.nan,
+        "pre_ds_compute_time_mean": math.nan,
+        "pre_gg_compute_time_mean": math.nan,
+        "precomputation_time_mean": math.nan,
     }
 
 
 def _summarize_df_metrics(df: pd.DataFrame) -> dict[str, float]:
     eval_df = _extract_eval_rows(df)
+    pre_df = _extract_precompute_rows(df)
     return {
         "n_result_rows": int(len(df)),
         "n_eval_rows": int(len(eval_df)),
+        "n_precompute_rows": int(len(pre_df)),
         "prediction_rmse_mean": _safe_mean(eval_df, "prediction_rmse"),
         "cosine_dissimilarity_mean": _safe_mean(eval_df, "cosine_dissimilarity"),
         "dtw_distance_mean": _safe_mean(eval_df, "dtw_distance_mean"),
         "distance_to_attractor_mean": _safe_mean(eval_df, "distance_to_attractor_mean"),
+        # Chain runs report gg_solution_compute_time per combo. Keep this explicit
+        # and also feed legacy gg_compute_time_mean from the best available source.
+        "gg_solution_compute_time_mean": _safe_mean_any(
+            eval_df,
+            ("gg_solution_compute_time", "gg_solution_compute_time_mean"),
+        ),
         "ds_compute_time_mean": _safe_mean_any(eval_df, ("ds_compute_time", "ds_compute_time_mean")),
-        "gg_compute_time_mean": _safe_mean_any(eval_df, ("gg_compute_time", "gg_compute_time_mean")),
+        "gg_compute_time_mean": _safe_mean_any(
+            eval_df,
+            (
+                "gg_solution_compute_time",
+                "gg_solution_compute_time_mean",
+                "gg_compute_time",
+                "gg_compute_time_mean",
+            ),
+        ),
         "total_compute_time_mean": _safe_mean_any(eval_df, ("total_compute_time", "total_compute_time_mean")),
+        # Setup/precompute timing row from main_stitch (when present).
+        "pre_ds_compute_time_mean": _safe_mean(pre_df, "ds_compute_time"),
+        "pre_gg_compute_time_mean": _safe_mean(pre_df, "gg_compute_time"),
+        "precomputation_time_mean": _safe_mean(pre_df, "precomputation_time"),
     }
 
 

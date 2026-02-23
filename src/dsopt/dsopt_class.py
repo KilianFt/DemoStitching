@@ -46,13 +46,13 @@ class dsopt_class():
 
 
     def _solve_with_retries(self, problem, label):
-        """Retry the exact same solver call multiple times (no method/fallback changes)."""
+        """Retry with SCS first, then fall back to CLARABEL if SCS keeps failing."""
+        # First try SCS (default for SDPs).
         for attempt in range(1, self.max_solve_retries + 1):
             try:
-                problem.solve()
+                problem.solve(solver=cp.SCS)
             except Exception as e:
-                print(e)
-                print(f"{label}: solve attempt {attempt}/{self.max_solve_retries} failed, retrying...")
+                print(f"{label}: SCS attempt {attempt}/{self.max_solve_retries} failed ({e}), retrying...")
                 continue
 
             status = str(problem.status).lower()
@@ -60,9 +60,19 @@ class dsopt_class():
                 return True
 
             print(
-                f"{label}: solve attempt {attempt}/{self.max_solve_retries} "
+                f"{label}: SCS attempt {attempt}/{self.max_solve_retries} "
                 f"returned status={problem.status}, retrying..."
             )
+
+        # Fall back to CLARABEL.
+        try:
+            problem.solve(solver=cp.CLARABEL)
+            status = str(problem.status).lower()
+            if status in {"optimal", "optimal_inaccurate"}:
+                return True
+            print(f"{label}: CLARABEL returned status={problem.status}")
+        except Exception as e:
+            print(f"{label}: CLARABEL failed ({e})")
 
         return False
 

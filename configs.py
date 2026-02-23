@@ -17,6 +17,11 @@ class ChainConfig:
     blend_length_ratio: float = 0.5
     recompute_gaussians: bool = False # This is automatically set to true for "chain_all"
     ds_method: str = "segmented" # "segmented" or "linear"
+    # Triplet fitting mode for chain subsystem estimation:
+    # - "all_nodes": use data from all nodes in the triplet (default).
+    # - "first_two_nodes": use only data from the first two nodes in each
+    #   3-node triplet, while keeping the same transition/target logic.
+    triplet_fit_data_mode: str = "all_nodes"
     # Supported values:
     # - "mean_normals": transition when crossing the mean-normal plane at n1.
     # - "distance_ratio": transition when d(x,n1)/d(x,n2) >= |e1|/|e2|.
@@ -69,6 +74,7 @@ class ChainConfig:
 @dataclass
 class StitchConfig:
     dataset_path: str = "./dataset/stitching/X"
+    iter_strategy: str = "permutations" # "permutations" or "combinations"
     force_preprocess: bool = True
     chain_precompute_segments: bool = True
     initial: Optional[np.ndarray] = None

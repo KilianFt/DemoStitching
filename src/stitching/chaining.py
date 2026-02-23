@@ -138,7 +138,7 @@ class ChainedDS:
         self.transition_distances = np.asarray(transition_distances, dtype=float)
         self.chain_cfg = chain_cfg
         self.transition_trigger_method = chain_cfg.transition_trigger_method
-        raw_vmax = getattr(chain_cfg, "velocity_max", None)
+        raw_vmax = chain_cfg.velocity_max
         if raw_vmax is None:
             self.velocity_max = None
         else:
@@ -585,6 +585,31 @@ def _resolve_path_states(gg, path_nodes: list) -> np.ndarray:
     return np.vstack([np.asarray(gg.graph.nodes[node]["mean"], dtype=float) for node in path_nodes])
 
 
+def _resolve_triplet_fit_data_mode(chain_cfg: ChainConfig) -> str:
+    mode_raw = str(getattr(chain_cfg, "triplet_fit_data_mode", "all_nodes")).strip().lower()
+    aliases = {
+        "all_nodes": "all_nodes",
+        "all": "all_nodes",
+        "full": "all_nodes",
+        "first_two_nodes": "first_two_nodes",
+        "first_two": "first_two_nodes",
+        "first2": "first_two_nodes",
+    }
+    if mode_raw not in aliases:
+        raise ValueError(
+            f"Unsupported chain.triplet_fit_data_mode: {mode_raw}. "
+            "Expected one of: all_nodes, first_two_nodes."
+        )
+    return aliases[mode_raw]
+
+
+def _select_fit_nodes_for_triplet_mode(window_nodes, triplet_fit_data_mode: str):
+    nodes = tuple(window_nodes)
+    if triplet_fit_data_mode == "first_two_nodes" and len(nodes) >= 3:
+        return tuple(nodes[:2])
+    return nodes
+
+
 def _resolve_transition_profile_from_point_triples(
     point_triples,
     nominal_velocity_fn,
@@ -611,12 +636,12 @@ def _resolve_transition_profile_from_point_triples(
     transition_edge_ratios = []
     transition_times = []
     transition_distances = []
-    raw_min_transition_time = float(getattr(cfg, "min_transition_time", 1e-4))
+    raw_min_transition_time = float(cfg.min_transition_time)
     if not np.isfinite(raw_min_transition_time):
         min_transition_time = 1e-4
     else:
         min_transition_time = max(raw_min_transition_time, 1e-6)
-    raw_velocity_max = getattr(cfg, "velocity_max", None)
+    raw_velocity_max = cfg.velocity_max
     if raw_velocity_max is None:
         velocity_cap = None
     else:
@@ -769,11 +794,29 @@ def prepare_chaining_edge_lookup(ds_set, gg):
     }
     return triplet_lookup
 
-def _compute_segment_DS(ds_set, gg, segment_nodes, config, x_att_override=None):
+def _compute_segment_DS(
+    ds_set,
+    gg,
+    segment_nodes,
+    config,
+    x_att_override=None,
+    fit_data_nodes=None,
+):
+    segment_nodes = tuple(segment_nodes)
+    if len(segment_nodes) == 0:
+        raise ValueError("_compute_segment_DS requires at least one segment node.")
+
+    if fit_data_nodes is None:
+        triplet_fit_data_mode = _resolve_triplet_fit_data_mode(config.chain)
+        fit_nodes = _select_fit_nodes_for_triplet_mode(segment_nodes, triplet_fit_data_mode)
+    else:
+        fit_nodes = tuple(fit_data_nodes)
+    if len(fit_nodes) == 0:
+        raise ValueError("_compute_segment_DS requires at least one fit-data node.")
 
     # Collect the gaussians and normalize priors
     gaussians = []
-    for i, node_id in enumerate(segment_nodes):
+    for node_id in fit_nodes:
         mu, sigma, direction, prior = gg.get_gaussian(node_id)
         gaussians.append({
             'prior': prior,  # use normalized prior
@@ -788,7 +831,7 @@ def _compute_segment_DS(ds_set, gg, segment_nodes, config, x_att_override=None):
     # collect the trajectory points that are assigned to the gaussians along the shortest path
     filtered_x = []
     filtered_x_dot = []
-    for node_id in segment_nodes:
+    for node_id in fit_nodes:
         ds_idx = node_id[0]
         gaussian_idx = node_id[1]
 
@@ -807,11 +850,11 @@ def _compute_segment_DS(ds_set, gg, segment_nodes, config, x_att_override=None):
     # compute DS
     x_att = np.asarray(x_att_override, dtype=float) if x_att_override is not None else np.asarray(gg.graph.nodes[segment_nodes[-1]]["mean"], dtype=float)
     stitched_ds = lpvds_class(filtered_x, filtered_x_dot, x_att,
-                              rel_scale=getattr(config, 'rel_scale', 0.7),
-                              total_scale=getattr(config, 'total_scale', 1.5),
-                              nu_0=getattr(config, 'nu_0', 5),
-                              kappa_0=getattr(config, 'kappa_0', 1),
-                              psi_dir_0=getattr(config, 'psi_dir_0', 1))
+                              rel_scale=config.damm.rel_scale,
+                              total_scale=config.damm.total_scale,
+                              nu_0=config.damm.nu_0,
+                              kappa_0=config.damm.kappa_0,
+                              psi_dir_0=config.damm.psi_dir_0)
     if config.chain.recompute_gaussians:  # compute new gaussians and linear systems (As)
         result = stitched_ds.begin()
         if not result:
@@ -916,6 +959,7 @@ def build_chained_linear_ds(
     system_target_idx = system_start_idx + subsystem_edges
     node_sources_core = path_state_sequence[system_start_idx]
     fit_node_targets = np.asarray(path_state_sequence[system_target_idx], dtype=float)
+    triplet_fit_data_mode = _resolve_triplet_fit_data_mode(config.chain)
 
     window_nodes_seq = [tuple(path_nodes[i: i + window_size]) for i in range(n_core_systems)]
     if len(window_nodes_seq) != n_core_systems:
@@ -928,10 +972,17 @@ def build_chained_linear_ds(
     direction_stats_seq = []
     for i in range(n_core_systems):
         window_nodes = tuple(window_nodes_seq[i])
+        fit_window_nodes = _select_fit_nodes_for_triplet_mode(window_nodes, triplet_fit_data_mode)
         source_state = np.asarray(node_sources_core[i], dtype=float)
         fit_target_state = np.asarray(fit_node_targets[i], dtype=float)
         use_triplet_cache = subsystem_edges == 2
-        cached = triplet_lookup.get(window_nodes) if use_triplet_cache else None
+        cache_key = (window_nodes, triplet_fit_data_mode)
+        cached = None
+        if use_triplet_cache:
+            cached = triplet_lookup.get(cache_key)
+            if cached is None and triplet_fit_data_mode == "all_nodes":
+                # Backward compatibility with previously cached keys.
+                cached = triplet_lookup.get(window_nodes)
 
         if cached is not None:
             A_i = np.asarray(cached["A"], dtype=float)
@@ -939,11 +990,11 @@ def build_chained_linear_ds(
             fit_x_dot = np.asarray(cached["fit_x_dot"], dtype=float)
             stats = cached["stats"]
         else:
-            if not all(node in source_cache for node in window_nodes):
+            if not all(node in source_cache for node in fit_window_nodes):
                 return None
             window_x, window_x_dot = _stack_xy(
-                [source_cache[node][0] for node in window_nodes],
-                [source_cache[node][1] for node in window_nodes],
+                [source_cache[node][0] for node in fit_window_nodes],
+                [source_cache[node][1] for node in fit_window_nodes],
             )
 
             assert not window_x.shape[0] == 0
@@ -964,12 +1015,15 @@ def build_chained_linear_ds(
                 target_state=fit_target_state,
             )
             if use_triplet_cache:
-                triplet_lookup[window_nodes] = {
+                cached_entry = {
                     "A": np.asarray(A_i, dtype=float).copy(),
                     "fit_x": np.asarray(fit_x, dtype=float).copy(),
                     "fit_x_dot": np.asarray(fit_x_dot, dtype=float).copy(),
                     "stats": dict(stats),
                 }
+                triplet_lookup[cache_key] = cached_entry
+                if triplet_fit_data_mode == "all_nodes":
+                    triplet_lookup[window_nodes] = cached_entry
 
         A_seq_core.append(A_i.copy())
         fit_points_seq.append(fit_x.copy())
@@ -1196,6 +1250,7 @@ def build_chained_linear_ds(
     chained_ds.transition_ratio_start_nodes = transition_ratio_start_nodes
     chained_ds.transition_ratio_nodes = transition_ratio_nodes
     chained_ds.transition_edge_ratios = transition_edge_ratios
+    chained_ds.triplet_fit_data_mode = triplet_fit_data_mode
     return chained_ds
 
 
@@ -1231,12 +1286,14 @@ def build_chained_segmented_ds(
         if isinstance(lookup, dict):
             lookup["source_cache"] = source_cache
 
-    if isinstance(lookup, dict) and (
-        "source_cache" in lookup or "triplet_connections" in lookup or "segment_ds_lookup" in lookup
-    ):
-        segment_ds_lookup = lookup.setdefault("segment_ds_lookup", {})
-    else:
-        segment_ds_lookup = lookup
+    # Build/retrieve the segment DS cache.  Precomputed entries live as
+    # tuple-keyed values in *lookup* itself; copy them into the dedicated
+    # inner dict so they are found by the .get(segment) calls below.
+    segment_ds_lookup = lookup.setdefault("segment_ds_lookup", {})
+    for k, v in lookup.items():
+        if isinstance(k, tuple) and k not in segment_ds_lookup:
+            segment_ds_lookup[k] = v
+    triplet_fit_data_mode = _resolve_triplet_fit_data_mode(config.chain)
 
     # Split path into intermediate segments (e.g. 2 edges: (n1->n2->n3), (n2->n3->n4), etc.)
     segment_size = 2
@@ -1251,12 +1308,28 @@ def build_chained_segmented_ds(
 
     # Fetch/compute intermediate segment DSs.
     intermediate_DSs = []
+    intermediate_fit_nodes = []
     for segment in intermediate_segments:
-        segment_ds = segment_ds_lookup.get(segment)
+        segment = tuple(segment)
+        fit_nodes = _select_fit_nodes_for_triplet_mode(segment, triplet_fit_data_mode)
+        cache_key = (segment, triplet_fit_data_mode)
+        segment_ds = segment_ds_lookup.get(cache_key)
+        if segment_ds is None and triplet_fit_data_mode == "all_nodes":
+            # Backward compatibility with legacy plain-tuple keys.
+            segment_ds = segment_ds_lookup.get(segment)
         if segment_ds is None:
-            segment_ds = _compute_segment_DS(ds_set, gg, segment, config)
+            segment_ds = _compute_segment_DS(
+                ds_set,
+                gg,
+                segment,
+                config,
+                fit_data_nodes=fit_nodes,
+            )
+        segment_ds_lookup[cache_key] = segment_ds
+        if triplet_fit_data_mode == "all_nodes":
             segment_ds_lookup[segment] = segment_ds
         intermediate_DSs.append(segment_ds)
+        intermediate_fit_nodes.append(tuple(fit_nodes))
 
     use_init = config.chain.use_boundary_ds_initial
     use_end = config.chain.use_boundary_ds_end
@@ -1457,7 +1530,7 @@ def build_chained_segmented_ds(
         elif is_attractor_seg:
             fit_nodes = list(path_nodes[-2:])
         else:
-            fit_nodes = list(intermediate_segments[seg_i])
+            fit_nodes = list(intermediate_fit_nodes[seg_i])
         fit_x, fit_x_dot = _stack_xy(
             [source_cache[n][0] for n in fit_nodes],
             [source_cache[n][1] for n in fit_nodes],
@@ -1488,6 +1561,8 @@ def build_chained_segmented_ds(
     chained_ds.transition_ratio_nodes = transition_ratio_nodes
     chained_ds.transition_edge_ratios = transition_edge_ratios
     chained_ds.intermediate_segments = list(intermediate_segments)
+    chained_ds.intermediate_fit_nodes = list(intermediate_fit_nodes)
+    chained_ds.triplet_fit_data_mode = triplet_fit_data_mode
     chained_ds.A_init = A_init
     chained_ds.A_attractor = A_attractor
     return chained_ds
@@ -1506,7 +1581,7 @@ def build_chained_ds(
     shortest_path_nodes,
     precomputed_edge_lookup: Optional[dict] = None,
 ):
-    method = str(getattr(config.chain, "ds_method", "linear")).strip().lower()
+    method = str(config.chain.ds_method).strip().lower()
     if method == "linear":
         return build_chained_linear_ds(
             ds_set=ds_set,
