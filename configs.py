@@ -14,7 +14,7 @@ class DammConfig:
 @dataclass
 class ChainConfig:
     subsystem_edges: int = 2
-    blend_length_ratio: float = 0.5
+    blend_length_ratio: float = 0.75
     recompute_gaussians: bool = False
     ds_method: str = "segmented" # "segmented" or "linear"
     # Supported values:
@@ -67,7 +67,7 @@ class ChainConfig:
 
 @dataclass
 class StitchConfig:
-    dataset_path: str = "./dataset/stitching/X"
+    dataset_path: str = "./dataset/stitching/CycleTest4"
     force_preprocess: bool = True
     initial: Optional[np.ndarray] = None
     attractor: Optional[np.ndarray] = None

@@ -85,7 +85,7 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
     #  ============= Pre-compute segment DSs (for chaining only) =============
     t0 = time.time()
     segment_ds_lookup = dict()
-    precompute_chain_segments = bool(getattr(config, "chain_precompute_segments", True))
+    precompute_chain_segments = bool(getattr(config, "chain_precompute_segments", False))
     if config.ds_method == "chain" and precompute_chain_segments:
 
         all_segments_to_precompute = gg.get_all_simple_paths(nr_edges=config.chain.subsystem_edges)
@@ -108,6 +108,11 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
     init_attr_combinations = initialize_iter_strategy(config, demo_set)
     all_results = [pre_computation_results]
     for i, (initial, attractor) in enumerate(init_attr_combinations):
+
+        attractor[0] = 13
+        attractor[1] = 10
+
+
         print(f"Processing combination {i+1} of {len(init_attr_combinations)} #######################################")
 
         # Construct Gaussian Graph and Stitched DS
@@ -143,6 +148,7 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
 
             # Calculate DS metrics
             # For spt methods, evaluate only against shortest-path data (not the full tree).
+            """
             print('Calculating DS metrics...')
             if config.ds_method.startswith('spt'):
                 sp_nodes = gg.shortest_path(initial, attractor)
@@ -169,12 +175,12 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
                 initial=initial,
                 attractor=attractor
             )
-
+            """
             # Plot
             if config.save_fig:
                 plot_gg_solution(gg, gg_solution_nodes, initial, attractor, config, save_as=f'{i}_Gaussian_Graph_Solution', hide_axis=True)
                 plot_ds_set_gaussians([stitched_ds], config, initial=initial, attractor=attractor, include_trajectory=True, save_as=f'{i}_Stitched_DS_Gaussians', hide_axis=True)
-                plot_ds(stitched_ds, simulated_trajectories, initial, attractor, config, save_as=f'{i}_Stitched_DS_Simulation', hide_axis=True)
+                # plot_ds(stitched_ds, simulated_trajectories, initial, attractor, config, save_as=f'{i}_Stitched_DS_Simulation', hide_axis=True)
                 plot_composite(gg, gg_solution_nodes, demo_set,stitched_ds, simulated_trajectories, initial, attractor, config, save_as=f'{i}_Composite', hide_axis=True)
 
 

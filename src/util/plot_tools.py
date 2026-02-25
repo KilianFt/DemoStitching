@@ -233,6 +233,15 @@ def plot_gg_solution(gg, solution_nodes, initial, attractor, config, ax=None, sa
     ax = primitive_plot_point(ax, initial, color='red')
     ax = primitive_plot_point(ax, attractor, color='green')
 
+    # Plot solution path
+    X = []
+    Y = []
+    for node in solution_nodes:
+        mu, _, _, _ = gg.get_gaussian(node)
+        X.append(mu[0])
+        Y.append(mu[1])
+    ax.plot(X, Y, color='purple', linewidth=2, label='Solution Path')
+
     # set limits
     _apply_plot_extent(ax, config, dim)
     if hide_axis:
@@ -347,10 +356,11 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
     ax = _create_axis(dim, ax=ax, figsize=(12, 12))
 
     # plot raw demonstrations
-
+    """
     colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
     for i, demo in enumerate(demo_set):
         ax = primitive_plot_demo(ax, demo, linewidth=6, alpha=0.5, marker_size=6, color=colors[i])
+    """
 
     # Plot DS
     dim = int(np.asarray(lpvds.x, dtype=float).shape[1])
@@ -392,6 +402,7 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
     # plot initial and attractor
     ax = primitive_plot_point(ax, initial, color='red')
     ax = primitive_plot_point(ax, attractor, color='green')
+
 
     # set limits
     _apply_plot_extent(ax, config, dim)

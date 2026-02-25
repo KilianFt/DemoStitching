@@ -123,6 +123,16 @@ def chain_ds(ds_set, gg, initial, attractor, config, segment_ds_lookup=None):
     # ############## GAUSSIAN GRAPH ##############
     t0 = time.time()
     gg_solution_nodes = gg.shortest_path(initial, attractor)
+    import matplotlib.pyplot as plt
+    from src.util.plot_tools import plot_gg_solution
+    temp = []
+    for i, ds in enumerate(ds_set):
+        for j in range(ds.K):
+            temp.append((i, j))
+    plot_gg_solution(gg, temp, initial, attractor, config)
+    plt.show()
+    gg_solution_nodes = temp
+
     stats['gg_solution_compute_time'] = time.time() - t0
 
     # ############## DS ##############

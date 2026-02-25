@@ -148,6 +148,7 @@ class GaussianGraph:
                 self.graph.remove_edge(n1, n2)
 
         # Prune edges that are not part of any shortest path between their nodes
+
         edges_to_check = set(self.graph.edges)
         while edges_to_check:
             n1, n2 = edges_to_check.pop()
