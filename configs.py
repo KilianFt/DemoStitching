@@ -97,6 +97,9 @@ class StitchConfig:
     # Optional explicit indices for which per-combination figures are saved.
     # None means save all combinations (subject to save_fig).
     save_fig_indices: Optional[tuple[int, ...]] = None
+    # Optional path to a serialized LPV-DS + GaussianGraph precompute artifact.
+    # When set, main_stitch will load/create this artifact and reuse it.
+    shared_precompute_artifact_path: Optional[str] = None
     # Hard timeout for one initial/attractor combination in main_stitch.
     # <= 0 disables per-combination timeout handling.
     combination_timeout_s: float = 600.0

@@ -351,6 +351,7 @@ class SweepScriptTests(unittest.TestCase):
                 output_dir=str(root / "sweep_out"),
                 mode="standard",
                 timeout_s=1.0,
+                shared_precompute=False,
             )
             with patch("sweep._run_main_with_timeout", return_value=("timeout after 1.0s", True)) as mock_timeout:
                 df = run_sweep(cfg, run_main_fn=_default_run_main)
@@ -555,6 +556,102 @@ class SweepScriptTests(unittest.TestCase):
                 set(df["dataset_path"].tolist()),
                 {pcgmm_dataset, str(keep_dataset)},
             )
+
+    def test_shared_precompute_prepared_once_per_signature(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_shared"
+            dataset.mkdir(parents=True, exist_ok=True)
+
+            seen_artifacts: list[str] = []
+
+            def _fake_run_single(
+                cfg, spec, run_main_fn, raw_results_dir, run_index, total_runs, announce_start
+            ):
+                del cfg, run_main_fn, raw_results_dir, total_runs, announce_start
+                seen_artifacts.append(str(spec.get("shared_precompute_artifact_path", "")))
+                return {"run_index": run_index, "status": "ok", "dataset_path": spec["dataset_path"]}
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=("sp_recompute_ds", "chain"),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="standard",
+                shared_precompute=True,
+            )
+            with (
+                patch("sweep.get_demonstration_set", return_value=["demo"]),
+                patch(
+                    "sweep.build_or_load_shared_precompute",
+                    return_value={
+                        "schema_version": 1,
+                        "ds_set": [],
+                        "reversed_ds_set": [],
+                        "norm_demo_set": [],
+                        "gg": None,
+                        "ds_compute_time": 0.1,
+                        "gg_compute_time": 0.2,
+                    },
+                ) as precompute_mock,
+                patch("sweep._run_single_spec", side_effect=_fake_run_single),
+            ):
+                run_sweep(cfg, run_main_fn=_default_run_main)
+
+            self.assertEqual(precompute_mock.call_count, 1)
+            self.assertEqual(len(seen_artifacts), 2)
+            self.assertTrue(all(seen_artifacts))
+            self.assertEqual(len(set(seen_artifacts)), 1)
+
+    def test_shared_precompute_skipped_for_custom_runner(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_shared_custom"
+            dataset.mkdir(parents=True, exist_ok=True)
+            captures: list[dict] = []
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=("sp_recompute_ds",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="standard",
+                shared_precompute=True,
+            )
+            with patch("sweep.build_or_load_shared_precompute") as precompute_mock:
+                run_sweep(cfg, run_main_fn=self._ok_runner(captures))
+
+            self.assertEqual(precompute_mock.call_count, 0)
+            self.assertEqual(len(captures), 1)
+
+    def test_disable_shared_precompute_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_shared_disabled"
+            dataset.mkdir(parents=True, exist_ok=True)
+
+            def _fake_run_single(
+                cfg, spec, run_main_fn, raw_results_dir, run_index, total_runs, announce_start
+            ):
+                del cfg, run_main_fn, raw_results_dir, total_runs, announce_start
+                return {"run_index": run_index, "status": "ok", "dataset_path": spec["dataset_path"]}
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=("sp_recompute_ds",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="standard",
+                shared_precompute=False,
+            )
+            with (
+                patch("sweep.get_demonstration_set", return_value=["demo"]),
+                patch("sweep.build_or_load_shared_precompute") as precompute_mock,
+                patch("sweep._run_single_spec", side_effect=_fake_run_single),
+            ):
+                run_sweep(cfg, run_main_fn=_default_run_main)
+
+            self.assertEqual(precompute_mock.call_count, 0)
 
 
 if __name__ == "__main__":

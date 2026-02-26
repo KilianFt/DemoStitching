@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import contextlib
+import hashlib
 import io
+import json
 import math
 import multiprocessing as mp
 import time
@@ -15,6 +17,8 @@ import numpy as np
 import pandas as pd
 
 from configs import StitchConfig
+from src.stitching.shared_precompute import build_or_load_shared_precompute
+from src.util.load_tools import get_demonstration_set, resolve_data_scales
 
 
 RunMainFn = Callable[[StitchConfig, str], Optional[List[dict]]]
@@ -31,6 +35,7 @@ class SweepConfig:
     combination_timeout_s: float = 600.0
     workers: int = 1
     save_fig: bool = False
+    shared_precompute: bool = True
     chain_precompute_segments: bool = True
     mode: str = "standard"
     chain_ds_methods: tuple[str, ...] = ()
@@ -313,6 +318,81 @@ def _combo_tag(spec: dict[str, object]) -> str:
     return tag
 
 
+def _shared_precompute_signature(stitch_cfg: StitchConfig) -> dict[str, object]:
+    dataset_path = str(stitch_cfg.dataset_path).replace("\\", "/").rstrip("/")
+    data_position_scale, data_velocity_scale = resolve_data_scales(stitch_cfg)
+    return {
+        "dataset_path": dataset_path,
+        "seed": int(stitch_cfg.seed),
+        "data_position_scale": float(data_position_scale),
+        "data_velocity_scale": float(data_velocity_scale),
+        "damm_rel_scale": float(stitch_cfg.damm.rel_scale),
+        "damm_total_scale": float(stitch_cfg.damm.total_scale),
+        "damm_nu_0": int(stitch_cfg.damm.nu_0),
+        "damm_kappa_0": float(stitch_cfg.damm.kappa_0),
+        "damm_psi_dir_0": float(stitch_cfg.damm.psi_dir_0),
+        "param_dist": float(stitch_cfg.param_dist),
+        "param_cos": float(stitch_cfg.param_cos),
+        "bhattacharyya_threshold": float(stitch_cfg.bhattacharyya_threshold),
+        "reverse_gaussians": bool(stitch_cfg.reverse_gaussians),
+        "gaussian_direction_method": str(stitch_cfg.gaussian_direction_method),
+    }
+
+
+def _signature_hash(payload: dict[str, object]) -> str:
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _prepare_shared_precompute_artifacts(
+    cfg: SweepConfig,
+    specs: list[dict[str, object]],
+    output_root: Path,
+) -> None:
+    if not specs:
+        return
+    shared_dir = output_root / "shared_precompute"
+    shared_dir.mkdir(parents=True, exist_ok=True)
+
+    signature_to_specs: dict[str, list[dict[str, object]]] = {}
+    signature_payloads: dict[str, dict[str, object]] = {}
+
+    for spec in specs:
+        stitch_cfg = _build_stitch_config(cfg, spec)
+        payload = _shared_precompute_signature(stitch_cfg)
+        sig_hash = _signature_hash(payload)
+        signature_payloads[sig_hash] = payload
+        signature_to_specs.setdefault(sig_hash, []).append(spec)
+
+    total = len(signature_to_specs)
+    for idx, (sig_hash, sig_specs) in enumerate(signature_to_specs.items(), start=1):
+        signature_payload = signature_payloads[sig_hash]
+        dataset_slug = _dataset_slug(str(signature_payload["dataset_path"]))
+        artifact_path = shared_dir / f"{dataset_slug}__{sig_hash[:16]}.pkl"
+
+        precompute_cfg = _build_stitch_config(cfg, sig_specs[0])
+        precompute_cfg.shared_precompute_artifact_path = str(artifact_path)
+
+        data_position_scale, data_velocity_scale = resolve_data_scales(precompute_cfg)
+        demo_set = get_demonstration_set(
+            precompute_cfg.dataset_path,
+            position_scale=data_position_scale,
+            velocity_scale=data_velocity_scale,
+        )
+        try:
+            build_or_load_shared_precompute(precompute_cfg, demo_set)
+        except Exception as exc:
+            raise RuntimeError(
+                "Shared precompute failed for signature "
+                f"{sig_hash[:16]} (dataset={precompute_cfg.dataset_path}, seed={precompute_cfg.seed}): "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        for spec in sig_specs:
+            spec["shared_precompute_artifact_path"] = str(artifact_path)
+        print(f"[shared precompute {idx}/{total}] {artifact_path.name}")
+
+
 def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchConfig:
     stitch_cfg = StitchConfig()
     stitch_cfg.dataset_path = str(spec["dataset_path"])
@@ -343,6 +423,9 @@ def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchCon
     if cfg.mode in {"chain_trigger", "chain_blend"}:
         precompute_segments = False
     setattr(stitch_cfg, "chain_precompute_segments", precompute_segments)
+    shared_artifact_path = spec.get("shared_precompute_artifact_path")
+    if shared_artifact_path is not None:
+        stitch_cfg.shared_precompute_artifact_path = str(shared_artifact_path)
     return stitch_cfg
 
 
@@ -604,6 +687,8 @@ def run_sweep(cfg: SweepConfig, run_main_fn: RunMainFn = _default_run_main) -> p
     raw_results_dir.mkdir(parents=True, exist_ok=True)
 
     specs = list(_iter_run_specs(cfg))
+    if bool(cfg.shared_precompute) and run_main_fn is _default_run_main:
+        _prepare_shared_precompute_artifacts(cfg, specs, output_root)
     total_runs = len(specs)
     rows_by_index: dict[int, dict] = {}
 
@@ -781,6 +866,11 @@ def _parse_args() -> SweepConfig:
         action="store_true",
         help="Enable figure saving inside each main_stitch run (disabled by default for speed).",
     )
+    parser.add_argument(
+        "--disable-shared-precompute",
+        action="store_true",
+        help="Disable sweep-level shared LPV-DS/GaussianGraph precompute reuse.",
+    )
     # parser.add_argument(
     #     "--chain-precompute-segments",
     #     action="store_true",
@@ -891,6 +981,7 @@ def _parse_args() -> SweepConfig:
         combination_timeout_s=float(args.combination_timeout_s),
         workers=max(1, int(args.workers)),
         save_fig=bool(args.save_fig),
+        shared_precompute=not bool(args.disable_shared_precompute),
         # chain_precompute_segments=bool(args.chain_precompute_segments),
         mode=args.mode,
         chain_ds_methods=chain_ds_methods,

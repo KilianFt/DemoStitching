@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import time
 
 import numpy as np
 
@@ -22,6 +21,7 @@ from src.stitching.main_stitch_helpers import (
     simulate_trajectories,
 )
 from src.stitching.metrics import calculate_ds_metrics, save_results_dataframe
+from src.stitching.shared_precompute import build_or_load_shared_precompute
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.util.ds_tools import apply_lpvds_demowise, get_gaussian_directions
 from src.util.load_tools import (
@@ -80,10 +80,20 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
     if config.save_fig and save_fig_indices is None:
         plot_demonstration_set(demo_set, config, save_as="Demonstrations_Raw", hide_axis=True)
 
-    # ============= Fit a DS to each demonstration =============
-    t0 = time.time()
-    ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config.damm)
-    ds_compute_time = time.time() - t0
+    # ============= Shared LPV-DS + Gaussian Graph precompute =============
+    shared_precompute = build_or_load_shared_precompute(
+        config=config,
+        demo_set=demo_set,
+        apply_lpvds_demowise_fn=apply_lpvds_demowise,
+        get_gaussian_directions_fn=get_gaussian_directions,
+        gaussian_graph_cls=gu.GaussianGraph,
+    )
+    ds_set = shared_precompute["ds_set"]
+    reversed_ds_set = shared_precompute["reversed_ds_set"]
+    norm_demo_set = shared_precompute["norm_demo_set"]
+    gg = shared_precompute["gg"]
+    ds_compute_time = float(shared_precompute["ds_compute_time"])
+    gg_compute_time = float(shared_precompute["gg_compute_time"])
     if config.save_fig and save_fig_indices is None:
         plot_demonstration_set(norm_demo_set, config, save_as="Demonstrations_Norm", hide_axis=True)
         plot_ds_set_gaussians(
@@ -94,22 +104,7 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
             hide_axis=True,
         )
 
-    # ============= Construct Gaussian Graph =============
-    t0 = time.time()
-    gaussians = {
-        (i, j): {"mu": mu, "sigma": sigma, "direction": direction, "prior": prior}
-        for i, ds in enumerate(ds_set)
-        for j, (mu, sigma, direction, prior) in enumerate(
-            zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior)
-        )
-    }
-    gg = gu.GaussianGraph(
-        param_dist=config.param_dist,
-        param_cos=config.param_cos,
-        bhattacharyya_threshold=config.bhattacharyya_threshold,
-    )
-    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
-    gg_compute_time = time.time() - t0
+    # ============= Construct/Load Gaussian Graph (already in shared precompute) =============
     if config.save_fig and save_fig_indices is None:
         plot_gaussian_graph(gg, config, save_as="Gaussian_Graph", hide_axis=True)
 

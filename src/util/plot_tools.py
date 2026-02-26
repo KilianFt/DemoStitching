@@ -10,6 +10,16 @@ from src.util.ds_tools import get_gaussian_directions
 import random
 import os
 
+
+def _sample_cmap_colors(cmap_name: str, n: int, min_frac: float = 0.0, max_frac: float = 1.0) -> np.ndarray:
+    """Return ``n`` RGBA colors sampled from any matplotlib colormap."""
+    n = max(int(n), 1)
+    min_frac = float(np.clip(min_frac, 0.0, 1.0))
+    max_frac = float(np.clip(max_frac, min_frac, 1.0))
+    cmap = plt.get_cmap(cmap_name)
+    return np.asarray(cmap(np.linspace(min_frac, max_frac, n)))
+
+
 def _get_save_folder(config):
     override = getattr(config, 'save_folder_override', None)
     if override:
@@ -138,7 +148,7 @@ def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=Fa
     ax = _create_axis(dim, ax=ax, figsize=(8, 8))
 
     # Generate colors from colormap - one color per demonstration
-    colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
+    colors = _sample_cmap_colors('tab10', len(demo_set))
 
     # Plot each demonstration with its assigned color
     for i, demo in enumerate(demo_set):
@@ -179,7 +189,7 @@ def plot_ds_set_gaussians(ds_set, config, initial=None, attractor=None, include_
     external_ax = ax is not None
     ax = _create_axis(dim, ax=ax, figsize=(8, 8))
 
-    colors = plt.cm.get_cmap('tab10', len(ds_set)).colors
+    colors = _sample_cmap_colors('tab10', len(ds_set))
 
     # Add trajectory points if requested
     if include_trajectory:
@@ -362,7 +372,7 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
     # plot raw demonstrations
 
     if not getattr(config, 'ds_method', '').startswith('chain'):
-        colors = plt.cm.get_cmap('tab10', len(demo_set)).colors
+        colors = _sample_cmap_colors('summer', len(demo_set), max_frac=0.7)
         for i, demo in enumerate(demo_set):
             ax = primitive_plot_demo(ax, demo, linewidth=6, alpha=0.5, marker_size=6, color=colors[i])
 

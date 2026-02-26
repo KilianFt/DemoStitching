@@ -291,6 +291,41 @@ class MainStitchFailureHandlingTests(unittest.TestCase):
         self.assertIn("timeout after 600.000s", eval_rows[0]["combination_error_message"])
         self.assertEqual(eval_rows[1]["combination_status"], "ok")
 
+    def test_main_stitch_uses_shared_precompute_artifact_when_configured(self):
+        source_ds = _FakeSourceDS()
+        cfg = self._base_config("chain_all")
+        cfg.chain_precompute_segments = False
+        cfg.shared_precompute_artifact_path = "/tmp/shared_precompute_dummy.pkl"
+
+        shared_payload = {
+            "schema_version": 1,
+            "ds_set": [source_ds],
+            "reversed_ds_set": [],
+            "norm_demo_set": ["demo_norm"],
+            "gg": _FakeGaussianGraph(),
+            "ds_compute_time": 1.23,
+            "gg_compute_time": 2.34,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "results.csv"
+            with (
+                patch("main_stitch.resolve_data_scales", return_value=(1.0, 1.0)),
+                patch("main_stitch.get_demonstration_set", return_value=["demo"]),
+                patch("main_stitch.infer_state_dim_from_demo_set", return_value=2),
+                patch("main_stitch.compute_plot_extent_from_demo_set", return_value=(0.0, 1.0, 0.0, 1.0)),
+                patch("main_stitch.initialize_iter_strategy", return_value=[]),
+                patch("main_stitch.build_or_load_shared_precompute", return_value=shared_payload),
+                patch("main_stitch.apply_lpvds_demowise") as apply_mock,
+                patch("main_stitch.save_results_dataframe"),
+            ):
+                all_results = main(config=cfg, results_path=str(csv_path))
+
+        self.assertEqual(len(all_results), 1)
+        self.assertEqual(float(all_results[0]["ds_compute_time"]), 1.23)
+        self.assertEqual(float(all_results[0]["gg_compute_time"]), 2.34)
+        apply_mock.assert_not_called()
+
     def test_chain_precompute_timeout_is_non_fatal_and_recorded(self):
         source_ds = _FakeSourceDS()
         stitched_ok = _FakeStitchedDS()
