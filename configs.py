@@ -20,8 +20,9 @@ class ChainConfig:
     # Triplet fitting mode for chain subsystem estimation:
     # - "all_nodes": use data from all nodes in the triplet (default).
     # - "first_two_nodes": use only data from the first two nodes in each
+    # - "subset_third_node": use data from the first two nodes and a subset of the third node
     #   3-node triplet, while keeping the same transition/target logic.
-    triplet_fit_data_mode: str = "all_nodes"
+    triplet_fit_data_mode: str = "subset_third_node"
     # Supported values:
     # - "mean_normals": transition when crossing the mean-normal plane at n1.
     # - "distance_ratio": transition when d(x,n1)/d(x,n2) >= |e1|/|e2|.
