@@ -603,7 +603,7 @@ def _resolve_triplet_fit_data_mode(chain_cfg: ChainConfig) -> str:
     if mode_raw not in aliases:
         raise ValueError(
             f"Unsupported chain.triplet_fit_data_mode: {mode_raw}. "
-            "Expected one of: all_nodes, first_two_nodes, behind_last_edge_plane."
+            "Expected one of: all_nodes, first_two_nodes, subset_third_node, behind_last_edge_plane."
         )
     return aliases[mode_raw]
 
@@ -884,28 +884,43 @@ def _compute_segment_DS(
     # collect the trajectory points that are assigned to the gaussians along the shortest path
     filtered_x = []
     filtered_x_dot = []
-    for i, node_id in enumerate(fit_nodes):
+    for node_id in fit_nodes:
         ds_idx = node_id[0]
         gaussian_idx = node_id[1]
 
         assigned_x = ds_set[ds_idx].x[ds_set[ds_idx].assignment_arr == gaussian_idx]  # TODO sometimes this is empty, why?
         assigned_x_dot = ds_set[ds_idx].x_dot[ds_set[ds_idx].assignment_arr == gaussian_idx]
 
-        # If mode "subset_third_node", filter out some of the datapoints connected to the third node:
-        if config.chain.triplet_fit_data_mode == "subset_third_node":
-            if len(segment_nodes) != 3:
-                raise ValueError("triplet_fit_data_mode 'subset_third_node' requires 3 segment nodes.")
-            if i != 2:  # only filter the third node's data
-                continue
-
-            edge_dist = np.linalg.norm(gg.graph.nodes[segment_nodes[2]]["mean"] - gg.graph.nodes[segment_nodes[1]]["mean"])
-            node_3_exclusion_circle = 0.1 * edge_dist  # TODO move to params if kept
-
-            satisfying_points = np.ones(assigned_x.shape[0], dtype=bool)
-            satisfying_points = satisfying_points & (np.linalg.norm(assigned_x - gg.graph.nodes[segment_nodes[2]]["mean"], axis=1) >= node_3_exclusion_circle)
-            satisfying_points = satisfying_points & (np.linalg.norm(assigned_x - gg.graph.nodes[segment_nodes[1]]["mean"], axis=1) <= edge_dist)
-            assigned_x = assigned_x[satisfying_points]
-            assigned_x_dot = assigned_x_dot[satisfying_points]
+        # If mode "subset_third_node", keep first/second node data as-is and
+        # sub-filter only the third node when this is a 3-node segment.
+        if triplet_fit_data_mode == "subset_third_node":
+            is_triplet = len(segment_nodes) >= 3
+            is_third_node = is_triplet and (node_id == segment_nodes[2])
+            if is_third_node and assigned_x.shape[0] > 0:
+                edge_dist = float(
+                    np.linalg.norm(
+                        np.asarray(gg.graph.nodes[segment_nodes[2]]["mean"], dtype=float)
+                        - np.asarray(gg.graph.nodes[segment_nodes[1]]["mean"], dtype=float)
+                    )
+                )
+                if edge_dist > 1e-12:
+                    node_3_exclusion_circle = 0.1 * edge_dist  # TODO move to params if kept
+                    satisfying_points = np.ones(assigned_x.shape[0], dtype=bool)
+                    satisfying_points = satisfying_points & (
+                        np.linalg.norm(
+                            assigned_x - np.asarray(gg.graph.nodes[segment_nodes[2]]["mean"], dtype=float),
+                            axis=1,
+                        ) >= node_3_exclusion_circle
+                    )
+                    satisfying_points = satisfying_points & (
+                        np.linalg.norm(
+                            assigned_x - np.asarray(gg.graph.nodes[segment_nodes[1]]["mean"], dtype=float),
+                            axis=1,
+                        ) <= edge_dist
+                    )
+                    if np.any(satisfying_points):
+                        assigned_x = assigned_x[satisfying_points]
+                        assigned_x_dot = assigned_x_dot[satisfying_points]
 
 
         # reverse velocity if gaussian is reversed

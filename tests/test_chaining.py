@@ -547,6 +547,91 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         self.assertTrue(_FakeLPVDS.begin_called)
         self.assertFalse(_FakeLPVDS.init_cluster_called)
 
+    def test_compute_segment_ds_subset_third_node_allows_two_node_segment(self):
+        class _FakeLPVDS:
+            captured_rows = None
+
+            def __init__(self, x, x_dot, x_att, **kwargs):
+                del x_att, kwargs
+                _FakeLPVDS.captured_rows = (int(np.asarray(x).shape[0]), int(np.asarray(x_dot).shape[0]))
+
+            def init_cluster(self, _gaussians):
+                return None
+
+            def _optimize(self):
+                return None
+
+            def begin(self):
+                return True
+
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ]
+        )
+        ds_set = [_MockDS(mu=mu, target=path[min(i + 1, 2)], seed=4000 + i) for i, mu in enumerate(path)]
+        gg = _MockGaussianGraph(path)
+        cfg = StitchConfig()
+        cfg.chain.ds_method = "segmented"
+        cfg.chain.triplet_fit_data_mode = "subset_third_node"
+        cfg.chain.recompute_gaussians = False
+
+        with patch("src.stitching.chaining.lpvds_class", _FakeLPVDS):
+            _compute_segment_DS(
+                ds_set,
+                gg,
+                segment_nodes=((1, 0), (2, 0)),
+                config=cfg,
+                x_att_override=np.array([2.2, 0.0], dtype=float),
+            )
+
+        self.assertEqual(_FakeLPVDS.captured_rows, (2 * _N_SAMPLES_PER_NODE, 2 * _N_SAMPLES_PER_NODE))
+
+    def test_compute_segment_ds_subset_third_node_keeps_prefix_nodes(self):
+        class _FakeLPVDS:
+            captured_rows = None
+
+            def __init__(self, x, x_dot, x_att, **kwargs):
+                del x_att, kwargs
+                _FakeLPVDS.captured_rows = (int(np.asarray(x).shape[0]), int(np.asarray(x_dot).shape[0]))
+
+            def init_cluster(self, _gaussians):
+                return None
+
+            def _optimize(self):
+                return None
+
+            def begin(self):
+                return True
+
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ]
+        )
+        ds_set = [_MockDS(mu=mu, target=path[min(i + 1, 2)], seed=5000 + i) for i, mu in enumerate(path)]
+        gg = _MockGaussianGraph(path)
+        cfg = StitchConfig()
+        cfg.chain.ds_method = "segmented"
+        cfg.chain.triplet_fit_data_mode = "subset_third_node"
+        cfg.chain.recompute_gaussians = False
+
+        with patch("src.stitching.chaining.lpvds_class", _FakeLPVDS):
+            _compute_segment_DS(
+                ds_set,
+                gg,
+                segment_nodes=((0, 0), (1, 0), (2, 0)),
+                config=cfg,
+            )
+
+        self.assertIsNotNone(_FakeLPVDS.captured_rows)
+        self.assertGreaterEqual(_FakeLPVDS.captured_rows[0], 2 * _N_SAMPLES_PER_NODE)
+        self.assertLessEqual(_FakeLPVDS.captured_rows[0], 3 * _N_SAMPLES_PER_NODE)
+
 
 if __name__ == "__main__":
     unittest.main()
