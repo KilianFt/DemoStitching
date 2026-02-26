@@ -594,11 +594,16 @@ def _resolve_triplet_fit_data_mode(chain_cfg: ChainConfig) -> str:
         "first_two_nodes": "first_two_nodes",
         "first_two": "first_two_nodes",
         "first2": "first_two_nodes",
+        "subset_third_node": "subset_third_node",
+        "behind_last_edge_plane": "behind_last_edge_plane",
+        "behind_last_edge": "behind_last_edge_plane",
+        "last_edge_plane": "behind_last_edge_plane",
+        "behind_plane": "behind_last_edge_plane",
     }
     if mode_raw not in aliases:
         raise ValueError(
             f"Unsupported chain.triplet_fit_data_mode: {mode_raw}. "
-            "Expected one of: all_nodes, first_two_nodes."
+            "Expected one of: all_nodes, first_two_nodes, behind_last_edge_plane."
         )
     return aliases[mode_raw]
 
@@ -608,6 +613,54 @@ def _select_fit_nodes_for_triplet_mode(window_nodes, triplet_fit_data_mode: str)
     if triplet_fit_data_mode == "first_two_nodes" and len(nodes) >= 3:
         return tuple(nodes[:2])
     return nodes
+
+
+def _apply_triplet_fit_data_mode_filter(
+    window_x: np.ndarray,
+    window_x_dot: np.ndarray,
+    segment_nodes,
+    gg,
+    triplet_fit_data_mode: str,
+    *,
+    x_att_override=None,
+):
+    """Filter fit-data points for triplet modes that use geometric constraints."""
+    x = np.asarray(window_x, dtype=float)
+    x_dot = np.asarray(window_x_dot, dtype=float)
+    if x.shape[0] == 0 or x_dot.shape[0] == 0:
+        return x, x_dot
+    if triplet_fit_data_mode != "behind_last_edge_plane":
+        return x, x_dot
+
+    # Goal/attractor override segments should keep full data support.
+    if x_att_override is not None:
+        return x, x_dot
+
+    segment_nodes = tuple(segment_nodes)
+    if len(segment_nodes) < 3:
+        return x, x_dot
+
+    prev_node = segment_nodes[-2]
+    last_node = segment_nodes[-1]
+    n_prev = np.asarray(gg.graph.nodes[prev_node]["mean"], dtype=float)
+    n_last = np.asarray(gg.graph.nodes[last_node]["mean"], dtype=float)
+
+    edge = n_last - n_prev
+    edge_norm = float(np.linalg.norm(edge))
+    if edge_norm <= 1e-12:
+        return x, x_dot
+    edge_dir = edge / edge_norm
+
+    signed_distance = (x - n_last.reshape(1, -1)) @ edge_dir.reshape(-1, 1)
+    signed_distance = signed_distance.reshape(-1)
+    keep_mask = signed_distance <= 0.0
+    kept = int(np.count_nonzero(keep_mask))
+    min_required = max(3, int(0.1 * x.shape[0]))
+    if kept < min_required:
+        # Keep the unfiltered set when the geometric cut leaves too little data.
+        return x, x_dot
+
+    return x[keep_mask], x_dot[keep_mask]
 
 
 def _resolve_transition_profile_from_point_triples(
@@ -806,8 +859,8 @@ def _compute_segment_DS(
     if len(segment_nodes) == 0:
         raise ValueError("_compute_segment_DS requires at least one segment node.")
 
+    triplet_fit_data_mode = _resolve_triplet_fit_data_mode(config.chain)
     if fit_data_nodes is None:
-        triplet_fit_data_mode = _resolve_triplet_fit_data_mode(config.chain)
         fit_nodes = _select_fit_nodes_for_triplet_mode(segment_nodes, triplet_fit_data_mode)
     else:
         fit_nodes = tuple(fit_data_nodes)
@@ -831,12 +884,29 @@ def _compute_segment_DS(
     # collect the trajectory points that are assigned to the gaussians along the shortest path
     filtered_x = []
     filtered_x_dot = []
-    for node_id in fit_nodes:
+    for i, node_id in enumerate(fit_nodes):
         ds_idx = node_id[0]
         gaussian_idx = node_id[1]
 
-        assigned_x = ds_set[ds_idx].x[ds_set[ds_idx].assignment_arr == gaussian_idx]
+        assigned_x = ds_set[ds_idx].x[ds_set[ds_idx].assignment_arr == gaussian_idx]  # TODO sometimes this is empty, why?
         assigned_x_dot = ds_set[ds_idx].x_dot[ds_set[ds_idx].assignment_arr == gaussian_idx]
+
+        # If mode "subset_third_node", filter out some of the datapoints connected to the third node:
+        if config.chain.triplet_fit_data_mode == "subset_third_node":
+            if len(segment_nodes) != 3:
+                raise ValueError("triplet_fit_data_mode 'subset_third_node' requires 3 segment nodes.")
+            if i != 2:  # only filter the third node's data
+                continue
+
+            edge_dist = np.linalg.norm(gg.graph.nodes[segment_nodes[2]]["mean"] - gg.graph.nodes[segment_nodes[1]]["mean"])
+            node_3_exclusion_circle = 0.1 * edge_dist  # TODO move to params if kept
+
+            satisfying_points = np.ones(assigned_x.shape[0], dtype=bool)
+            satisfying_points = satisfying_points & (np.linalg.norm(assigned_x - gg.graph.nodes[segment_nodes[2]]["mean"], axis=1) >= node_3_exclusion_circle)
+            satisfying_points = satisfying_points & (np.linalg.norm(assigned_x - gg.graph.nodes[segment_nodes[1]]["mean"], axis=1) <= edge_dist)
+            assigned_x = assigned_x[satisfying_points]
+            assigned_x_dot = assigned_x_dot[satisfying_points]
+
 
         # reverse velocity if gaussian is reversed
         assigned_x_dot = -assigned_x_dot if node_id in gg.gaussian_reversal_map else assigned_x_dot
@@ -844,8 +914,18 @@ def _compute_segment_DS(
         filtered_x.append(assigned_x)
         filtered_x_dot.append(assigned_x_dot)
 
+
+
     filtered_x = np.vstack(filtered_x)
     filtered_x_dot = np.vstack(filtered_x_dot)
+    filtered_x, filtered_x_dot = _apply_triplet_fit_data_mode_filter(
+        filtered_x,
+        filtered_x_dot,
+        segment_nodes=segment_nodes,
+        gg=gg,
+        triplet_fit_data_mode=triplet_fit_data_mode,
+        x_att_override=x_att_override,
+    )
 
     # compute DS
     x_att = np.asarray(x_att_override, dtype=float) if x_att_override is not None else np.asarray(gg.graph.nodes[segment_nodes[-1]]["mean"], dtype=float)
@@ -996,6 +1076,14 @@ def build_chained_linear_ds(
                 [source_cache[node][0] for node in fit_window_nodes],
                 [source_cache[node][1] for node in fit_window_nodes],
             )
+            window_x, window_x_dot = _apply_triplet_fit_data_mode_filter(
+                window_x,
+                window_x_dot,
+                segment_nodes=window_nodes,
+                gg=gg,
+                triplet_fit_data_mode=triplet_fit_data_mode,
+                x_att_override=None,
+            )
 
             assert not window_x.shape[0] == 0
 
@@ -1083,6 +1171,14 @@ def build_chained_linear_ds(
             att_seg_wx, att_seg_wxd = _stack_xy(
                 [source_cache[node][0] for node in att_seg_nodes],
                 [source_cache[node][1] for node in att_seg_nodes],
+            )
+            att_seg_wx, att_seg_wxd = _apply_triplet_fit_data_mode_filter(
+                att_seg_wx,
+                att_seg_wxd,
+                segment_nodes=att_seg_nodes,
+                gg=gg,
+                triplet_fit_data_mode=triplet_fit_data_mode,
+                x_att_override=attractor,
             )
             A_att_seg, att_seg_fit_x, att_seg_fit_x_dot = _fit_window_matrix(
                 window_x=att_seg_wx,
@@ -1534,6 +1630,15 @@ def build_chained_segmented_ds(
         fit_x, fit_x_dot = _stack_xy(
             [source_cache[n][0] for n in fit_nodes],
             [source_cache[n][1] for n in fit_nodes],
+        )
+        fit_segment_nodes = triplet_windows[i] if i < len(triplet_windows) else tuple(fit_nodes)
+        fit_x, fit_x_dot = _apply_triplet_fit_data_mode_filter(
+            fit_x,
+            fit_x_dot,
+            segment_nodes=fit_segment_nodes,
+            gg=gg,
+            triplet_fit_data_mode=triplet_fit_data_mode,
+            x_att_override=attractor if is_attractor_seg else None,
         )
         edge_fit_points.append(fit_x.copy())
         edge_fit_velocities.append(fit_x_dot.copy())

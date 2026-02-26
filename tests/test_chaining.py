@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 from types import MethodType
 from typing import Optional
+from unittest.mock import patch
 
 import networkx as nx
 import numpy as np
@@ -12,7 +13,11 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from configs import StitchConfig
-from src.stitching.chaining import build_chained_ds
+from src.stitching.chaining import (
+    _compute_segment_DS,
+    _resolve_triplet_fit_data_mode,
+    build_chained_ds,
+)
 
 
 _N_SAMPLES_PER_NODE = 80
@@ -388,6 +393,159 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         _, velocity, _ = chained.step_once(initial.copy(), dt=0.02)
         self.assertTrue(np.all(np.isfinite(velocity)))
         self.assertLessEqual(float(np.linalg.norm(velocity)), 0.3 + 1e-12)
+
+    def test_triplet_mode_resolves_behind_last_edge_plane_alias(self):
+        cfg = StitchConfig()
+        cfg.chain.triplet_fit_data_mode = "behind_last_edge"
+        self.assertEqual(_resolve_triplet_fit_data_mode(cfg.chain), "behind_last_edge_plane")
+        cfg.chain.triplet_fit_data_mode = "last_edge_plane"
+        self.assertEqual(_resolve_triplet_fit_data_mode(cfg.chain), "behind_last_edge_plane")
+
+    def test_linear_triplet_fit_mode_behind_last_edge_plane_reduces_core_fit_data(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained_all, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="linear",
+            chain_overrides={"triplet_fit_data_mode": "all_nodes"},
+        )
+        chained_behind, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="linear",
+            chain_overrides={"triplet_fit_data_mode": "behind_last_edge_plane"},
+        )
+        self.assertIsNotNone(chained_all)
+        self.assertIsNotNone(chained_behind)
+        # Core systems are all triplets; the last system is the attractor segment.
+        for i in range(chained_all.n_systems - 1):
+            n_all = int(chained_all.edge_fit_points[i].shape[0])
+            n_behind = int(chained_behind.edge_fit_points[i].shape[0])
+            self.assertLess(n_behind, n_all)
+            self.assertGreaterEqual(n_behind, 2 * _N_SAMPLES_PER_NODE)
+
+    def test_segmented_triplet_fit_mode_behind_last_edge_plane_reduces_core_fit_data(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained_all, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+            chain_overrides={"triplet_fit_data_mode": "all_nodes"},
+        )
+        chained_behind, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+            chain_overrides={"triplet_fit_data_mode": "behind_last_edge_plane"},
+        )
+        self.assertIsNotNone(chained_all)
+        self.assertIsNotNone(chained_behind)
+        for i in range(chained_all.n_systems - 1):
+            n_all = int(chained_all.edge_fit_points[i].shape[0])
+            n_behind = int(chained_behind.edge_fit_points[i].shape[0])
+            self.assertLess(n_behind, n_all)
+            self.assertGreaterEqual(n_behind, 2 * _N_SAMPLES_PER_NODE)
+
+    def test_compute_segment_ds_skips_last_edge_plane_filter_for_attractor_override(self):
+        class _FakeLPVDS:
+            captured_rows = None
+
+            def __init__(self, x, x_dot, x_att, **kwargs):
+                del x_att, kwargs
+                _FakeLPVDS.captured_rows = (int(np.asarray(x).shape[0]), int(np.asarray(x_dot).shape[0]))
+
+            def init_cluster(self, _gaussians):
+                return None
+
+            def _optimize(self):
+                return None
+
+            def begin(self):
+                return True
+
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ]
+        )
+        ds_set = [_MockDS(mu=mu, target=path[min(i + 1, 2)], seed=2000 + i) for i, mu in enumerate(path)]
+        gg = _MockGaussianGraph(path)
+        cfg = StitchConfig()
+        cfg.chain.ds_method = "segmented"
+        cfg.chain.triplet_fit_data_mode = "behind_last_edge_plane"
+        cfg.chain.recompute_gaussians = False
+
+        with patch("src.stitching.chaining.lpvds_class", _FakeLPVDS):
+            _compute_segment_DS(
+                ds_set,
+                gg,
+                segment_nodes=((0, 0), (1, 0), (2, 0)),
+                config=cfg,
+                x_att_override=np.array([2.2, 0.0], dtype=float),
+            )
+
+        self.assertEqual(_FakeLPVDS.captured_rows, (3 * _N_SAMPLES_PER_NODE, 3 * _N_SAMPLES_PER_NODE))
+
+    def test_compute_segment_ds_recompute_mode_calls_begin(self):
+        class _FakeLPVDS:
+            begin_called = False
+            init_cluster_called = False
+
+            def __init__(self, x, x_dot, x_att, **kwargs):
+                del x, x_dot, x_att, kwargs
+
+            def init_cluster(self, _gaussians):
+                _FakeLPVDS.init_cluster_called = True
+
+            def _optimize(self):
+                return None
+
+            def begin(self):
+                _FakeLPVDS.begin_called = True
+                return True
+
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ]
+        )
+        ds_set = [_MockDS(mu=mu, target=path[min(i + 1, 2)], seed=3000 + i) for i, mu in enumerate(path)]
+        gg = _MockGaussianGraph(path)
+        cfg = StitchConfig()
+        cfg.chain.ds_method = "segmented"
+        cfg.chain.triplet_fit_data_mode = "all_nodes"
+        cfg.chain.recompute_gaussians = True
+
+        with patch("src.stitching.chaining.lpvds_class", _FakeLPVDS):
+            _compute_segment_DS(
+                ds_set,
+                gg,
+                segment_nodes=((0, 0), (1, 0), (2, 0)),
+                config=cfg,
+            )
+
+        self.assertTrue(_FakeLPVDS.begin_called)
+        self.assertFalse(_FakeLPVDS.init_cluster_called)
 
 
 if __name__ == "__main__":

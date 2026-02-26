@@ -28,15 +28,18 @@ class SweepConfig:
     output_dir: str
     n_test_simulations: int = 3
     timeout_s: float = 0.0
+    combination_timeout_s: float = 600.0
     workers: int = 1
     save_fig: bool = False
-    chain_precompute_segments: bool = False
+    chain_precompute_segments: bool = True
     mode: str = "standard"
     chain_ds_methods: tuple[str, ...] = ()
     chain_trigger_methods: tuple[str, ...] = ()
     chain_blend_ratios: tuple[float, ...] = ()
     chain_fixed_ds_method: str = "segmented"
-    chain_fixed_trigger_method: str = "mean_normals"
+    chain_fixed_trigger_method: str = "distance_ratio"
+    chain_triplet_fit_modes: tuple[str, ...] = ()
+    chain_triplet_run_method: str = "chain_all"
     param_dist_values: tuple[float, ...] = ()
     param_cos_values: tuple[float, ...] = ()
     rel_scale_values: tuple[float, ...] = ()
@@ -50,7 +53,6 @@ def _dataset_slug(dataset_path: str) -> str:
         if p not in ("", ".", "..", "/", "\\", path.anchor)
     ]
     return "__".join(parts) if parts else "dataset"
-
 
 def _normalize_chain_ds_method(value: str) -> str:
     method = str(value).strip().lower()
@@ -66,6 +68,35 @@ def _normalize_trigger_method(value: str) -> str:
     if method in {"mean_normals", "distance_ratio"}:
         return method
     raise ValueError(f"Unsupported chain transition_trigger_method: {value}")
+
+
+def _normalize_chain_run_method(value: str) -> str:
+    method = str(value).strip().lower()
+    if method in {"chain", "chain_all"}:
+        return method
+    raise ValueError(f"Unsupported chain run ds_method: {value}")
+
+
+def _normalize_triplet_fit_mode(value: str) -> str:
+    mode = str(value).strip().lower()
+    aliases = {
+        "all_nodes": "all_nodes",
+        "all": "all_nodes",
+        "full": "all_nodes",
+        "first_two_nodes": "first_two_nodes",
+        "first_two": "first_two_nodes",
+        "first2": "first_two_nodes",
+        "subset_third_node": "subset_third_node",
+        "subset_third": "subset_third_node",
+        "third_node_subset": "subset_third_node",
+        "behind_last_edge_plane": "behind_last_edge_plane",
+        "behind_last_edge": "behind_last_edge_plane",
+        "last_edge_plane": "behind_last_edge_plane",
+        "behind_plane": "behind_last_edge_plane",
+    }
+    if mode not in aliases:
+        raise ValueError(f"Unsupported chain triplet_fit_data_mode: {value}")
+    return aliases[mode]
 
 
 def _float_tag(value: float) -> str:
@@ -113,6 +144,8 @@ def _empty_metric_summary() -> dict[str, float]:
     return {
         "n_result_rows": 0,
         "n_eval_rows": 0,
+        "n_eval_ok_rows": 0,
+        "n_eval_failed_rows": 0,
         "n_precompute_rows": 0,
         "prediction_rmse_mean": math.nan,
         "cosine_dissimilarity_mean": math.nan,
@@ -131,9 +164,26 @@ def _empty_metric_summary() -> dict[str, float]:
 def _summarize_df_metrics(df: pd.DataFrame) -> dict[str, float]:
     eval_df = _extract_eval_rows(df)
     pre_df = _extract_precompute_rows(df)
+    status_col = None
+    if "combination_status" in eval_df.columns:
+        status_col = "combination_status"
+    elif "status" in eval_df.columns:
+        status_col = "status"
+
+    if status_col is None:
+        n_eval_failed_rows = 0
+        n_eval_ok_rows = int(len(eval_df))
+    else:
+        status_series = eval_df[status_col].astype(str).str.strip().str.lower()
+        failed_mask = status_series == "failed"
+        n_eval_failed_rows = int(failed_mask.sum())
+        n_eval_ok_rows = int(len(eval_df) - n_eval_failed_rows)
+
     return {
         "n_result_rows": int(len(df)),
         "n_eval_rows": int(len(eval_df)),
+        "n_eval_ok_rows": n_eval_ok_rows,
+        "n_eval_failed_rows": n_eval_failed_rows,
         "n_precompute_rows": int(len(pre_df)),
         "prediction_rmse_mean": _safe_mean(eval_df, "prediction_rmse"),
         "cosine_dissimilarity_mean": _safe_mean(eval_df, "cosine_dissimilarity"),
@@ -230,12 +280,26 @@ def _iter_run_specs(cfg: SweepConfig):
                                 chain_blend_ratio=float(cbr))
         return
 
+    if cfg.mode == "chain_triplet_fit":
+        for dp in cfg.datasets:
+            for ctfm in cfg.chain_triplet_fit_modes:
+                for s in cfg.seeds:
+                    yield _base(
+                        dp,
+                        cfg.chain_triplet_run_method,
+                        s,
+                        chain_ds_method=cfg.chain_fixed_ds_method,
+                        chain_trigger_method=cfg.chain_fixed_trigger_method,
+                        chain_triplet_fit_mode=ctfm,
+                    )
+        return
+
     raise ValueError(f"Unsupported sweep mode: {cfg.mode}")
 
 
 # Optional per-run parameter keys (may or may not be present in a spec dict).
 _OPTIONAL_SPEC_KEYS = (
-    "chain_ds_method", "chain_trigger_method", "chain_blend_ratio",
+    "chain_ds_method", "chain_trigger_method", "chain_blend_ratio", "chain_triplet_fit_mode",
     "param_dist", "param_cos", "rel_scale",
 )
 
@@ -255,6 +319,7 @@ def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchCon
     stitch_cfg.ds_method = str(spec["ds_method"])
     stitch_cfg.seed = int(spec["seed"])
     stitch_cfg.n_test_simulations = int(cfg.n_test_simulations)
+    stitch_cfg.combination_timeout_s = float(cfg.combination_timeout_s)
     stitch_cfg.save_fig = bool(cfg.save_fig)
     if stitch_cfg.save_fig:
         combo_tag = _combo_tag(spec)
@@ -264,6 +329,7 @@ def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchCon
         "chain_ds_method": lambda v: setattr(stitch_cfg.chain, "ds_method", str(v)),
         "chain_trigger_method": lambda v: setattr(stitch_cfg.chain, "transition_trigger_method", str(v)),
         "chain_blend_ratio": lambda v: setattr(stitch_cfg.chain, "blend_length_ratio", float(v)),
+        "chain_triplet_fit_mode": lambda v: setattr(stitch_cfg.chain, "triplet_fit_data_mode", str(v)),
         "param_dist": lambda v: setattr(stitch_cfg, "param_dist", float(v)),
         "param_cos": lambda v: setattr(stitch_cfg, "param_cos", float(v)),
         "rel_scale": lambda v: setattr(stitch_cfg.damm, "rel_scale", float(v)),
@@ -273,7 +339,10 @@ def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchCon
         if val is not None:
             setter(val)
 
-    setattr(stitch_cfg, "chain_precompute_segments", bool(cfg.chain_precompute_segments))
+    precompute_segments = bool(cfg.chain_precompute_segments)
+    if cfg.mode in {"chain_trigger", "chain_blend"}:
+        precompute_segments = False
+    setattr(stitch_cfg, "chain_precompute_segments", precompute_segments)
     return stitch_cfg
 
 
@@ -368,6 +437,7 @@ _SPEC_KEY_TO_COL = {
     "chain_ds_method": ("chain_ds_method", str, ""),
     "chain_trigger_method": ("chain_transition_trigger_method", str, ""),
     "chain_blend_ratio": ("chain_blend_length_ratio", float, np.nan),
+    "chain_triplet_fit_mode": ("chain_triplet_fit_data_mode", str, ""),
     "param_dist": ("param_dist", float, np.nan),
     "param_cos": ("param_cos", float, np.nan),
     "rel_scale": ("rel_scale", float, np.nan),
@@ -484,6 +554,9 @@ def _run_single_spec(
     elif int(metric_summary.get("n_eval_rows", 0)) == 0:
         run_ok = False
         failure_reason = "no_evaluation_rows"
+    elif int(metric_summary.get("n_eval_failed_rows", 0)) > 0:
+        run_ok = False
+        failure_reason = "combination_failures"
     elif (
         math.isnan(metric_summary["prediction_rmse_mean"])
         and math.isnan(metric_summary["cosine_dissimilarity_mean"])
@@ -618,7 +691,30 @@ def load_raw_results(output_dir: str) -> pd.DataFrame:
     csvs = sorted(raw_dir.glob("*.csv"))
     if not csvs:
         raise FileNotFoundError(f"No CSV files found in {raw_dir}")
-    return pd.concat([pd.read_csv(f) for f in csvs], ignore_index=True)
+
+    frames = []
+    skipped = []
+    for csv_path in csvs:
+        try:
+            if csv_path.stat().st_size == 0:
+                skipped.append((csv_path, "empty_file"))
+                continue
+            frames.append(pd.read_csv(csv_path))
+        except pd.errors.EmptyDataError:
+            skipped.append((csv_path, "empty_data"))
+
+    if not frames:
+        if skipped:
+            skipped_names = ", ".join([p.name for p, _ in skipped[:5]])
+            if len(skipped) > 5:
+                skipped_names += ", ..."
+            raise FileNotFoundError(
+                f"No non-empty CSV files found in {raw_dir}. "
+                f"Skipped {len(skipped)} file(s): {skipped_names}"
+            )
+        raise FileNotFoundError(f"No readable CSV files found in {raw_dir}")
+
+    return pd.concat(frames, ignore_index=True)
 
 
 def _parse_args() -> SweepConfig:
@@ -629,7 +725,7 @@ def _parse_args() -> SweepConfig:
         "--mode",
         type=str,
         default="standard",
-        choices=["standard", "graph_params", "rel_scale", "chain_trigger", "chain_blend"],
+        choices=["standard", "graph_params", "rel_scale", "chain_trigger", "chain_blend", "chain_triplet_fit"],
         help="Sweep mode.",
     )
     parser.add_argument(
@@ -669,6 +765,12 @@ def _parse_args() -> SweepConfig:
         help="Per-run hard timeout in seconds; timed-out runs are marked failed and sweep continues.",
     )
     parser.add_argument(
+        "--combination-timeout-s",
+        type=float,
+        default=600.0,
+        help="Per-combination timeout inside main_stitch (<=0 disables).",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=1,
@@ -679,12 +781,11 @@ def _parse_args() -> SweepConfig:
         action="store_true",
         help="Enable figure saving inside each main_stitch run (disabled by default for speed).",
     )
-    parser.add_argument(
-        "--chain-precompute-segments",
-        action="store_true",
-        help="Enable chain segment precomputation (disabled by default for speed).",
-    )
-
+    # parser.add_argument(
+    #     "--chain-precompute-segments",
+    #     action="store_true",
+    #     help="Enable chain segment precomputation (disabled by default for speed).",
+    # )
     parser.add_argument(
         "--chain-ds-methods",
         nargs="+",
@@ -713,8 +814,20 @@ def _parse_args() -> SweepConfig:
     parser.add_argument(
         "--chain-fixed-trigger-method",
         type=str,
-        default="mean_normals",
+        default="distance_ratio",
         help="Fixed chain transition_trigger_method for chain_blend mode.",
+    )
+    parser.add_argument(
+        "--chain-triplet-fit-modes",
+        nargs="+",
+        default=None,
+        help='Triplet fit-data modes for chain_triplet_fit mode (e.g. "all_nodes first_two_nodes subset_third_node behind_last_edge_plane").',
+    )
+    parser.add_argument(
+        "--chain-triplet-run-method",
+        type=str,
+        default="chain_all",
+        help='Top-level ds_method for chain_triplet_fit mode ("chain" or "chain_all").',
     )
     parser.add_argument(
         "--param-dist-values",
@@ -743,6 +856,8 @@ def _parse_args() -> SweepConfig:
     chain_ds_methods = tuple(_normalize_chain_ds_method(v) for v in (args.chain_ds_methods or ()))
     chain_trigger_methods = tuple(_normalize_trigger_method(v) for v in (args.chain_trigger_methods or ()))
     chain_blend_ratios = tuple(float(v) for v in (args.chain_blend_ratios or ()))
+    chain_triplet_fit_modes = tuple(_normalize_triplet_fit_mode(v) for v in (args.chain_triplet_fit_modes or ()))
+    chain_triplet_run_method = _normalize_chain_run_method(args.chain_triplet_run_method)
     param_dist_values = tuple(float(v) for v in (args.param_dist_values or ()))
     param_cos_values = tuple(float(v) for v in (args.param_cos_values or ()))
     rel_scale_values = tuple(float(v) for v in (args.rel_scale_values or ()))
@@ -763,6 +878,8 @@ def _parse_args() -> SweepConfig:
             raise ValueError("--chain-trigger-methods is required when --mode chain_trigger")
     if args.mode == "chain_blend" and len(chain_blend_ratios) == 0:
         raise ValueError("--chain-blend-ratios is required when --mode chain_blend")
+    if args.mode == "chain_triplet_fit" and len(chain_triplet_fit_modes) == 0:
+        raise ValueError("--chain-triplet-fit-modes is required when --mode chain_triplet_fit")
 
     return SweepConfig(
         datasets=tuple(args.datasets),
@@ -771,15 +888,18 @@ def _parse_args() -> SweepConfig:
         output_dir=args.output_dir,
         n_test_simulations=int(args.n_test_simulations),
         timeout_s=float(args.timeout_s),
+        combination_timeout_s=float(args.combination_timeout_s),
         workers=max(1, int(args.workers)),
         save_fig=bool(args.save_fig),
-        chain_precompute_segments=bool(args.chain_precompute_segments),
+        # chain_precompute_segments=bool(args.chain_precompute_segments),
         mode=args.mode,
         chain_ds_methods=chain_ds_methods,
         chain_trigger_methods=chain_trigger_methods,
         chain_blend_ratios=chain_blend_ratios,
         chain_fixed_ds_method=_normalize_chain_ds_method(args.chain_fixed_ds_method),
         chain_fixed_trigger_method=_normalize_trigger_method(args.chain_fixed_trigger_method),
+        chain_triplet_fit_modes=chain_triplet_fit_modes,
+        chain_triplet_run_method=chain_triplet_run_method,
         param_dist_values=param_dist_values,
         param_cos_values=param_cos_values,
         rel_scale_values=rel_scale_values,

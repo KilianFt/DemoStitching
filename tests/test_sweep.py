@@ -11,7 +11,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sweep import SweepConfig, _default_run_main, run_sweep
+from sweep import SweepConfig, _default_run_main, run_sweep, _normalize_triplet_fit_mode
+from sweep import load_raw_results
 
 
 class SweepScriptTests(unittest.TestCase):
@@ -23,10 +24,12 @@ class SweepScriptTests(unittest.TestCase):
                     "ds_method": stitch_cfg.ds_method,
                     "seed": stitch_cfg.seed,
                     "n_test_simulations": stitch_cfg.n_test_simulations,
+                    "combination_timeout_s": stitch_cfg.combination_timeout_s,
                     "save_fig": stitch_cfg.save_fig,
                     "chain_precompute_segments": getattr(stitch_cfg, "chain_precompute_segments", None),
                     "chain_ds_method": stitch_cfg.chain.ds_method,
                     "chain_trigger_method": stitch_cfg.chain.transition_trigger_method,
+                    "chain_triplet_fit_mode": stitch_cfg.chain.triplet_fit_data_mode,
                     "chain_blend_ratio": stitch_cfg.chain.blend_length_ratio,
                     "param_dist": stitch_cfg.param_dist,
                     "param_cos": stitch_cfg.param_cos,
@@ -92,6 +95,27 @@ class SweepScriptTests(unittest.TestCase):
             self.assertTrue(all(c["chain_precompute_segments"] is False for c in captures))
             self.assertTrue((root / "sweep_out" / "sweep_results.csv").exists())
 
+    def test_combination_timeout_is_propagated_to_stitch_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_timeout"
+            dataset.mkdir(parents=True, exist_ok=True)
+            captures: list[dict] = []
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=("chain",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="standard",
+                combination_timeout_s=123.0,
+            )
+            df = run_sweep(cfg, run_main_fn=self._ok_runner(captures))
+
+            self.assertEqual(len(df), 1)
+            self.assertEqual(len(captures), 1)
+            self.assertAlmostEqual(float(captures[0]["combination_timeout_s"]), 123.0)
+
     def test_chain_blend_mode_uses_fixed_chain_options(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -124,6 +148,71 @@ class SweepScriptTests(unittest.TestCase):
             self.assertEqual(len(captures), 3)
             self.assertEqual(set(c["chain_ds_method"] for c in captures), {"linear"})
             self.assertEqual(set(c["chain_trigger_method"] for c in captures), {"distance_ratio"})
+
+    def test_chain_triplet_fit_mode_generates_expected_runs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_triplet"
+            dataset.mkdir(parents=True, exist_ok=True)
+            captures: list[dict] = []
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=(),
+                seeds=(5,),
+                output_dir=str(root / "sweep_out"),
+                mode="chain_triplet_fit",
+                chain_fixed_ds_method="segmented",
+                chain_fixed_trigger_method="distance_ratio",
+                chain_triplet_fit_modes=("all_nodes", "first_two_nodes", "behind_last_edge_plane"),
+                chain_triplet_run_method="chain_all",
+            )
+            df = run_sweep(cfg, run_main_fn=self._ok_runner(captures))
+
+            self.assertEqual(len(df), 3)
+            self.assertEqual(set(df["ds_method"].tolist()), {"chain_all"})
+            self.assertEqual(set(df["chain_ds_method"].tolist()), {"segmented"})
+            self.assertEqual(set(df["chain_transition_trigger_method"].tolist()), {"distance_ratio"})
+            self.assertEqual(
+                set(df["chain_triplet_fit_data_mode"].tolist()),
+                {"all_nodes", "first_two_nodes", "behind_last_edge_plane"},
+            )
+            self.assertEqual(len(captures), 3)
+            self.assertEqual(
+                set(c["chain_triplet_fit_mode"] for c in captures),
+                {"all_nodes", "first_two_nodes", "behind_last_edge_plane"},
+            )
+            self.assertTrue(all(c["chain_precompute_segments"] is True for c in captures))
+
+    def test_chain_triplet_fit_mode_supports_subset_third_node(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_triplet_subset"
+            dataset.mkdir(parents=True, exist_ok=True)
+            captures: list[dict] = []
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=(),
+                seeds=(7,),
+                output_dir=str(root / "sweep_out"),
+                mode="chain_triplet_fit",
+                chain_fixed_ds_method="segmented",
+                chain_fixed_trigger_method="distance_ratio",
+                chain_triplet_fit_modes=("subset_third_node",),
+                chain_triplet_run_method="chain_all",
+            )
+            df = run_sweep(cfg, run_main_fn=self._ok_runner(captures))
+
+            self.assertEqual(len(df), 1)
+            self.assertEqual(df.loc[0, "chain_triplet_fit_data_mode"], "subset_third_node")
+            self.assertEqual(len(captures), 1)
+            self.assertEqual(captures[0]["chain_triplet_fit_mode"], "subset_third_node")
+
+    def test_normalize_triplet_fit_mode_accepts_subset_third_aliases(self):
+        self.assertEqual(_normalize_triplet_fit_mode("subset_third_node"), "subset_third_node")
+        self.assertEqual(_normalize_triplet_fit_mode("subset_third"), "subset_third_node")
+        self.assertEqual(_normalize_triplet_fit_mode("third_node_subset"), "subset_third_node")
 
     def test_graph_params_mode_generates_cross_product(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -272,6 +361,53 @@ class SweepScriptTests(unittest.TestCase):
             self.assertTrue(np.all(df["timed_out"].to_numpy(dtype=bool)))
             self.assertEqual(mock_timeout.call_count, 2)
 
+    def test_marks_run_failed_when_any_eval_combination_failed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_fail_rows"
+            dataset.mkdir(parents=True, exist_ok=True)
+
+            def mixed_status_runner(stitch_cfg, results_path):
+                rows = [
+                    {"ds_compute_time": 0.1, "gg_compute_time": 0.2, "total_compute_time": 0.3},
+                    {
+                        "combination_id": 0,
+                        "ds_method": stitch_cfg.ds_method,
+                        "combination_status": "ok",
+                        "prediction_rmse": 1.0,
+                        "cosine_dissimilarity": 2.0,
+                        "dtw_distance_mean": 3.0,
+                    },
+                    {
+                        "combination_id": 1,
+                        "ds_method": stitch_cfg.ds_method,
+                        "combination_status": "failed",
+                        "combination_failure_reason": "runtime_exception",
+                        "prediction_rmse": np.nan,
+                        "cosine_dissimilarity": np.nan,
+                        "dtw_distance_mean": np.nan,
+                    },
+                ]
+                pd.DataFrame(rows).to_csv(results_path, index=False)
+                return rows
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=("chain_all",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="standard",
+            )
+            df = run_sweep(cfg, run_main_fn=mixed_status_runner)
+
+            self.assertEqual(len(df), 1)
+            row = df.iloc[0]
+            self.assertEqual(row["status"], "failed")
+            self.assertEqual(row["failure_reason"], "combination_failures")
+            self.assertEqual(int(row["n_eval_rows"]), 2)
+            self.assertEqual(int(row["n_eval_ok_rows"]), 1)
+            self.assertEqual(int(row["n_eval_failed_rows"]), 1)
+
     def test_workers_parallel_branch_runs_all_combinations(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -362,6 +498,63 @@ class SweepScriptTests(unittest.TestCase):
             self.assertAlmostEqual(float(row["pre_ds_compute_time_mean"]), 1.25)
             self.assertAlmostEqual(float(row["pre_gg_compute_time_mean"]), 2.5)
             self.assertAlmostEqual(float(row["precomputation_time_mean"]), 3.75)
+
+    def test_load_raw_results_skips_empty_csv_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_dir = root / "raw_results"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+
+            pd.DataFrame(
+                [
+                    {
+                        "dataset_slug": "dataset__a",
+                        "seed": 1,
+                        "combination_id": 0,
+                        "ds_method": "chain",
+                        "prediction_rmse": 1.0,
+                    }
+                ]
+            ).to_csv(raw_dir / "valid.csv", index=False)
+            (raw_dir / "empty.csv").write_text("", encoding="utf-8")
+
+            df = load_raw_results(str(root))
+            self.assertEqual(len(df), 1)
+            self.assertEqual(df.iloc[0]["dataset_slug"], "dataset__a")
+
+    def test_load_raw_results_raises_when_only_empty_csvs_exist(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_dir = root / "raw_results"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            (raw_dir / "empty_only.csv").write_text("", encoding="utf-8")
+
+            with self.assertRaises(FileNotFoundError):
+                load_raw_results(str(root))
+
+    def test_includes_pcgmm_simple_dataset_in_sweep_specs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            keep_dataset = root / "dataset_keep"
+            keep_dataset.mkdir(parents=True, exist_ok=True)
+            pcgmm_dataset = "dataset/stitching/pcgmm_3d_workspace_simple"
+
+            captures: list[dict] = []
+            cfg = SweepConfig(
+                datasets=(pcgmm_dataset, str(keep_dataset)),
+                ds_methods=("chain_all",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="standard",
+            )
+            df = run_sweep(cfg, run_main_fn=self._ok_runner(captures))
+
+            self.assertEqual(len(df), 2)
+            self.assertEqual(int(len(captures)), 2)
+            self.assertEqual(
+                set(df["dataset_path"].tolist()),
+                {pcgmm_dataset, str(keep_dataset)},
+            )
 
 
 if __name__ == "__main__":

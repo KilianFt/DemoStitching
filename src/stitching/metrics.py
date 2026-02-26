@@ -20,21 +20,41 @@ def predict_velocities(x_positions, lpvds):
         x_dot_pred = lpvds.predict_velocities(x_positions)
         return np.asarray(x_dot_pred)
 
-    x_dot_pred = []
-    
-    for i in range(len(x_positions)):
-        # x = x_positions[i:i+1].T  # Shape (n, 1) as expected by _step
-        
-        # Use the same logic as in _step method
-        x_dot = np.zeros(x_positions[i].shape[0])
-        gamma = lpvds.damm.compute_gamma(x_positions[i])
-        
-        for k in range(lpvds.A.shape[0]):
-            x_dot += gamma[k, 0] * lpvds.A[k] @ (x_positions[i] - lpvds.x_att)
-        
-        x_dot_pred.append(x_dot)
-    
-    return np.array(x_dot_pred)
+    x_positions = np.atleast_2d(np.asarray(x_positions, dtype=float))
+    gamma = np.asarray(lpvds.damm.compute_gamma(x_positions), dtype=float)
+    x_shift = x_positions - np.asarray(lpvds.x_att, dtype=float).reshape(1, -1)
+
+    x_dot_pred = np.zeros_like(x_shift)
+    for k in range(lpvds.A.shape[0]):
+        x_dot_pred += gamma[k, :].reshape(-1, 1) * (x_shift @ np.asarray(lpvds.A[k], dtype=float).T)
+
+    return x_dot_pred
+
+
+def _prediction_rmse_from_pred(x_dot_ref, x_dot_pred):
+    x_dot_ref = np.asarray(x_dot_ref, dtype=float)
+    x_dot_pred = np.asarray(x_dot_pred, dtype=float)
+    squared_errors = np.sum((x_dot_ref - x_dot_pred) ** 2, axis=1)
+    return float(np.sqrt(np.mean(squared_errors)))
+
+
+def _cosine_dissimilarity_from_pred(x_dot_ref, x_dot_pred):
+    x_dot_ref = np.asarray(x_dot_ref, dtype=float)
+    x_dot_pred = np.asarray(x_dot_pred, dtype=float)
+
+    ref_norms = np.linalg.norm(x_dot_ref, axis=1)
+    pred_norms = np.linalg.norm(x_dot_pred, axis=1)
+    denom = ref_norms * pred_norms
+
+    dots = np.sum(x_dot_ref * x_dot_pred, axis=1)
+    cosine_sim = np.zeros_like(dots)
+    valid = denom > 0.0
+    cosine_sim[valid] = dots[valid] / denom[valid]
+    cosine_sim = np.clip(cosine_sim, -1.0, 1.0)
+
+    cosine_dissimilarity = np.ones_like(cosine_sim)
+    cosine_dissimilarity[valid] = 1.0 - cosine_sim[valid]
+    return float(np.mean(cosine_dissimilarity))
 
 
 def calculate_prediction_rmse(x_ref, x_dot_ref, lpvds):
@@ -52,11 +72,7 @@ def calculate_prediction_rmse(x_ref, x_dot_ref, lpvds):
     # Predict velocities using the model
     x_dot_pred = predict_velocities(x_ref, lpvds)
     
-    # Calculate squared errors
-    squared_errors = np.sum((x_dot_ref - x_dot_pred) ** 2, axis=1)
-    
-    # Return RMSE
-    return np.sqrt(np.mean(squared_errors))
+    return _prediction_rmse_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
 
 
 def calculate_cosine_similarity(x_ref, x_dot_ref, lpvds):
@@ -74,29 +90,7 @@ def calculate_cosine_similarity(x_ref, x_dot_ref, lpvds):
     # Predict velocities using the model
     x_dot_pred = predict_velocities(x_ref, lpvds)
     
-    cosine_dissimilarities = []
-    
-    for i in range(len(x_ref)):
-        pred_vec = x_dot_pred[i]
-        ref_vec = x_dot_ref[i]
-        
-        # Calculate norms
-        pred_norm = np.linalg.norm(pred_vec)
-        ref_norm = np.linalg.norm(ref_vec)
-        
-        # Avoid division by zero
-        if pred_norm == 0 or ref_norm == 0:
-            cosine_dissimilarity = 1.0  # Maximum dissimilarity
-        else:
-            # Calculate cosine similarity
-            cosine_sim = np.dot(pred_vec, ref_vec) / (pred_norm * ref_norm)
-            # Clamp to [-1, 1] to handle numerical errors
-            cosine_sim = np.clip(cosine_sim, -1.0, 1.0)
-            cosine_dissimilarity = 1.0 - cosine_sim
-        
-        cosine_dissimilarities.append(cosine_dissimilarity)
-    
-    return np.mean(cosine_dissimilarities)
+    return _cosine_dissimilarity_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
 
 
 def calculate_dtw_distance(traj_ref, traj_sim):
@@ -133,9 +127,10 @@ def calculate_all_metrics(x_ref, x_dot_ref, lpvds, x_test_list, initial, attract
     Returns:
         dict: Single dictionary containing aggregated metrics for this combination
     """
-    # Calculate prediction metrics on reference data (once per combination)
-    prediction_rmse = calculate_prediction_rmse(x_ref, x_dot_ref, lpvds)
-    cosine_similarity = calculate_cosine_similarity(x_ref, x_dot_ref, lpvds)
+    # Calculate prediction metrics on reference data (single forward pass).
+    x_dot_pred = predict_velocities(x_ref, lpvds)
+    prediction_rmse = _prediction_rmse_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
+    cosine_similarity = _cosine_dissimilarity_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
     
     # Calculate DTW distances for all simulated trajectories
     dtw_distances = []
@@ -207,9 +202,10 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
             'n_simulations': 0
         }
 
-    # Calculate prediction metrics on reference data (once per combination)
-    prediction_rmse = calculate_prediction_rmse(x_ref, x_dot_ref, ds)
-    cosine_similarity = calculate_cosine_similarity(x_ref, x_dot_ref, ds)
+    # Calculate prediction metrics on reference data (single forward pass).
+    x_dot_pred = predict_velocities(x_ref, ds)
+    prediction_rmse = _prediction_rmse_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
+    cosine_similarity = _cosine_dissimilarity_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
 
     # Calculate DTW distances for all simulated trajectories
     dtw_distances = []

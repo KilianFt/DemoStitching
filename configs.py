@@ -20,8 +20,11 @@ class ChainConfig:
     # Triplet fitting mode for chain subsystem estimation:
     # - "all_nodes": use data from all nodes in the triplet (default).
     # - "first_two_nodes": use only data from the first two nodes in each
+    # - "subset_third_node": use data from the first two nodes and a subset of the third node
     #   3-node triplet, while keeping the same transition/target logic.
-    triplet_fit_data_mode: str = "all_nodes"
+    # - "behind_last_edge_plane": use points whose signed distance to the
+    #   last-edge plane at the triplet attractor is <= 0.
+    triplet_fit_data_mode: str = "subset_third_node"
     # Supported values:
     # - "mean_normals": transition when crossing the mean-normal plane at n1.
     # - "distance_ratio": transition when d(x,n1)/d(x,n2) >= |e1|/|e2|.
@@ -73,13 +76,13 @@ class ChainConfig:
 
 @dataclass
 class StitchConfig:
-    dataset_path: str = "./dataset/stitching/X"
+    dataset_path: str = "./dataset/stitching/2d_large"
     iter_strategy: str = "permutations" # "permutations" or "combinations"
     force_preprocess: bool = True
     chain_precompute_segments: bool = True
     initial: Optional[np.ndarray] = None
     attractor: Optional[np.ndarray] = None
-    ds_method: str = "chain"
+    ds_method: str = "chain_all"
     reverse_gaussians: bool = True
     param_dist: int = 2
     param_cos: int = 1
@@ -91,6 +94,20 @@ class StitchConfig:
     noise_std: float = 0.05
     save_fig: bool = True # standard deviation for initial position for simulation
     save_folder_override: Optional[str] = None
+    # Optional explicit indices for which per-combination figures are saved.
+    # None means save all combinations (subject to save_fig).
+    save_fig_indices: Optional[tuple[int, ...]] = None
+    # Hard timeout for one initial/attractor combination in main_stitch.
+    # <= 0 disables per-combination timeout handling.
+    combination_timeout_s: float = 600.0
+    # Dataset-specific fallback for sparse figure saving.
+    save_fig_indices_by_dataset: dict[str, tuple[int, ...]] = field(
+        default_factory=lambda: {
+            "dataset/stitching/X": (24, 29),
+            "dataset/stitching/2d_large": (115, 116, 143, 151, 177),
+            "dataset/stitching/pcgmm_3d_workspace_simple": (),
+        }
+    )
     seed: int = 42 # 42, 100, 3215, 21
     data_position_scale: float = 1.0
     data_velocity_scale: Optional[float] = None
