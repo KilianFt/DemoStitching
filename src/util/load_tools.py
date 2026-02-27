@@ -87,7 +87,7 @@ def _resolve_data_scales(position_scale=1.0, velocity_scale=None):
     return position_scale, velocity_scale
 
 
-_AUTO_SCALE_DATASETS = {"pcgmm_3d_workspace_simple", "pcgmm_3d_workspace"}
+_AUTO_SCALE_DATASETS = {} # NOTE disabled for now {"pcgmm_3d_workspace_simple", "pcgmm_3d_workspace"}
 
 def resolve_data_scales(config=None):
     if config is None:
@@ -96,9 +96,9 @@ def resolve_data_scales(config=None):
     velocity_scale = getattr(config, "data_velocity_scale", getattr(config, "damm_velocity_scale", None))
     dataset_path = getattr(config, "dataset_path", "")
     dataset_name = os.path.basename(os.path.normpath(dataset_path)) if dataset_path else ""
-    if dataset_name in _AUTO_SCALE_DATASETS and (position_scale is None or position_scale == 1.0):
-        print("Setting position scale to 10.0")
-        position_scale = 10.0
+    # if dataset_name in _AUTO_SCALE_DATASETS and (position_scale is None or position_scale == 1.0):
+    #     print("Setting position scale to 10.0")
+    #     position_scale = 10.0
     return _resolve_data_scales(position_scale=position_scale, velocity_scale=velocity_scale)
 
 

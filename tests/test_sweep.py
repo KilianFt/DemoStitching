@@ -26,6 +26,8 @@ class SweepScriptTests(unittest.TestCase):
                     "n_test_simulations": stitch_cfg.n_test_simulations,
                     "combination_timeout_s": stitch_cfg.combination_timeout_s,
                     "save_fig": stitch_cfg.save_fig,
+                    "save_fig_indices": stitch_cfg.save_fig_indices,
+                    "save_fig_indices_by_dataset": dict(stitch_cfg.save_fig_indices_by_dataset),
                     "chain_precompute_segments": getattr(stitch_cfg, "chain_precompute_segments", None),
                     "chain_ds_method": stitch_cfg.chain.ds_method,
                     "chain_trigger_method": stitch_cfg.chain.transition_trigger_method,
@@ -33,7 +35,13 @@ class SweepScriptTests(unittest.TestCase):
                     "chain_blend_ratio": stitch_cfg.chain.blend_length_ratio,
                     "param_dist": stitch_cfg.param_dist,
                     "param_cos": stitch_cfg.param_cos,
+                    "bhattacharyya_threshold": stitch_cfg.bhattacharyya_threshold,
+                    "data_position_scale": stitch_cfg.data_position_scale,
                     "rel_scale": stitch_cfg.damm.rel_scale,
+                    "total_scale": stitch_cfg.damm.total_scale,
+                    "kappa_0": stitch_cfg.damm.kappa_0,
+                    "psi_dir_0": stitch_cfg.damm.psi_dir_0,
+                    "nu_0": stitch_cfg.damm.nu_0,
                     "results_path": results_path,
                 }
             )
@@ -264,6 +272,110 @@ class SweepScriptTests(unittest.TestCase):
             self.assertEqual(set(df["rel_scale"].to_numpy(dtype=float).tolist()), {0.1, 0.5, 1.0})
             self.assertTrue(np.allclose(df["prediction_rmse_mean"].to_numpy(dtype=float), 2.0))
             self.assertEqual(set(float(c["rel_scale"]) for c in captures), {0.1, 0.5, 1.0})
+
+    def test_pcgmm_damm_grid_mode_generates_cross_product(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            captures: list[dict] = []
+
+            cfg = SweepConfig(
+                datasets=("dataset/stitching/pcgmm_3d_workspace_simple",),
+                ds_methods=("sp_recompute_ds",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="pcgmm_damm_grid",
+                damm_rel_scale_values=(0.1, 0.5),
+                damm_total_scale_values=(0.5,),
+                damm_kappa_0_values=(0.1,),
+                damm_psi_dir_0_values=(0.1,),
+                damm_nu_0_value=6,
+                data_position_scale_values=(1.0, 10.0),
+                param_dist_values=(1.0,),
+                param_cos_values=(2.0,),
+                bhattacharyya_threshold_values=(0.01,),
+                shared_precompute=False,
+            )
+            df = run_sweep(cfg, run_main_fn=self._ok_runner(captures))
+
+            self.assertEqual(len(df), 4)
+            self.assertEqual(set(df["dataset_path"].tolist()), {"dataset/stitching/pcgmm_3d_workspace_simple"})
+            self.assertEqual(set(df["ds_method"].tolist()), {"sp_recompute_ds"})
+            self.assertEqual(set(df["rel_scale"].to_numpy(dtype=float).tolist()), {0.1, 0.5})
+            self.assertEqual(set(df["data_position_scale"].to_numpy(dtype=float).tolist()), {1.0, 10.0})
+            self.assertEqual(set(df["param_dist"].to_numpy(dtype=float).tolist()), {1.0})
+            self.assertEqual(set(df["param_cos"].to_numpy(dtype=float).tolist()), {2.0})
+            self.assertEqual(set(df["bhattacharyya_threshold"].to_numpy(dtype=float).tolist()), {0.01})
+            self.assertEqual(set(df["total_scale"].to_numpy(dtype=float).tolist()), {0.5})
+            self.assertEqual(set(df["kappa_0"].to_numpy(dtype=float).tolist()), {0.1})
+            self.assertEqual(set(df["psi_dir_0"].to_numpy(dtype=float).tolist()), {0.1})
+            self.assertEqual(set(df["nu_0"].to_numpy(dtype=int).tolist()), {6})
+
+            self.assertEqual(len(captures), 4)
+            self.assertEqual(set(float(c["rel_scale"]) for c in captures), {0.1, 0.5})
+            self.assertEqual(set(float(c["data_position_scale"]) for c in captures), {1.0, 10.0})
+            self.assertEqual(set(float(c["param_dist"]) for c in captures), {1.0})
+            self.assertEqual(set(float(c["param_cos"]) for c in captures), {2.0})
+            self.assertEqual(set(float(c["bhattacharyya_threshold"]) for c in captures), {0.01})
+            self.assertEqual(set(float(c["total_scale"]) for c in captures), {0.5})
+            self.assertEqual(set(float(c["kappa_0"]) for c in captures), {0.1})
+            self.assertEqual(set(float(c["psi_dir_0"]) for c in captures), {0.1})
+            self.assertEqual(set(int(c["nu_0"]) for c in captures), {6})
+
+    def test_pcgmm_damm_grid_rejects_non_pcgmm_dataset(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset = root / "dataset_not_pcgmm"
+            dataset.mkdir(parents=True, exist_ok=True)
+
+            cfg = SweepConfig(
+                datasets=(str(dataset),),
+                ds_methods=("sp_recompute_ds",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="pcgmm_damm_grid",
+                damm_rel_scale_values=(0.1,),
+                damm_total_scale_values=(0.5,),
+                damm_kappa_0_values=(0.1,),
+                damm_psi_dir_0_values=(0.1,),
+                damm_nu_0_value=6,
+                data_position_scale_values=(1.0,),
+                param_dist_values=(1.0,),
+                param_cos_values=(1.0,),
+                bhattacharyya_threshold_values=(0.01,),
+            )
+            with self.assertRaisesRegex(ValueError, "pcgmm_damm_grid mode is restricted"):
+                run_sweep(cfg, run_main_fn=self._ok_runner([]))
+
+    def test_pcgmm_damm_grid_save_fig_saves_all(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            captures: list[dict] = []
+
+            cfg = SweepConfig(
+                datasets=("dataset/stitching/pcgmm_3d_workspace_simple",),
+                ds_methods=("sp_recompute_ds",),
+                seeds=(1,),
+                output_dir=str(root / "sweep_out"),
+                mode="pcgmm_damm_grid",
+                save_fig=True,
+                damm_rel_scale_values=(0.1,),
+                damm_total_scale_values=(0.5,),
+                damm_kappa_0_values=(0.1,),
+                damm_psi_dir_0_values=(0.1,),
+                damm_nu_0_value=6,
+                data_position_scale_values=(1.0,),
+                param_dist_values=(1.0,),
+                param_cos_values=(1.0,),
+                bhattacharyya_threshold_values=(0.01,),
+                shared_precompute=False,
+            )
+            df = run_sweep(cfg, run_main_fn=self._ok_runner(captures))
+
+            self.assertEqual(len(df), 1)
+            self.assertEqual(len(captures), 1)
+            self.assertTrue(bool(captures[0]["save_fig"]))
+            self.assertIsNone(captures[0]["save_fig_indices"])
+            self.assertEqual(captures[0]["save_fig_indices_by_dataset"], {})
 
     def test_marks_run_failed_when_no_eval_rows_exist(self):
         with tempfile.TemporaryDirectory() as tmpdir:

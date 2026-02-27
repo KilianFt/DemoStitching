@@ -48,6 +48,25 @@ class SweepConfig:
     param_dist_values: tuple[float, ...] = ()
     param_cos_values: tuple[float, ...] = ()
     rel_scale_values: tuple[float, ...] = ()
+    damm_rel_scale_values: tuple[float, ...] = ()
+    damm_total_scale_values: tuple[float, ...] = ()
+    damm_kappa_0_values: tuple[float, ...] = ()
+    damm_psi_dir_0_values: tuple[float, ...] = ()
+    damm_nu_0_value: int = 6
+    data_position_scale_values: tuple[float, ...] = ()
+    bhattacharyya_threshold_values: tuple[float, ...] = ()
+
+
+_PCGMM_DATASET_SUFFIX = "dataset/stitching/pcgmm_3d_workspace_simple"
+
+
+def _is_pcgmm_dataset_path(dataset_path: str) -> bool:
+    norm = str(dataset_path).replace("\\", "/").rstrip("/")
+    if norm == _PCGMM_DATASET_SUFFIX:
+        return True
+    if norm.endswith("/" + _PCGMM_DATASET_SUFFIX):
+        return True
+    return norm.endswith("/pcgmm_3d_workspace_simple")
 
 
 def _dataset_slug(dataset_path: str) -> str:
@@ -299,13 +318,47 @@ def _iter_run_specs(cfg: SweepConfig):
                     )
         return
 
+    if cfg.mode == "pcgmm_damm_grid":
+        for dp in cfg.datasets:
+            if not _is_pcgmm_dataset_path(str(dp)):
+                raise ValueError(
+                    "pcgmm_damm_grid mode is restricted to dataset/stitching/pcgmm_3d_workspace_simple; "
+                    f"got: {dp}"
+                )
+            for dm in cfg.ds_methods:
+                for rel in cfg.damm_rel_scale_values:
+                    for total in cfg.damm_total_scale_values:
+                        for kappa in cfg.damm_kappa_0_values:
+                            for psi in cfg.damm_psi_dir_0_values:
+                                for dps in cfg.data_position_scale_values:
+                                    for pd_val in cfg.param_dist_values:
+                                        for pc_val in cfg.param_cos_values:
+                                            for bt in cfg.bhattacharyya_threshold_values:
+                                                for s in cfg.seeds:
+                                                    yield _base(
+                                                        dp,
+                                                        dm,
+                                                        s,
+                                                        rel_scale=float(rel),
+                                                        total_scale=float(total),
+                                                        kappa_0=float(kappa),
+                                                        psi_dir_0=float(psi),
+                                                        nu_0=int(cfg.damm_nu_0_value),
+                                                        data_position_scale=float(dps),
+                                                        param_dist=float(pd_val),
+                                                        param_cos=float(pc_val),
+                                                        bhattacharyya_threshold=float(bt),
+                                                    )
+        return
+
     raise ValueError(f"Unsupported sweep mode: {cfg.mode}")
 
 
 # Optional per-run parameter keys (may or may not be present in a spec dict).
 _OPTIONAL_SPEC_KEYS = (
     "chain_ds_method", "chain_trigger_method", "chain_blend_ratio", "chain_triplet_fit_mode",
-    "param_dist", "param_cos", "rel_scale",
+    "param_dist", "param_cos", "rel_scale", "total_scale", "kappa_0", "psi_dir_0", "nu_0",
+    "data_position_scale", "bhattacharyya_threshold",
 )
 
 
@@ -404,6 +457,11 @@ def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchCon
     if stitch_cfg.save_fig:
         combo_tag = _combo_tag(spec)
         stitch_cfg.save_folder_override = str(Path(cfg.output_dir) / "figures" / combo_tag) + "/"
+        if cfg.mode == "pcgmm_damm_grid":
+            # In this sweep mode, users typically want full visual diagnostics.
+            # Disable dataset-specific sparse figure defaults so all combos save.
+            stitch_cfg.save_fig_indices = None
+            stitch_cfg.save_fig_indices_by_dataset = {}
 
     _setters: dict[str, Callable] = {
         "chain_ds_method": lambda v: setattr(stitch_cfg.chain, "ds_method", str(v)),
@@ -412,7 +470,13 @@ def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchCon
         "chain_triplet_fit_mode": lambda v: setattr(stitch_cfg.chain, "triplet_fit_data_mode", str(v)),
         "param_dist": lambda v: setattr(stitch_cfg, "param_dist", float(v)),
         "param_cos": lambda v: setattr(stitch_cfg, "param_cos", float(v)),
+        "bhattacharyya_threshold": lambda v: setattr(stitch_cfg, "bhattacharyya_threshold", float(v)),
+        "data_position_scale": lambda v: setattr(stitch_cfg, "data_position_scale", float(v)),
         "rel_scale": lambda v: setattr(stitch_cfg.damm, "rel_scale", float(v)),
+        "total_scale": lambda v: setattr(stitch_cfg.damm, "total_scale", float(v)),
+        "kappa_0": lambda v: setattr(stitch_cfg.damm, "kappa_0", float(v)),
+        "psi_dir_0": lambda v: setattr(stitch_cfg.damm, "psi_dir_0", float(v)),
+        "nu_0": lambda v: setattr(stitch_cfg.damm, "nu_0", int(v)),
     }
     for key, setter in _setters.items():
         val = spec.get(key)
@@ -523,7 +587,13 @@ _SPEC_KEY_TO_COL = {
     "chain_triplet_fit_mode": ("chain_triplet_fit_data_mode", str, ""),
     "param_dist": ("param_dist", float, np.nan),
     "param_cos": ("param_cos", float, np.nan),
+    "bhattacharyya_threshold": ("bhattacharyya_threshold", float, np.nan),
+    "data_position_scale": ("data_position_scale", float, np.nan),
     "rel_scale": ("rel_scale", float, np.nan),
+    "total_scale": ("total_scale", float, np.nan),
+    "kappa_0": ("kappa_0", float, np.nan),
+    "psi_dir_0": ("psi_dir_0", float, np.nan),
+    "nu_0": ("nu_0", int, -1),
 }
 
 
@@ -810,7 +880,15 @@ def _parse_args() -> SweepConfig:
         "--mode",
         type=str,
         default="standard",
-        choices=["standard", "graph_params", "rel_scale", "chain_trigger", "chain_blend", "chain_triplet_fit"],
+        choices=[
+            "standard",
+            "graph_params",
+            "rel_scale",
+            "chain_trigger",
+            "chain_blend",
+            "chain_triplet_fit",
+            "pcgmm_damm_grid",
+        ],
         help="Sweep mode.",
     )
     parser.add_argument(
@@ -940,6 +1018,54 @@ def _parse_args() -> SweepConfig:
         default=None,
         help="Values for StitchConfig.damm.rel_scale in rel_scale mode.",
     )
+    parser.add_argument(
+        "--damm-rel-scale-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for DammConfig.rel_scale in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--damm-total-scale-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for DammConfig.total_scale in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--damm-kappa-0-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for DammConfig.kappa_0 in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--damm-psi-dir-0-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for DammConfig.psi_dir_0 in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--damm-nu-0",
+        type=int,
+        default=6,
+        help="Fixed DammConfig.nu_0 in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--data-position-scale-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for StitchConfig.data_position_scale in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--bhattacharyya-threshold-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for StitchConfig.bhattacharyya_threshold in pcgmm_damm_grid mode.",
+    )
     args = parser.parse_args()
 
     ds_methods = tuple(args.ds_methods or ())
@@ -951,9 +1077,18 @@ def _parse_args() -> SweepConfig:
     param_dist_values = tuple(float(v) for v in (args.param_dist_values or ()))
     param_cos_values = tuple(float(v) for v in (args.param_cos_values or ()))
     rel_scale_values = tuple(float(v) for v in (args.rel_scale_values or ()))
+    damm_rel_scale_values = tuple(float(v) for v in (args.damm_rel_scale_values or ()))
+    damm_total_scale_values = tuple(float(v) for v in (args.damm_total_scale_values or ()))
+    damm_kappa_0_values = tuple(float(v) for v in (args.damm_kappa_0_values or ()))
+    damm_psi_dir_0_values = tuple(float(v) for v in (args.damm_psi_dir_0_values or ()))
+    data_position_scale_values = tuple(float(v) for v in (args.data_position_scale_values or ()))
+    bhattacharyya_threshold_values = tuple(float(v) for v in (args.bhattacharyya_threshold_values or ()))
 
-    if args.mode in {"standard", "graph_params", "rel_scale"} and len(ds_methods) == 0:
-        raise ValueError("--ds-methods is required when --mode standard, --mode graph_params, or --mode rel_scale")
+    if args.mode in {"standard", "graph_params", "rel_scale", "pcgmm_damm_grid"} and len(ds_methods) == 0:
+        raise ValueError(
+            "--ds-methods is required when --mode standard, --mode graph_params, --mode rel_scale, "
+            "or --mode pcgmm_damm_grid"
+        )
     if args.mode == "graph_params":
         if len(param_dist_values) == 0:
             raise ValueError("--param-dist-values is required when --mode graph_params")
@@ -970,6 +1105,28 @@ def _parse_args() -> SweepConfig:
         raise ValueError("--chain-blend-ratios is required when --mode chain_blend")
     if args.mode == "chain_triplet_fit" and len(chain_triplet_fit_modes) == 0:
         raise ValueError("--chain-triplet-fit-modes is required when --mode chain_triplet_fit")
+    if args.mode == "pcgmm_damm_grid":
+        if not all(_is_pcgmm_dataset_path(dp) for dp in args.datasets):
+            raise ValueError(
+                "--mode pcgmm_damm_grid only supports dataset/stitching/pcgmm_3d_workspace_simple"
+            )
+
+        if len(damm_rel_scale_values) == 0:
+            damm_rel_scale_values = (0.1, 0.5, 1.0)
+        if len(damm_total_scale_values) == 0:
+            damm_total_scale_values = (0.5, 1.0, 1.5)
+        if len(damm_kappa_0_values) == 0:
+            damm_kappa_0_values = (0.1, 0.5, 1.0)
+        if len(damm_psi_dir_0_values) == 0:
+            damm_psi_dir_0_values = (0.1, 0.5, 1.0)
+        if len(data_position_scale_values) == 0:
+            data_position_scale_values = (1.0, 5.0, 10.0)
+        if len(param_dist_values) == 0:
+            param_dist_values = (1.0, 2.0, 3.0)
+        if len(param_cos_values) == 0:
+            param_cos_values = (1.0, 2.0, 3.0)
+        if len(bhattacharyya_threshold_values) == 0:
+            bhattacharyya_threshold_values = (0.01, 0.05, 0.1)
 
     return SweepConfig(
         datasets=tuple(args.datasets),
@@ -994,6 +1151,13 @@ def _parse_args() -> SweepConfig:
         param_dist_values=param_dist_values,
         param_cos_values=param_cos_values,
         rel_scale_values=rel_scale_values,
+        damm_rel_scale_values=damm_rel_scale_values,
+        damm_total_scale_values=damm_total_scale_values,
+        damm_kappa_0_values=damm_kappa_0_values,
+        damm_psi_dir_0_values=damm_psi_dir_0_values,
+        damm_nu_0_value=int(args.damm_nu_0),
+        data_position_scale_values=data_position_scale_values,
+        bhattacharyya_threshold_values=bhattacharyya_threshold_values,
     )
 
 

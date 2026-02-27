@@ -114,9 +114,13 @@ Here the commands to reproduce the results:
 uv run sweep.py \
   --datasets dataset/stitching/X dataset/stitching/2d_large dataset/stitching/pcgmm_3d_workspace_simple \
   --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds spt_recompute_all spt_recompute_ds chain chain_all \
-  --seeds 1 \
-  --output-dir results/methods \
-  --timeout-s 2000 --workers 8 --save-fig
+  --seeds 1 2 \
+  --output-dir results/methods_v5 \
+  --timeout-s 30000 \
+  --workers 8 \
+  --save-fig \
+  --combination-timeout-s 100 \
+  --chain-triplet-fit-modes subset_third_node
 ```
 <!-- Sweep 1: Graph parameters sweep
 ```bash
@@ -143,3 +147,29 @@ uv run sweep.py \
   --output-dir results/chain_blend \
   --timeout-s 600 --workers 10
 ```
+
+
+
+### 3D ablation study
+```bash
+uv run sweep.py \
+  --mode pcgmm_damm_grid \
+  --datasets dataset/stitching/pcgmm_3d_workspace_simple \
+  --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds spt_recompute_all spt_recompute_ds chain chain_all \
+  --seeds 1 \
+  --damm-rel-scale-values 0.1 0.5 1.0 \
+  --damm-total-scale-values 0.5 1.0 1.5 \
+  --damm-kappa-0-values 0.1 0.5 1.0 \
+  --damm-psi-dir-0-values 0.1 0.5 1.0 \
+  --damm-nu-0 6 \
+  --data-position-scale-values 1.0 5.0 10.0 \
+  --param-dist-values 1 2 3 \
+  --param-cos-values 1 2 3 \
+  --bhattacharyya-threshold-values 0.01 0.05 0.1 \
+  --output-dir results/pcgmm_damm_grid \
+  --timeout-s 30000 \
+  --workers 8 \
+  --save-fig
+```
+
+In case precompute should be disabled, add `--disable-shared-precompute` to the command.

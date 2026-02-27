@@ -86,7 +86,7 @@ class StitchConfig:
     reverse_gaussians: bool = True
     param_dist: int = 2
     param_cos: int = 1
-    bhattacharyya_threshold: float = 0.05
+    bhattacharyya_threshold: float = 0.05 # 0.01, 0.05, 0.1
     # n_demos: int = 5 # number of demonstrations to generate
     # noise_std: float = 0.05 # standard deviation of noise added to demonstrations
     plot_extent: tuple[float, float, float, float] = (0, 15, 0, 15) # (x_min, x_max, y_min, y_max)
