@@ -1,47 +1,72 @@
+from __future__ import annotations
+
+import os
+
 import numpy as np
 
-from src.stitching.metrics import save_results_dataframe, calculate_ds_metrics
-from src.util.load_tools import get_demonstration_set, resolve_data_scales, infer_state_dim_from_demo_set, compute_plot_extent_from_demo_set
-from src.util.benchmarking_tools import initialize_iter_strategy
-from src.stitching.ds_stitching import construct_stitched_ds
-from src.util.ds_tools import apply_lpvds_demowise
-from src.util.plot_tools import plot_demonstration_set, plot_ds_set_gaussians, plot_gaussian_graph, plot_gg_solution, plot_ds, plot_composite
 from configs import StitchConfig
-import time
 import src.graph_utils as gu
-from src.util.ds_tools import get_gaussian_directions
-from src.stitching.chaining import _compute_segment_DS
+from src.stitching.chaining import _compute_segment_DS, _resolve_triplet_fit_data_mode
+from src.stitching.ds_stitching import construct_stitched_ds
+from src.stitching.main_stitch_flow import run_chain_segment_precompute, run_single_combination
+from src.stitching.main_stitch_helpers import (
+    OperationTimeout as _OperationTimeout,
+    call_with_timeout as _call_with_timeout,
+    checkpoint_results_csv as _checkpoint_results_csv,
+    default_stitching_stats as _default_stitching_stats,
+    extract_chain_segments_from_path_nodes as _extract_chain_segments_from_path_nodes,
+    extract_gaussian_node_indices as _extract_gaussian_node_indices,
+    nan_ds_metrics as _nan_ds_metrics,
+    resolve_save_figure_indices as _resolve_save_figure_indices,
+    simulate_trajectories,
+)
+from src.stitching.metrics import calculate_ds_metrics, save_results_dataframe
+from src.stitching.shared_precompute import build_or_load_shared_precompute
+from src.util.benchmarking_tools import initialize_iter_strategy
+from src.util.ds_tools import apply_lpvds_demowise, get_gaussian_directions
+from src.util.load_tools import (
+    compute_plot_extent_from_demo_set,
+    get_demonstration_set,
+    infer_state_dim_from_demo_set,
+    resolve_data_scales,
+)
+from src.util.plot_tools import (
+    plot_composite,
+    plot_demonstration_set,
+    plot_ds,
+    plot_ds_set_gaussians,
+    plot_gaussian_graph,
+    plot_gg_solution,
+)
+
+# Backward-compatible wrappers used by tests and notebook code.
+def _infer_state_dim_from_demo_set(demo_set):
+    return infer_state_dim_from_demo_set(demo_set)
 
 
-def simulate_trajectories(ds, initial, config):
-    """Simulates multiple trajectories from noisy initial conditions.
+def _compute_plot_extent_from_demo_set(demo_set, **kwargs):
+    return compute_plot_extent_from_demo_set(demo_set, **kwargs)
 
-    Args:
-        ds: Dynamical system to simulate, or None.
-        initial: Base initial point for trajectory generation.
-        config: Configuration object with noise_std and n_test_simulations.
 
-    Returns:
-        list: Simulated trajectories from noisy initial points, or None if ds is None.
-    """
-    if ds is None:
-        return None
+def main(config: StitchConfig | None = None, results_path: str | None = None):
+    if config is None:
+        config = StitchConfig()
 
-    # --- simulate ---
-    x_inits = [initial + np.random.normal(0, config.noise_std, initial.shape[0]) for _ in
-               range(config.n_test_simulations)]
-    simulated_trajectories = []
-    for x_0 in x_inits:
-        simulated_trajectories.append(ds.sim(x_0[None, :], dt=0.1)[0])
-
-    return simulated_trajectories
-
-def main():
-    config = StitchConfig()
     np.random.seed(config.seed)
-    pre_computation_results = dict()
+    if config.save_folder_override:
+        save_folder = config.save_folder_override
+    else:
+        save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+    final_results_path = results_path or (save_folder + f"results_{config.seed}.csv")
+    os.makedirs(os.path.dirname(final_results_path), exist_ok=True)
 
-    save_folder = f"{config.dataset_path}/figures/{config.ds_method}/"
+    # Create/truncate early so sweeps can observe that the run started.
+    with open(final_results_path, "w", encoding="utf-8"):
+        pass
+
+    save_fig_indices = _resolve_save_figure_indices(config)
+    if config.save_fig and save_fig_indices is not None:
+        print(f"Saving figures only for indices: {sorted(save_fig_indices)}")
 
     # ============= Load/create a set of demonstrations =============
     data_position_scale, data_velocity_scale = resolve_data_scales(config)
@@ -52,121 +77,134 @@ def main():
     )
     state_dim = infer_state_dim_from_demo_set(demo_set)
     config.plot_extent = compute_plot_extent_from_demo_set(demo_set, state_dim=state_dim)
-    plot_demonstration_set(demo_set, config, save_as='Demonstrations_Raw', hide_axis=True)
+    if config.save_fig and save_fig_indices is None:
+        plot_demonstration_set(demo_set, config, save_as="Demonstrations_Raw", hide_axis=True)
 
-    #  ============= Fit a DS to each demonstration =============
-    t0 = time.time()
-    ds_set, reversed_ds_set, norm_demo_set = apply_lpvds_demowise(demo_set, config.damm)
-    pre_computation_results['ds_compute_time'] = time.time() - t0
-    plot_demonstration_set(norm_demo_set, config, save_as='Demonstrations_Norm', hide_axis=True)
-    plot_ds_set_gaussians(ds_set, config, include_trajectory=True, save_as='Demonstrations_Gaussians', hide_axis=True)
-
-    #  ============= Construct Gaussian Graph =============
-    t0 = time.time()
-    gaussians = {(i, j): {'mu': mu, 'sigma': sigma, 'direction': direction, 'prior': prior}
-                 for i, ds in enumerate(ds_set)
-                 for j, (mu, sigma, direction, prior) in
-                 enumerate(zip(ds.damm.Mu, ds.damm.Sigma, get_gaussian_directions(ds), ds.damm.Prior))}
-    gg = gu.GaussianGraph(param_dist=config.param_dist,
-                          param_cos=config.param_cos,
-                          bhattacharyya_threshold=config.bhattacharyya_threshold)
-    gg.add_gaussians(gaussians, reverse_gaussians=config.reverse_gaussians)
-    pre_computation_results['gg_compute_time'] = time.time() - t0
-    plot_gaussian_graph(gg, config, save_as='Gaussian_Graph', hide_axis=True)
-
-    #  ============= Pre-compute segment DSs (for chaining only) =============
-    t0 = time.time()
-    segment_ds_lookup = dict()
-    if config.ds_method == "chain":
-
-        all_segments_to_precompute = gg.get_all_simple_paths(nr_edges=config.chain.subsystem_edges)
-        for segment in all_segments_to_precompute:
-
-            # segment contains edges, extract the nodes
-            segment_nodes = tuple(e[0] for e in segment) + (segment[-1][1],)
-
-            # compute the segment DS and store in lookup
-            segment_ds = _compute_segment_DS(ds_set, gg, segment_nodes, config)
-            segment_ds_lookup[segment_nodes] = segment_ds
-
-
-    pre_computation_results['precomputation_time'] = time.time() - t0
-
-    # ============= Test various initial/attractor combinations =============
-    init_attr_combinations = initialize_iter_strategy(config, demo_set)
-    all_results = [pre_computation_results]
-    for i, (initial, attractor) in enumerate(init_attr_combinations):
-        print(f"Processing combination {i+1} of {len(init_attr_combinations)} #######################################")
-
-        # Construct Gaussian Graph and Stitched DS
-        print('Constructing Gaussian Graph and Stitched DS...')
-        stitched_ds, gg_solution_nodes, stitching_stats = construct_stitched_ds(
-            config, gg, norm_demo_set, ds_set, reversed_ds_set, initial, attractor, segment_ds_lookup=segment_ds_lookup,
+    # ============= Shared LPV-DS + Gaussian Graph precompute =============
+    shared_precompute = build_or_load_shared_precompute(
+        config=config,
+        demo_set=demo_set,
+        apply_lpvds_demowise_fn=apply_lpvds_demowise,
+        get_gaussian_directions_fn=get_gaussian_directions,
+        gaussian_graph_cls=gu.GaussianGraph,
+    )
+    ds_set = shared_precompute["ds_set"]
+    reversed_ds_set = shared_precompute["reversed_ds_set"]
+    norm_demo_set = shared_precompute["norm_demo_set"]
+    gg = shared_precompute["gg"]
+    ds_compute_time = float(shared_precompute["ds_compute_time"])
+    gg_compute_time = float(shared_precompute["gg_compute_time"])
+    if config.save_fig and save_fig_indices is None:
+        plot_demonstration_set(norm_demo_set, config, save_as="Demonstrations_Norm", hide_axis=True)
+        plot_ds_set_gaussians(
+            ds_set,
+            config,
+            include_trajectory=True,
+            save_as="Demonstrations_Gaussians",
+            hide_axis=True,
         )
 
-        if stitched_ds is None or not hasattr(stitched_ds, 'damm') or stitched_ds.damm is None or not hasattr(stitched_ds.damm, 'Mu'):
-            print(f"Warning: Skipping Stitched DS object with incomplete DAMM clustering")
-            stitched_ds = None
+    # ============= Construct/Load Gaussian Graph (already in shared precompute) =============
+    if config.save_fig and save_fig_indices is None:
+        plot_gaussian_graph(gg, config, save_as="Gaussian_Graph", hide_axis=True)
 
-        if stitched_ds is None:
-            ds_metrics = calculate_ds_metrics(
-                x_ref=None,
-                x_dot_ref=None,
-                ds=stitched_ds,
-                sim_trajectories=None,
-                initial=initial,
-                attractor=attractor
+    pre_computation_results = {
+        "ds_compute_time": ds_compute_time,
+        "gg_compute_time": gg_compute_time,
+        "precomputation_time": 0.0,
+        "precompute_segment_total": 0,
+        "precompute_segment_ok": 0,
+        "precompute_segment_failed": 0,
+        "precompute_segment_timed_out": 0,
+        "precompute_enumeration_timed_out": 0,
+    }
+
+    # Checkpoint before initializing combinations so interrupted runs retain setup timings.
+    _checkpoint_results_csv([pre_computation_results], final_results_path)
+
+    # ============= Initialize combination iterator =============
+    init_attr_combinations = initialize_iter_strategy(config, demo_set)
+
+    # ============= Pre-compute segment DSs (for chaining only) =============
+    segment_ds_lookup = run_chain_segment_precompute(
+        config=config,
+        gg=gg,
+        ds_set=ds_set,
+        init_attr_combinations=init_attr_combinations,
+        pre_computation_results=pre_computation_results,
+        final_results_path=final_results_path,
+        checkpoint_results_csv_fn=_checkpoint_results_csv,
+        call_with_timeout_fn=_call_with_timeout,
+        operation_timeout_cls=_OperationTimeout,
+        compute_segment_ds_fn=_compute_segment_DS,
+        resolve_triplet_fit_data_mode_fn=_resolve_triplet_fit_data_mode,
+        extract_chain_segments_from_path_nodes_fn=_extract_chain_segments_from_path_nodes,
+    )
+
+    # ============= Test various initial/attractor combinations =============
+    all_results = [pre_computation_results]
+    _checkpoint_results_csv(all_results, final_results_path)
+
+    for i, (initial, attractor) in enumerate(init_attr_combinations):
+        print(
+            f"Processing combination {i + 1} of {len(init_attr_combinations)} "
+            "#######################################"
+        )
+
+        result_row, stitched_ds, stitching_stats, ds_metrics = run_single_combination(
+            combination_id=i,
+            initial=initial,
+            attractor=attractor,
+            config=config,
+            gg=gg,
+            norm_demo_set=norm_demo_set,
+            ds_set=ds_set,
+            reversed_ds_set=reversed_ds_set,
+            segment_ds_lookup=segment_ds_lookup,
+            demo_set=demo_set,
+            save_fig_indices=save_fig_indices,
+            construct_stitched_ds_fn=construct_stitched_ds,
+            simulate_trajectories_fn=simulate_trajectories,
+            calculate_ds_metrics_fn=calculate_ds_metrics,
+            call_with_timeout_fn=_call_with_timeout,
+            operation_timeout_cls=_OperationTimeout,
+            default_stitching_stats_fn=_default_stitching_stats,
+            nan_ds_metrics_fn=_nan_ds_metrics,
+            extract_gaussian_node_indices_fn=_extract_gaussian_node_indices,
+            plot_gg_solution_fn=plot_gg_solution,
+            plot_ds_set_gaussians_fn=plot_ds_set_gaussians,
+            plot_ds_fn=plot_ds,
+            plot_composite_fn=plot_composite,
+        )
+
+        all_results.append(result_row)
+        _checkpoint_results_csv(all_results, final_results_path)
+
+        if result_row.get("combination_status") == "ok" and stitched_ds is not None:
+            print(f"Successful Stitched DS construction: {stitching_stats['total_compute_time']:.2f} s")
+            gg_time = stitching_stats.get("gg_solution_compute_time")
+            if gg_time is not None:
+                print(f"  Gaussian Graph: {gg_time:.2f} s, ")
+            else:
+                print("  Gaussian Graph: N/A")
+            print(f"  Stitched DS: {stitching_stats['ds_compute_time']:.2f} s")
+            print("Metrics:")
+            print(f"  RMSE: {ds_metrics['prediction_rmse']:.4f}")
+            print(f"  Cosine Dissimilarity: {ds_metrics['cosine_dissimilarity']:.4f}")
+            print(
+                "  DTW Distance: "
+                f"{ds_metrics['dtw_distance_mean']:.4f} ± {ds_metrics['dtw_distance_std']:.4f}"
             )
-        else:
-
-            # Simulate trajectories
-            print('Simulating trajectories...')
-            simulated_trajectories = simulate_trajectories(stitched_ds, initial, config)
-
-            # Calculate DS metrics
-            # TODO we should make sure to use the correct x and xdot for spt method here (not all x and x_dot)
-            print('Calculating DS metrics...')
-            ds_metrics = calculate_ds_metrics(
-                x_ref=stitched_ds.x,
-                x_dot_ref=stitched_ds.x_dot,
-                ds=stitched_ds,
-                sim_trajectories=simulated_trajectories,
-                initial=initial,
-                attractor=attractor
-            )
-
-            # Plot
-            if config.save_fig:
-                plot_gg_solution(gg, gg_solution_nodes, initial, attractor, config, save_as=f'{i}_Gaussian_Graph_Solution', hide_axis=True)
-                plot_ds_set_gaussians([stitched_ds], config, initial=initial, attractor=attractor, include_trajectory=True, save_as=f'{i}_Stitched_DS_Gaussians', hide_axis=True)
-                plot_ds(stitched_ds, simulated_trajectories, initial, attractor, config, save_as=f'{i}_Stitched_DS_Simulation', hide_axis=True)
-                plot_composite(gg, gg_solution_nodes, demo_set,stitched_ds, simulated_trajectories, initial, attractor, config, save_as=f'{i}_Composite', hide_axis=True)
-
-
-        # Compile and append results
-        results = {'combination_id': i, 'ds_method': config.ds_method,} | stitching_stats | ds_metrics
-        all_results.append(results)
-
-        # Print
-        if stitched_ds is not None:
-            print(f'Successful Stitched DS construction: {stitching_stats["total_compute_time"]:.2f} s')
-            print(f'  Gaussian Graph: {stitching_stats["gg_solution_compute_time"]:.2f} s, ')
-            print(f'  Stitched DS: {stitching_stats["ds_compute_time"]:.2f} s')
-            print(f'Metrics:')
-            print(f'  RMSE: {ds_metrics["prediction_rmse"]:.4f}')
-            print(f'  Cosine Dissimilarity: {ds_metrics["cosine_dissimilarity"]:.4f}')
-            print(f'  DTW Distance: {ds_metrics["dtw_distance_mean"]:.4f} ± {ds_metrics["dtw_distance_std"]:.4f}')
         else:
             print("Stitched DS construction failed.")
 
-    # Save Results to CSV
     if all_results:
-        results_path = save_folder + f"results_{config.seed}.csv"
-        save_results_dataframe(all_results, results_path)
+        save_results_dataframe(all_results, final_results_path)
     else:
         print("No results to save.")
+
+    return all_results
 
 
 if __name__ == "__main__":
     main()
-    

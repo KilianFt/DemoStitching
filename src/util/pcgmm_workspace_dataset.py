@@ -63,6 +63,28 @@ PCGMM_3D_WORKSPACE_PLAN = (
 )
 
 
+PCGMM_3D_SIMPLE_WORKSPACE_PLAN = (
+    TaskSpec(
+        task_file="3D_Cshape_top.mat",
+        start_anchor=np.array([-1.05, -0.45, 0.25]),
+        end_anchor=np.array([-0.20, 0.20, 0.45]),
+        role="corridor to shared hub",
+    ),
+    TaskSpec(
+        task_file="3D_viapoint_1.mat",
+        start_anchor=np.array([-0.20, 0.20, 0.45]),
+        end_anchor=np.array([0.55, 0.72, 0.55]),
+        role="hub to upper branch",
+    ),
+    TaskSpec(
+        task_file="3D_viapoint_2.mat",
+        start_anchor=np.array([-0.20, 0.20, 0.45]),
+        end_anchor=np.array([0.78, -0.28, 0.55]),
+        role="hub to lower branch",
+    ),
+)
+
+
 def _resample_positions(positions: np.ndarray, n_points: int) -> np.ndarray:
     if positions.shape[0] == n_points:
         return positions.copy()
@@ -125,6 +147,77 @@ def _load_pcgmm_task_positions(task_file: str) -> list[np.ndarray]:
     if len(trajectories) == 0:
         raise ValueError(f"No valid 3D trajectories extracted from: {task_file}")
     return trajectories
+
+
+def _trajectory_rms_distance(a: np.ndarray, b: np.ndarray) -> float:
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    if a.shape != b.shape:
+        raise ValueError(f"Trajectory shape mismatch: {a.shape} vs {b.shape}")
+    return float(np.sqrt(np.mean(np.sum((a - b) ** 2, axis=1))))
+
+
+def _select_trajectory_indices(
+    task_trajectories: list[np.ndarray],
+    n_select: int,
+    n_points: int,
+    start_anchor: np.ndarray,
+    end_anchor: np.ndarray,
+    rng: np.random.Generator,
+    mode: str = "random",
+) -> np.ndarray:
+    n_available = int(len(task_trajectories))
+    if n_available == 0:
+        return np.zeros((0,), dtype=int)
+
+    n_select = int(max(1, min(int(n_select), n_available)))
+    if n_select >= n_available:
+        return np.arange(n_available, dtype=int)
+
+    mode = str(mode).strip().lower()
+    if mode == "random":
+        return np.asarray(rng.choice(n_available, size=n_select, replace=False), dtype=int)
+    if mode != "diverse":
+        raise ValueError(f"Unknown selection mode: {mode}")
+
+    warped = []
+    for src in task_trajectories:
+        src_resampled = _resample_positions(np.asarray(src, dtype=float), n_points=n_points)
+        src_warped = _warp_to_anchors(src_resampled, start_anchor=start_anchor, end_anchor=end_anchor)
+        warped.append(src_warped)
+
+    dist = np.zeros((n_available, n_available), dtype=float)
+    for i in range(n_available):
+        for j in range(i + 1, n_available):
+            d = _trajectory_rms_distance(warped[i], warped[j])
+            dist[i, j] = d
+            dist[j, i] = d
+
+    mean_dist = np.mean(dist, axis=1)
+    first_candidates = np.flatnonzero(np.isclose(mean_dist, np.max(mean_dist)))
+    first = int(rng.choice(first_candidates))
+    selected = [first]
+
+    while len(selected) < n_select:
+        remaining = [idx for idx in range(n_available) if idx not in selected]
+        if len(remaining) == 0:
+            break
+
+        min_dists = np.array([np.min(dist[idx, selected]) for idx in remaining], dtype=float)
+        best_min = float(np.max(min_dists))
+        best_candidates = [remaining[i] for i, v in enumerate(min_dists) if np.isclose(v, best_min)]
+
+        if len(best_candidates) == 1:
+            chosen = int(best_candidates[0])
+        else:
+            # Tie-break: keep globally diverse trajectories before random fallback.
+            best_mean = np.array([mean_dist[idx] for idx in best_candidates], dtype=float)
+            top = np.flatnonzero(np.isclose(best_mean, np.max(best_mean)))
+            chosen = int(best_candidates[int(rng.choice(top))])
+
+        selected.append(chosen)
+
+    return np.asarray(selected, dtype=int)
 
 
 def _set_equal_3d_axes(ax, points_xyz: np.ndarray):
@@ -218,15 +311,22 @@ def _visualize_combined_workspace(
     plt.close(fig)
 
 
-def build_pcgmm_3d_workspace_dataset(
+def _build_pcgmm_3d_workspace_from_plan(
     output_dir: str,
-    task_data_dir: str = "dataset/pc-gmm-data",
+    task_data_dir: str,
+    task_plan: Iterable[TaskSpec],
+    dataset_name: str,
+    plan_file_name: str,
+    individual_plot_name: str,
+    combined_plot_name: str,
     n_trajectories_per_task: int = 4,
     n_points: int = 220,
     seed: int = 13,
+    selection_mode: str = "random",
     overwrite: bool = True,
     visualize: bool = True,
 ) -> dict:
+    task_plan = tuple(task_plan)
     rng = np.random.default_rng(seed)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -235,26 +335,23 @@ def build_pcgmm_3d_workspace_dataset(
         for child in output_path.iterdir():
             if child.is_dir() and child.name.startswith("demonstration_"):
                 shutil.rmtree(child)
-        for file_name in (
-            "pcgmm_workspace_plan.json",
-            "pcgmm_tasks_individual_3d.png",
-            "pcgmm_workspace_combined_3d.png",
-        ):
+        for file_name in (plan_file_name, individual_plot_name, combined_plot_name):
             file_path = output_path / file_name
             if file_path.exists():
                 file_path.unlink()
 
     metadata = {
-        "name": "pcgmm_3d_workspace",
+        "name": dataset_name,
         "task_data_dir": str(task_data_dir),
         "n_trajectories_per_task": int(n_trajectories_per_task),
         "n_points": int(n_points),
         "seed": int(seed),
+        "selection_mode": str(selection_mode),
         "demonstrations": [],
         "visualizations": {},
     }
 
-    for demo_idx, task_spec in enumerate(PCGMM_3D_WORKSPACE_PLAN):
+    for demo_idx, task_spec in enumerate(task_plan):
         task_file = Path(task_data_dir) / task_spec.task_file
         if not task_file.exists():
             raise FileNotFoundError(f"Missing pc-gmm task file: {task_file}")
@@ -262,7 +359,15 @@ def build_pcgmm_3d_workspace_dataset(
         task_trajectories = _load_pcgmm_task_positions(str(task_file))
         n_available = len(task_trajectories)
         n_traj = min(int(n_trajectories_per_task), n_available)
-        selected_indices = rng.choice(n_available, size=n_traj, replace=False)
+        selected_indices = _select_trajectory_indices(
+            task_trajectories=task_trajectories,
+            n_select=n_traj,
+            n_points=int(n_points),
+            start_anchor=task_spec.start_anchor,
+            end_anchor=task_spec.end_anchor,
+            rng=rng,
+            mode=selection_mode,
+        )
 
         demo_dir = output_path / f"demonstration_{demo_idx}"
         demo_dir.mkdir(parents=True, exist_ok=True)
@@ -297,11 +402,11 @@ def build_pcgmm_3d_workspace_dataset(
         )
 
     if visualize:
-        individual_plot = output_path / "pcgmm_tasks_individual_3d.png"
-        combined_plot = output_path / "pcgmm_workspace_combined_3d.png"
+        individual_plot = output_path / individual_plot_name
+        combined_plot = output_path / combined_plot_name
         _visualize_individual_tasks(
             task_data_dir=task_data_dir,
-            task_plan=PCGMM_3D_WORKSPACE_PLAN,
+            task_plan=task_plan,
             output_path=str(individual_plot),
         )
         _visualize_combined_workspace(
@@ -314,9 +419,63 @@ def build_pcgmm_3d_workspace_dataset(
             "combined_workspace_3d": str(combined_plot),
         }
 
-    with open(output_path / "pcgmm_workspace_plan.json", "w", encoding="utf-8") as f:
+    with open(output_path / plan_file_name, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
     return metadata
+
+
+def build_pcgmm_3d_workspace_dataset(
+    output_dir: str,
+    task_data_dir: str = "dataset/pc-gmm-data",
+    n_trajectories_per_task: int = 4,
+    n_points: int = 220,
+    seed: int = 13,
+    selection_mode: str = "random",
+    overwrite: bool = True,
+    visualize: bool = True,
+) -> dict:
+    return _build_pcgmm_3d_workspace_from_plan(
+        output_dir=output_dir,
+        task_data_dir=task_data_dir,
+        task_plan=PCGMM_3D_WORKSPACE_PLAN,
+        dataset_name="pcgmm_3d_workspace",
+        plan_file_name="pcgmm_workspace_plan.json",
+        individual_plot_name="pcgmm_tasks_individual_3d.png",
+        combined_plot_name="pcgmm_workspace_combined_3d.png",
+        n_trajectories_per_task=n_trajectories_per_task,
+        n_points=n_points,
+        seed=seed,
+        selection_mode=selection_mode,
+        overwrite=overwrite,
+        visualize=visualize,
+    )
+
+
+def build_pcgmm_3d_simple_workspace_dataset(
+    output_dir: str,
+    task_data_dir: str = "dataset/pc-gmm-data",
+    n_trajectories_per_task: int = 4,
+    n_points: int = 220,
+    seed: int = 19,
+    selection_mode: str = "diverse",
+    overwrite: bool = True,
+    visualize: bool = True,
+) -> dict:
+    return _build_pcgmm_3d_workspace_from_plan(
+        output_dir=output_dir,
+        task_data_dir=task_data_dir,
+        task_plan=PCGMM_3D_SIMPLE_WORKSPACE_PLAN,
+        dataset_name="pcgmm_3d_workspace_simple",
+        plan_file_name="pcgmm_simple_workspace_plan.json",
+        individual_plot_name="pcgmm_simple_tasks_individual_3d.png",
+        combined_plot_name="pcgmm_simple_workspace_combined_3d.png",
+        n_trajectories_per_task=n_trajectories_per_task,
+        n_points=n_points,
+        seed=seed,
+        selection_mode=selection_mode,
+        overwrite=overwrite,
+        visualize=visualize,
+    )
 
 
 def build_default_pcgmm_3d_workspace_dataset(
@@ -327,6 +486,21 @@ def build_default_pcgmm_3d_workspace_dataset(
     output_dir = repo_root / "dataset" / "stitching" / "pcgmm_3d_workspace"
     task_data_dir = repo_root / "dataset" / "pc-gmm-data"
     return build_pcgmm_3d_workspace_dataset(
+        output_dir=str(output_dir),
+        task_data_dir=str(task_data_dir),
+        overwrite=overwrite,
+        visualize=visualize,
+    )
+
+
+def build_default_pcgmm_3d_simple_workspace_dataset(
+    overwrite: bool = True,
+    visualize: bool = True,
+) -> dict:
+    repo_root = Path(__file__).resolve().parents[2]
+    output_dir = repo_root / "dataset" / "stitching" / "pcgmm_3d_workspace_simple"
+    task_data_dir = repo_root / "dataset" / "pc-gmm-data"
+    return build_pcgmm_3d_simple_workspace_dataset(
         output_dir=str(output_dir),
         task_data_dir=str(task_data_dir),
         overwrite=overwrite,

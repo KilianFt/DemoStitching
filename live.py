@@ -4,6 +4,7 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
+from matplotlib.patches import Rectangle
 from matplotlib.animation import FuncAnimation
 import numpy as np
 
@@ -14,12 +15,15 @@ from src.stitching.ds_stitching import construct_stitched_ds
 from src.util.benchmarking_tools import initialize_iter_strategy
 from src.util.ds_tools import apply_lpvds_demowise, get_gaussian_directions
 from src.util.load_tools import get_demonstration_set, resolve_data_scales
+from src.util.plot_tools import draw_chain_partition_field_2d, resolve_chain_plot_mode
 
 
 @dataclass
 class LiveConfig(StitchConfig):
-    dt: float = 0.02
-    animation_interval_ms: int = 30
+    dt: float = 0.01
+    animation_interval_ms: int = 10
+    # Simulation updates per rendered frame (keeps dt unchanged).
+    sim_steps_per_frame: int = 500
     goal_tolerance: float = 0.08
     disturbance_step: float = 0.25
     auto_restart: bool = False
@@ -29,6 +33,21 @@ class LiveConfig(StitchConfig):
     figure_height: float = 10.0
     view_padding_ratio: float = 0.08
     view_padding_abs: float = 0.5
+
+
+def _resolve_chain_live_field_mode(mode: str) -> str:
+    mode = str(mode).strip().lower()
+    aliases = {
+        "partition": "partition",
+        "regions": "partition",
+        "region": "partition",
+        "active_ds": "active_ds",
+        "active": "active_ds",
+        "current_ds": "active_ds",
+        "current": "active_ds",
+        "single_ds": "active_ds",
+    }
+    return aliases.get(mode, "partition")
 
 
 def _predict_velocity_field(ds, points: np.ndarray) -> np.ndarray:
@@ -119,6 +138,8 @@ def _compute_view_extent_3d(
     padding_ratio: float = 0.08,
     padding_abs: float = 0.5,
 ):
+    # 3D view padding is scaled down to avoid overly large borders in interactive plots.
+    view_padding_scale_3d = 0.65
     pts = np.asarray(points_xyz, dtype=float)
     if pts.ndim != 2 or pts.shape[0] == 0 or pts.shape[1] < 3:
         return -1.0, 1.0, -1.0, 1.0, -1.0, 1.0
@@ -134,6 +155,7 @@ def _compute_view_extent_3d(
     spans = np.maximum(maxs - mins, 1e-6)
     max_span = float(np.max(spans))
     margin = max(float(padding_abs), float(padding_ratio) * max_span)
+    margin = max(1e-6, margin * view_padding_scale_3d)
     half_extent = 0.5 * max_span + margin
     center = 0.5 * (mins + maxs)
     return (
@@ -460,6 +482,11 @@ class LiveStitchApp:
         self.chain_fit_points_artist = None
         self.chain_fit_info_text = None
         self.gaussian_center_artist = None
+        self.chain_region_artist = None
+        self.chain_transition_line_artists = []
+        self.chain_transition_progress_bg = None
+        self.chain_transition_progress_fg = None
+        self.chain_transition_progress_text = None
 
         self.disturbance_keys = {
             "left": np.array([-1.0, 0.0]),
@@ -511,6 +538,22 @@ class LiveStitchApp:
         )
 
     def _remove_streamplot(self):
+        chain_region_artist = getattr(self, "chain_region_artist", None)
+        if chain_region_artist is not None:
+            try:
+                chain_region_artist.remove()
+            except Exception:
+                pass
+            self.chain_region_artist = None
+
+        transition_lines = list(getattr(self, "chain_transition_line_artists", []))
+        for line in transition_lines:
+            try:
+                line.remove()
+            except Exception:
+                pass
+        self.chain_transition_line_artists = []
+
         if self.stream is None:
             pass
         else:
@@ -530,6 +573,41 @@ class LiveStitchApp:
             except Exception:
                 pass
             self.quiver = None
+
+    def _chain_live_field_mode(self) -> str:
+        return _resolve_chain_live_field_mode(
+            getattr(self.ctrl.config.chain, "live_field_mode", "partition")
+        )
+
+    @staticmethod
+    def _remove_artist_if_present(artist):
+        if artist is None:
+            return
+        try:
+            artist.remove()
+        except Exception:
+            pass
+
+    def _chain_switch_requires_full_redraw(self) -> bool:
+        if self.ctrl.config.ds_method != "chain":
+            return False
+        if self.is_3d:
+            return True
+        return self._chain_live_field_mode() != "partition"
+
+    def _refresh_chain_artists_for_switch(self):
+        # In 2D partition mode, the background field is static across chain indices.
+        # Update only the index-dependent overlays to avoid expensive full redraws.
+        if self.chain_source_artist is None or self.chain_target_artist is None:
+            self._draw_chain_markers()
+        else:
+            self._update_chain_markers()
+
+        self._remove_artist_if_present(getattr(self, "chain_fit_points_artist", None))
+        self._remove_artist_if_present(getattr(self, "chain_fit_info_text", None))
+        self.chain_fit_points_artist = None
+        self.chain_fit_info_text = None
+        self._draw_chain_fit_points()
 
     def _draw_ds_field(self):
         self._remove_streamplot()
@@ -556,16 +634,44 @@ class LiveStitchApp:
                 points[:, d] = anchor[d]
 
         if self.ctrl.config.ds_method == "chain":
-            idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
-            chain_method = self.ctrl.config.chain.ds_method
-            if chain_method == "segmented":
-                velocities = np.array([
-                    self.ctrl.current_ds._velocity_for_index(p, idx) for p in points
-                ])
+            chain_live_field_mode = self._chain_live_field_mode()
+            if chain_live_field_mode == "active_ds":
+                idx = int(np.clip(self.ctrl.current_chain_idx, 0, self.ctrl.current_ds.n_systems - 1))
+                velocities = np.array(
+                    [self.ctrl.current_ds._velocity_for_index(p, idx) for p in points],
+                    dtype=float,
+                )
+                finite = np.all(np.isfinite(velocities), axis=1)
+                if np.any(~finite):
+                    velocities = velocities.copy()
+                    velocities[~finite] = 0.0
             else:
-                _, targets = self.ctrl._chain_sources_targets(self.ctrl.current_ds)
-                target = targets[idx]
-                velocities = (self.ctrl.current_ds.A_seq[idx] @ (points - target).T).T
+                plot_sample = int(max(8, getattr(self.ctrl.config.chain, "plot_grid_resolution", 60)))
+                chain_plot_mode = resolve_chain_plot_mode(
+                    getattr(self.ctrl.config.chain, "plot_mode", "line_regions")
+                )
+                region_alpha = float(getattr(self.ctrl.config.chain, "plot_region_alpha", 0.26))
+                show_transition_lines = bool(getattr(self.ctrl.config.chain, "plot_show_transition_lines", True))
+                field_artists = draw_chain_partition_field_2d(
+                    ax=self.ax,
+                    ds=self.ctrl.current_ds,
+                    x_min=self.x_min,
+                    x_max=self.x_max,
+                    y_min=self.y_min,
+                    y_max=self.y_max,
+                    mode=chain_plot_mode,
+                    plot_sample=plot_sample,
+                    anchor_state=self.ctrl.current_state,
+                    region_alpha=region_alpha,
+                    stream_density=2.2,
+                    show_transition_lines=show_transition_lines,
+                    path_bandwidth=getattr(self.ctrl.config.chain, "plot_path_bandwidth", 0.9),
+                )
+                self.chain_region_artist = field_artists["region_image"]
+                self.stream = field_artists["stream"]
+                self.chain_transition_line_artists = field_artists["transition_lines"]
+                return
+
         else:
             velocities = _predict_velocity_field(self.ctrl.current_ds, points)
 
@@ -931,6 +1037,121 @@ class LiveStitchApp:
             else:
                 self.chain_target_artist.set_data([target[0]], [target[1]])
 
+    def _compute_chain_transition_progress(self):
+        if self.ctrl.config.ds_method != "chain" or self.ctrl.current_ds is None:
+            return False, 0.0, None
+        ds = self.ctrl.current_ds
+        if not bool(getattr(ds, "transition_active", False)):
+            return False, 0.0, None
+
+        boundary_idx = getattr(ds, "_transition_from_idx", None)
+        if boundary_idx is None:
+            return False, 0.0, None
+        boundary_idx = int(boundary_idx)
+
+        transition_times = np.asarray(getattr(ds, "transition_times", []), dtype=float).reshape(-1)
+        if boundary_idx < 0 or boundary_idx >= len(transition_times):
+            return True, 0.0, boundary_idx
+
+        T = float(transition_times[boundary_idx])
+        if not np.isfinite(T) or T <= 1e-12:
+            return True, 1.0, boundary_idx
+
+        t = float(getattr(ds, "_runtime_time", 0.0))
+        t0 = float(getattr(ds, "_transition_t0", t))
+        progress = float(np.clip((t - t0) / T, 0.0, 1.0))
+        return True, progress, boundary_idx
+
+    def _draw_chain_transition_indicator(self):
+        self.chain_transition_progress_bg = None
+        self.chain_transition_progress_fg = None
+        self.chain_transition_progress_text = None
+        if self.ctrl.config.ds_method != "chain":
+            return
+
+        x0, y0 = 0.02, 0.02
+        width, height = 0.24, 0.025
+        self.chain_transition_progress_bg = Rectangle(
+            (x0, y0),
+            width,
+            height,
+            transform=self.ax.transAxes,
+            facecolor=(1.0, 1.0, 1.0, 0.70),
+            edgecolor=(0.0, 0.0, 0.0, 0.45),
+            linewidth=0.8,
+            zorder=7.5,
+        )
+        self.ax.add_patch(self.chain_transition_progress_bg)
+
+        self.chain_transition_progress_fg = Rectangle(
+            (x0, y0),
+            0.0,
+            height,
+            transform=self.ax.transAxes,
+            facecolor=(0.95, 0.55, 0.10, 0.95),
+            edgecolor="none",
+            zorder=7.6,
+        )
+        self.ax.add_patch(self.chain_transition_progress_fg)
+
+        text_kwargs = {
+            "fontsize": 9,
+            "ha": "left",
+            "va": "bottom",
+            "zorder": 7.7,
+        }
+        if self.is_3d and hasattr(self.ax, "text2D"):
+            self.chain_transition_progress_text = self.ax.text2D(
+                x0,
+                y0 + height + 0.010,
+                "",
+                transform=self.ax.transAxes,
+                **text_kwargs,
+            )
+        else:
+            self.chain_transition_progress_text = self.ax.text(
+                x0,
+                y0 + height + 0.010,
+                "",
+                transform=self.ax.transAxes,
+                **text_kwargs,
+            )
+        self._update_chain_transition_indicator()
+
+    def _update_chain_transition_indicator(self):
+        if self.chain_transition_progress_text is None:
+            return
+
+        is_active, progress, boundary_idx = self._compute_chain_transition_progress()
+        bg = self.chain_transition_progress_bg
+        fg = self.chain_transition_progress_fg
+        txt = self.chain_transition_progress_text
+
+        if not is_active:
+            if bg is not None:
+                bg.set_visible(False)
+            if fg is not None:
+                fg.set_visible(False)
+            txt.set_text("transition: idle")
+            txt.set_color("dimgray")
+            txt.set_alpha(0.75)
+            return
+
+        if bg is not None:
+            bg.set_visible(True)
+        if fg is not None:
+            fg.set_visible(True)
+            full_w = float(bg.get_width()) if bg is not None else 0.24
+            fg.set_width(np.clip(progress, 0.0, 1.0) * full_w)
+            # orange -> green with progress
+            fg.set_facecolor((1.0 - 0.55 * progress, 0.45 + 0.45 * progress, 0.10, 0.95))
+
+        left = int(boundary_idx)
+        right = left + 1
+        txt.set_text(f"transition {left}->{right}: {100.0 * progress:4.1f}%")
+        txt.set_color("black")
+        txt.set_alpha(0.95)
+
     def _redraw_scene(self):
         self.stream = None
         self.quiver = None
@@ -993,6 +1214,7 @@ class LiveStitchApp:
             self.point_artist, = self.ax.plot(self.ctrl.current_state[0], self.ctrl.current_state[1], "ko", markersize=6)
         self._draw_chain_markers()
         self._draw_chain_fit_points()
+        self._draw_chain_transition_indicator()
 
         self.ax.set_xlim(self.x_min, self.x_max)
         self.ax.set_ylim(self.y_min, self.y_max)
@@ -1003,9 +1225,14 @@ class LiveStitchApp:
             self.ax.set_zlabel("z")
         else:
             self.ax.set_aspect("equal")
-        self.ax.set_title(
-            f"Live Stitch ({self.ctrl.config.ds_method}) | click: new goal | arrows: disturb | r: reset | cyan: fit points"
-        )
+        title = f"Live Stitch ({self.ctrl.config.ds_method}) | click: new goal | arrows: disturb | r: reset | cyan: fit points"
+        if self.ctrl.config.ds_method == "chain":
+            chain_plot_mode = resolve_chain_plot_mode(
+                getattr(self.ctrl.config.chain, "plot_mode", "line_regions")
+            )
+            chain_live_field_mode = self._chain_live_field_mode()
+            title += f" | chain plot: {chain_plot_mode} | live field: {chain_live_field_mode}"
+        self.ax.set_title(title)
         self.ax.grid(alpha=0.25)
         self.figure.tight_layout()
         self.figure.canvas.draw_idle()
@@ -1055,7 +1282,9 @@ class LiveStitchApp:
             return []
 
         prev_chain_idx = self.ctrl.current_chain_idx
-        self.ctrl.step_once()
+        n_steps = int(max(1, getattr(self.ctrl.config, "sim_steps_per_frame", 1)))
+        for _ in range(n_steps):
+            self.ctrl.step_once()
         traj = np.array(self.ctrl.trajectory)
         if self.is_3d:
             self.traj_line.set_data(traj[:, 0], traj[:, 1])
@@ -1070,6 +1299,9 @@ class LiveStitchApp:
             self.traj_line.set_data(traj[:, 0], traj[:, 1])
             self.point_artist.set_data([self.ctrl.current_state[0]], [self.ctrl.current_state[1]])
 
+        if self.ctrl.config.ds_method == "chain":
+            self._update_chain_transition_indicator()
+
         if self.ctrl.config.ds_method == "chain" and self.ctrl.current_chain_idx != prev_chain_idx:
             stats = self.ctrl.current_chain_direction_stats()
             if isinstance(stats, dict):
@@ -1081,7 +1313,10 @@ class LiveStitchApp:
                         f"Switched to edge {self.ctrl.current_chain_idx}: "
                         f"n={n_points}, forward_ratio={frac:.2f}, min_proj={min_proj:.3f}"
                     )
-            self._redraw_scene()
+            if self._chain_switch_requires_full_redraw():
+                self._redraw_scene()
+            else:
+                self._refresh_chain_artists_for_switch()
             return []
 
         return []
@@ -1103,8 +1338,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Interactive live stitching with click-to-goal replanning.")
     parser.add_argument("--dataset-path", type=str, default="dataset/stitching/robottasks_workspace_chain")
     parser.add_argument("--ds-method", type=str, default="chain")
-    parser.add_argument("--dt", type=float, default=0.02)
-    parser.add_argument("--interval-ms", type=int, default=30)
+    parser.add_argument("--dt", type=float, default=0.01)
+    parser.add_argument("--interval-ms", type=int, default=20)
+    parser.add_argument("--sim-steps-per-frame", type=int, default=20)
     parser.add_argument("--data-position-scale", "--damm-position-scale", dest="data_position_scale", type=float, default=None)
     parser.add_argument("--data-velocity-scale", "--damm-velocity-scale", dest="data_velocity_scale", type=float, default=None)
     parser.add_argument(
@@ -1119,6 +1355,8 @@ def parse_args():
     parser.add_argument("--chain-goal-node-candidates", type=int, default=None)
     parser.add_argument("--chain-subsystem-edges", type=int, default=None)
     parser.add_argument("--chain-transition-length-ratio", type=float, default=None)
+    parser.add_argument("--chain-min-transition-time", type=float, default=None)
+    parser.add_argument("--chain-velocity-max", type=float, default=None)
     parser.add_argument(
         "--chain-transition-trigger-method",
         type=str,
@@ -1126,6 +1364,22 @@ def parse_args():
         choices=["mean_normals", "distance_ratio"],
     )
     parser.add_argument("--chain-max-subsystem-time", type=float, default=None)
+    parser.add_argument("--chain-plot-grid-resolution", type=int, default=None)
+    parser.add_argument("--chain-plot-path-bandwidth", type=float, default=None)
+    parser.add_argument(
+        "--chain-live-field-mode",
+        type=str,
+        default=None,
+        choices=["partition", "active_ds"],
+    )
+    parser.add_argument(
+        "--chain-plot-mode",
+        type=str,
+        default=None,
+        choices=["line_regions", "time_blend"],
+    )
+    parser.add_argument("--chain-plot-hide-lines", action="store_true")
+    parser.add_argument("--chain-plot-region-alpha", type=float, default=None)
     parser.add_argument("--start-x", type=float, default=None)
     parser.add_argument("--start-y", type=float, default=None)
     parser.add_argument("--figure-width", type=float, default=10.0)
@@ -1148,6 +1402,7 @@ def main():
     config.ds_method = args.ds_method
     config.dt = args.dt
     config.animation_interval_ms = args.interval_ms
+    config.sim_steps_per_frame = int(max(1, args.sim_steps_per_frame))
     if args.data_position_scale is not None:
         config.data_position_scale = args.data_position_scale
     config.data_velocity_scale = args.data_velocity_scale
@@ -1158,8 +1413,25 @@ def main():
         config.chain.subsystem_edges = args.chain_subsystem_edges
     if args.chain_transition_length_ratio is not None:
         config.chain.blend_length_ratio = args.chain_transition_length_ratio
+    if args.chain_min_transition_time is not None:
+        config.chain.min_transition_time = max(float(args.chain_min_transition_time), 1e-6)
+    if args.chain_velocity_max is not None:
+        v_max = float(args.chain_velocity_max)
+        config.chain.velocity_max = v_max if np.isfinite(v_max) and v_max > 0.0 else None
     if args.chain_transition_trigger_method is not None:
         config.chain.transition_trigger_method = args.chain_transition_trigger_method
+    if args.chain_plot_grid_resolution is not None:
+        config.chain.plot_grid_resolution = int(max(8, args.chain_plot_grid_resolution))
+    if args.chain_plot_path_bandwidth is not None:
+        config.chain.plot_path_bandwidth = float(max(args.chain_plot_path_bandwidth, 1e-6))
+    if args.chain_live_field_mode is not None:
+        config.chain.live_field_mode = _resolve_chain_live_field_mode(args.chain_live_field_mode)
+    if args.chain_plot_mode is not None:
+        config.chain.plot_mode = args.chain_plot_mode
+    if args.chain_plot_hide_lines:
+        config.chain.plot_show_transition_lines = False
+    if args.chain_plot_region_alpha is not None:
+        config.chain.plot_region_alpha = float(np.clip(args.chain_plot_region_alpha, 0.0, 1.0))
     config.start_x = args.start_x
     config.start_y = args.start_y
     config.figure_width = args.figure_width

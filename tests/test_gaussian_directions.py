@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -13,6 +14,9 @@ class _DummyDamm:
         self.gaussian_lists = gaussian_lists
         self.z = np.asarray(z, dtype=int)
         self.K = len(gaussian_lists)
+        self.Mu = np.asarray([np.asarray(g["mu"], dtype=float) for g in gaussian_lists], dtype=float)
+        self.Sigma = np.asarray([np.asarray(g.get("sigma", np.eye(self.Mu.shape[1])), dtype=float) for g in gaussian_lists], dtype=float)
+        self.Prior = np.asarray([float(g.get("prior", 1.0 / max(self.K, 1))) for g in gaussian_lists], dtype=float)
 
     def compute_gamma(self, _x):
         return self._gamma
@@ -125,6 +129,111 @@ class GaussianDirectionTests(unittest.TestCase):
 
         np.testing.assert_array_equal(obj.assignment_arr, np.array([0, 1, 0], dtype=int))
         self.assertEqual(obj.K, 2)
+
+    def test_cluster_compacts_zero_assignment_components(self):
+        obj = lpvds_class.__new__(lpvds_class)
+        gamma = np.array(
+            [
+                [0.90, 0.80, 0.10, 0.20],
+                [0.05, 0.10, 0.20, 0.30],  # never argmax
+                [0.05, 0.10, 0.70, 0.50],
+            ],
+            dtype=float,
+        )
+        obj.damm = _DummyDamm(
+            gamma=gamma,
+            gaussian_lists=[
+                {"mu": np.array([0.0, 0.0]), "sigma": np.eye(2), "prior": 0.2},
+                {"mu": np.array([1.0, 0.0]), "sigma": np.eye(2), "prior": 0.3},
+                {"mu": np.array([2.0, 0.0]), "sigma": np.eye(2), "prior": 0.5},
+            ],
+            z=[0, 0, 2, 2],
+        )
+
+        lpvds_class._cluster(obj)
+
+        self.assertEqual(obj.K, 2)
+        self.assertEqual(int(obj.damm.K), 2)
+        self.assertEqual(obj.gamma.shape, (2, 4))
+        np.testing.assert_allclose(np.sum(obj.gamma, axis=0), np.ones((4,), dtype=float), atol=1e-8)
+        np.testing.assert_array_equal(obj.assignment_arr, np.array([0, 0, 1, 1], dtype=int))
+        self.assertEqual(obj.damm.Mu.shape[0], 2)
+        self.assertEqual(obj.damm.Sigma.shape[0], 2)
+        self.assertEqual(len(obj.damm.gaussian_lists), 2)
+        np.testing.assert_allclose(np.sum(obj.damm.Prior), 1.0, atol=1e-8)
+        np.testing.assert_allclose(
+            obj.damm.Prior,
+            np.array([0.2, 0.5], dtype=float) / 0.7,
+            atol=1e-8,
+        )
+        np.testing.assert_allclose(
+            np.array([g["prior"] for g in obj.damm.gaussian_lists], dtype=float),
+            obj.damm.Prior,
+            atol=1e-8,
+        )
+
+    def test_init_cluster_compacts_zero_assignment_components(self):
+        class _InitClusterDamm:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+                self.K = 0
+                self.gaussian_lists = []
+                self.Mu = np.zeros((0, 2), dtype=float)
+                self.Sigma = np.zeros((0, 2, 2), dtype=float)
+                self.Prior = np.zeros((0,), dtype=float)
+
+            def compute_gamma(self, _x):
+                return np.array(
+                    [
+                        [0.90, 0.80, 0.10, 0.20],
+                        [0.05, 0.10, 0.20, 0.30],  # never argmax
+                        [0.05, 0.10, 0.70, 0.50],
+                    ],
+                    dtype=float,
+                )
+
+        obj = lpvds_class.__new__(lpvds_class)
+        obj.x = np.array(
+            [
+                [0.0, 0.0],
+                [0.1, 0.0],
+                [1.0, 0.0],
+                [1.1, 0.1],
+            ],
+            dtype=float,
+        )
+        obj.x_dot = np.array(
+            [
+                [1.0, 0.0],
+                [1.0, 0.0],
+                [0.5, 0.5],
+                [0.5, 0.5],
+            ],
+            dtype=float,
+        )
+        obj.x_dir = obj.x_dot / np.linalg.norm(obj.x_dot, axis=1, keepdims=True)
+        obj.nu_0 = 5
+        obj.kappa_0 = 1
+        obj.psi_dir_0 = 1
+        obj.rel_scale = 0.1
+        obj.total_scale = 1.0
+
+        gaussian_lists = [
+            {"mu": np.array([0.0, 0.0]), "sigma": np.eye(2), "prior": 0.2},
+            {"mu": np.array([1.0, 0.0]), "sigma": np.eye(2), "prior": 0.3},
+            {"mu": np.array([2.0, 0.0]), "sigma": np.eye(2), "prior": 0.5},
+        ]
+
+        with patch("src.lpvds_class.damm_class", _InitClusterDamm):
+            lpvds_class.init_cluster(obj, gaussian_lists)
+
+        self.assertEqual(int(obj.K), 2)
+        self.assertEqual(int(obj.damm.K), 2)
+        self.assertEqual(obj.gamma.shape, (2, 4))
+        np.testing.assert_allclose(np.sum(obj.gamma, axis=0), np.ones((4,), dtype=float), atol=1e-8)
+        np.testing.assert_array_equal(obj.assignment_arr, np.array([0, 0, 1, 1], dtype=int))
+        np.testing.assert_allclose(np.sum(obj.damm.Prior), 1.0, atol=1e-8)
+        self.assertEqual(len(obj.damm.gaussian_lists), 2)
 
 
 if __name__ == "__main__":

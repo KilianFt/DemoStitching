@@ -26,6 +26,18 @@ class ConfigDataclassTests(unittest.TestCase):
         cfg = StitchConfig()
         self.assertIn(cfg.gaussian_direction_method, {"mean_velocity", "a_mu"})
 
+    def test_chain_plot_grid_resolution_is_available_and_positive(self):
+        cfg = StitchConfig()
+        self.assertGreaterEqual(int(cfg.chain.plot_grid_resolution), 8)
+        self.assertTrue(cfg.chain.plot_path_bandwidth is None or float(cfg.chain.plot_path_bandwidth) > 0.0)
+        self.assertIn(str(cfg.chain.live_field_mode), {"partition", "active_ds"})
+
+    def test_chain_safeguard_defaults_are_available(self):
+        cfg = StitchConfig()
+        self.assertGreater(float(cfg.chain.min_transition_time), 0.0)
+        self.assertIsInstance(cfg.chain.velocity_max, (float, int))
+        self.assertGreater(float(cfg.chain.velocity_max), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

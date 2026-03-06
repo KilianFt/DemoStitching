@@ -13,11 +13,11 @@ from sklearn.mixture import BayesianGaussianMixture
 
 def adjust_cov(cov, rel_scale=0.7, total_scale=1.5):
     vals, vecs = np.linalg.eigh(cov)
-    print("Old eigenvalues:", vals)
+    # print("Old eigenvalues:", vals)
     mean_val = np.mean(vals)
     new_vals = (1 - rel_scale) * vals + rel_scale * mean_val
     new_vals *= total_scale
-    print("New eigenvalues:", new_vals)
+    # print("New eigenvalues:", new_vals)
     return vecs @ np.diag(new_vals) @ vecs.T
 
 
@@ -160,7 +160,7 @@ class DAMM:
             a = gmm.log_proposal_ratio() + gmm.log_target_ratio()
             if a > 0:
                 self.z[index_list] = z_split + self.K
-                print("Split accepted")
+                # print("Split accepted")
 
     @staticmethod
     def extract_gaussian(z: np.ndarray, x: np.ndarray, rel_scale=0.7, total_scale=1.5) -> list:
@@ -242,9 +242,9 @@ class DAMM:
         gamma = self.compute_gamma(new_x)
         assignment_arr = np.argmax(gamma, axis = 0) # reverse order that we are assigning given the new gmm parameters; hence there's chance some component being empty
         unique_elements, counts = np.unique(assignment_arr, return_counts=True)
-        for element, count in zip(unique_elements, counts):
-            print("Current element", element)
-            print("has number", count)
+        # for element, count in zip(unique_elements, counts):
+            # print("Current element", element)
+            # print("has number", count)
 
         # Remove Gaussians with count 0 or less than 10
         to_keep = [k for k, count in zip(unique_elements, counts) if count >= 15]

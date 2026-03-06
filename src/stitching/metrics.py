@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import euclidean
+from scipy.spatial.distance import euclidean, cdist
 from fastdtw import fastdtw
 
 
@@ -20,21 +20,41 @@ def predict_velocities(x_positions, lpvds):
         x_dot_pred = lpvds.predict_velocities(x_positions)
         return np.asarray(x_dot_pred)
 
-    x_dot_pred = []
-    
-    for i in range(len(x_positions)):
-        # x = x_positions[i:i+1].T  # Shape (n, 1) as expected by _step
-        
-        # Use the same logic as in _step method
-        x_dot = np.zeros(x_positions[i].shape[0])
-        gamma = lpvds.damm.compute_gamma(x_positions[i])
-        
-        for k in range(lpvds.A.shape[0]):
-            x_dot += gamma[k, 0] * lpvds.A[k] @ (x_positions[i] - lpvds.x_att)
-        
-        x_dot_pred.append(x_dot)
-    
-    return np.array(x_dot_pred)
+    x_positions = np.atleast_2d(np.asarray(x_positions, dtype=float))
+    gamma = np.asarray(lpvds.damm.compute_gamma(x_positions), dtype=float)
+    x_shift = x_positions - np.asarray(lpvds.x_att, dtype=float).reshape(1, -1)
+
+    x_dot_pred = np.zeros_like(x_shift)
+    for k in range(lpvds.A.shape[0]):
+        x_dot_pred += gamma[k, :].reshape(-1, 1) * (x_shift @ np.asarray(lpvds.A[k], dtype=float).T)
+
+    return x_dot_pred
+
+
+def _prediction_rmse_from_pred(x_dot_ref, x_dot_pred):
+    x_dot_ref = np.asarray(x_dot_ref, dtype=float)
+    x_dot_pred = np.asarray(x_dot_pred, dtype=float)
+    squared_errors = np.sum((x_dot_ref - x_dot_pred) ** 2, axis=1)
+    return float(np.sqrt(np.mean(squared_errors)))
+
+
+def _cosine_dissimilarity_from_pred(x_dot_ref, x_dot_pred):
+    x_dot_ref = np.asarray(x_dot_ref, dtype=float)
+    x_dot_pred = np.asarray(x_dot_pred, dtype=float)
+
+    ref_norms = np.linalg.norm(x_dot_ref, axis=1)
+    pred_norms = np.linalg.norm(x_dot_pred, axis=1)
+    denom = ref_norms * pred_norms
+
+    dots = np.sum(x_dot_ref * x_dot_pred, axis=1)
+    cosine_sim = np.zeros_like(dots)
+    valid = denom > 0.0
+    cosine_sim[valid] = dots[valid] / denom[valid]
+    cosine_sim = np.clip(cosine_sim, -1.0, 1.0)
+
+    cosine_dissimilarity = np.ones_like(cosine_sim)
+    cosine_dissimilarity[valid] = 1.0 - cosine_sim[valid]
+    return float(np.mean(cosine_dissimilarity))
 
 
 def calculate_prediction_rmse(x_ref, x_dot_ref, lpvds):
@@ -52,11 +72,7 @@ def calculate_prediction_rmse(x_ref, x_dot_ref, lpvds):
     # Predict velocities using the model
     x_dot_pred = predict_velocities(x_ref, lpvds)
     
-    # Calculate squared errors
-    squared_errors = np.sum((x_dot_ref - x_dot_pred) ** 2, axis=1)
-    
-    # Return RMSE
-    return np.sqrt(np.mean(squared_errors))
+    return _prediction_rmse_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
 
 
 def calculate_cosine_similarity(x_ref, x_dot_ref, lpvds):
@@ -74,29 +90,7 @@ def calculate_cosine_similarity(x_ref, x_dot_ref, lpvds):
     # Predict velocities using the model
     x_dot_pred = predict_velocities(x_ref, lpvds)
     
-    cosine_dissimilarities = []
-    
-    for i in range(len(x_ref)):
-        pred_vec = x_dot_pred[i]
-        ref_vec = x_dot_ref[i]
-        
-        # Calculate norms
-        pred_norm = np.linalg.norm(pred_vec)
-        ref_norm = np.linalg.norm(ref_vec)
-        
-        # Avoid division by zero
-        if pred_norm == 0 or ref_norm == 0:
-            cosine_dissimilarity = 1.0  # Maximum dissimilarity
-        else:
-            # Calculate cosine similarity
-            cosine_sim = np.dot(pred_vec, ref_vec) / (pred_norm * ref_norm)
-            # Clamp to [-1, 1] to handle numerical errors
-            cosine_sim = np.clip(cosine_sim, -1.0, 1.0)
-            cosine_dissimilarity = 1.0 - cosine_sim
-        
-        cosine_dissimilarities.append(cosine_dissimilarity)
-    
-    return np.mean(cosine_dissimilarities)
+    return _cosine_dissimilarity_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
 
 
 def calculate_dtw_distance(traj_ref, traj_sim):
@@ -114,68 +108,52 @@ def calculate_dtw_distance(traj_ref, traj_sim):
     distance, _ = fastdtw(traj_ref, traj_sim, dist=euclidean)
     return distance
 
+def demo_set_spread(demo_set):
+    """ Calculates the average distance for each point to another point from another trajectory"""
 
-def calculate_all_metrics(x_ref, x_dot_ref, lpvds, x_test_list, initial, attractor, 
-                         ds_method, combination_id):
-    """
-    Calculate all metrics for a given configuration.
-    
-    Args:
-        x_ref: Reference positions from training data
-        x_dot_ref: Reference velocities from training data
-        lpvds: Trained LPVDS model
-        x_test_list: List of simulated trajectories
-        initial: Initial position
-        attractor: Goal/attractor position
-        ds_method: DS method used
-        combination_id: Combination identifier
-        
-    Returns:
-        dict: Single dictionary containing aggregated metrics for this combination
-    """
-    # Calculate prediction metrics on reference data (once per combination)
-    prediction_rmse = calculate_prediction_rmse(x_ref, x_dot_ref, lpvds)
-    cosine_similarity = calculate_cosine_similarity(x_ref, x_dot_ref, lpvds)
-    
-    # Calculate DTW distances for all simulated trajectories
-    dtw_distances = []
-    final_distances_to_attractor = []
-    trajectory_lengths = []
-    final_positions = []
-    
-    for x_test in x_test_list:
-        # Calculate DTW distance to reference trajectory
-        dtw_distance = calculate_dtw_distance(x_ref, x_test)
-        dtw_distances.append(dtw_distance)
-        
-        # Calculate final position metrics
-        final_pos = x_test[-1]
-        final_positions.append(final_pos)
-        final_distances_to_attractor.append(np.linalg.norm(final_pos - attractor))
-        trajectory_lengths.append(len(x_test))
-    
-    # Aggregate DTW and trajectory metrics
-    result = {
-        'combination_id': combination_id,
-        'ds_method': ds_method,
-        'initial_x': initial[0],
-        'initial_y': initial[1],
-        'attractor_x': attractor[0],
-        'attractor_y': attractor[1],
-        'prediction_rmse': prediction_rmse,
-        'cosine_dissimilarity': cosine_similarity,
-        'dtw_distance_mean': np.mean(dtw_distances),
-        'dtw_distance_std': np.std(dtw_distances),
-        'distance_to_attractor_mean': np.mean(final_distances_to_attractor),
-        'distance_to_attractor_std': np.std(final_distances_to_attractor),
-        'trajectory_length_mean': np.mean(trajectory_lengths),
-        'trajectory_length_std': np.std(trajectory_lengths),
-        'n_simulations': len(x_test_list)
-    }
-    
-    return result
+    trajectories = {(i, j): traj for i, demo in enumerate(demo_set) for j,traj in enumerate(demo.trajectories)}
 
-def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attractor):
+    # skip last point since it is the attractor (same for all trajectories) in a demo
+    all_pos = np.concatenate([traj.x[:-1] for traj in trajectories.values()], axis=0)
+    traj_idx = np.concatenate([i*np.ones(len(traj.x)-1) for i, traj in enumerate(trajectories.values())])
+
+    all_distances = np.linalg.norm(all_pos[:, None, :] - all_pos[None, :, :], axis=-1)
+    min_distances = np.zeros(all_pos.shape[0])
+    for i in range(len(trajectories)):
+
+        traj_i_indices = np.where(traj_idx == i)[0]
+        traj_i_distances = all_distances[traj_i_indices][:, traj_idx != i]
+        min_distances[traj_i_indices] = np.min(traj_i_distances, axis=1)
+
+    mean_mindist, std_mindist = np.mean(min_distances), np.std(min_distances)
+
+    return mean_mindist, std_mindist
+
+def calculate_demo_spread(x_ref, x_test, mean_mindist, std_mindist):
+    """
+    Evaluates how far the test trajectory points are from the reference trajectory.
+    Returns a score between 0 and 1, where 1 means it's within the typical demo spread.
+    Works for arbitrary dimensions (2D, 3D, etc.).
+    """
+    if len(x_test) == 0 or len(x_ref) == 0:
+        return 0.0
+
+    # Compute pairwise distances between all points in x_test and x_ref
+    # x_test: (N, D), x_ref: (M, D) -> distances: (N, M)
+    distances = cdist(x_test, x_ref)
+    
+    # For each test point, find the distance to the closest reference point
+    min_dists = np.min(distances, axis=1)
+
+    # Evaluate min_dist relative to the normal distribution of min dists among the demo points
+    scores = np.ones_like(min_dists)
+    mask = min_dists >= mean_mindist
+    scores[mask] = np.exp(-0.5 * ((min_dists[mask] - mean_mindist) / std_mindist) ** 2)
+
+    return float(np.mean(scores))
+
+
+def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attractor, mean_mindist=None, std_mindist=None):
     """Calculates performance metrics for a dynamical system.
 
     Args:
@@ -185,6 +163,8 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
         sim_trajectories: List of simulated trajectories.
         initial: Initial point coordinates.
         attractor: Attractor point coordinates.
+        mean_mindist: Mean of min distance for demo spread calculation.
+        std_mindist: Std of min distance for demo spread calculation.
 
     Returns:
         dict: Performance metrics including RMSE, DTW distances, and trajectory stats.
@@ -200,6 +180,8 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
             'cosine_dissimilarity': np.nan,
             'dtw_distance_mean': np.nan,
             'dtw_distance_std': np.nan,
+            'demo_spread_mean': np.nan,
+            'demo_spread_std': np.nan,
             'distance_to_attractor_mean': np.nan,
             'distance_to_attractor_std': np.nan,
             'trajectory_length_mean': np.nan,
@@ -207,15 +189,17 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
             'n_simulations': 0
         }
 
-    # Calculate prediction metrics on reference data (once per combination)
-    prediction_rmse = calculate_prediction_rmse(x_ref, x_dot_ref, ds)
-    cosine_similarity = calculate_cosine_similarity(x_ref, x_dot_ref, ds)
+    # Calculate prediction metrics on reference data (single forward pass).
+    x_dot_pred = predict_velocities(x_ref, ds)
+    prediction_rmse = _prediction_rmse_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
+    cosine_similarity = _cosine_dissimilarity_from_pred(x_dot_ref=x_dot_ref, x_dot_pred=x_dot_pred)
 
     # Calculate DTW distances for all simulated trajectories
     dtw_distances = []
     final_distances_to_attractor = []
     trajectory_lengths = []
     final_positions = []
+    demo_spreads = []
     for trajectory in sim_trajectories:
 
         if np.any(np.isnan(trajectory)):
@@ -229,11 +213,18 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
         dtw_distance = calculate_dtw_distance(x_ref, trajectory)
         dtw_distances.append(dtw_distance)
 
+        # calculate in data percentage
+        if mean_mindist is not None and std_mindist is not None:
+            demo_spread = calculate_demo_spread(x_ref, trajectory, mean_mindist, std_mindist)
+        else:
+            demo_spread = np.nan
+
         # Calculate final position metrics
         final_pos = trajectory[-1]
         final_positions.append(final_pos)
         final_distances_to_attractor.append(np.linalg.norm(final_pos - attractor))
         trajectory_lengths.append(len(trajectory))
+        demo_spreads.append(demo_spread)
 
     # Aggregate metrics
     result = {
@@ -245,6 +236,8 @@ def calculate_ds_metrics(x_ref, x_dot_ref, ds, sim_trajectories, initial, attrac
         'cosine_dissimilarity': cosine_similarity,
         'dtw_distance_mean': np.mean(dtw_distances),
         'dtw_distance_std': np.std(dtw_distances),
+        'demo_spread_mean': np.mean(demo_spreads),
+        'demo_spread_std': np.std(demo_spreads),
         'distance_to_attractor_mean': np.mean(final_distances_to_attractor),
         'distance_to_attractor_std': np.std(final_distances_to_attractor),
         'trajectory_length_mean': np.mean(trajectory_lengths),
