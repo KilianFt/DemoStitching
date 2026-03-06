@@ -4,6 +4,8 @@ import time
 
 import numpy as np
 
+from .metrics import demo_set_spread
+
 
 def _update_precompute_results(
     pre_computation_results: dict,
@@ -211,6 +213,8 @@ def run_single_combination(
             local_simulated_trajectories = simulate_trajectories_fn(local_stitched_ds, initial, config)
 
             print("Calculating DS metrics...")
+            mean_mindist, std_mindist = demo_set_spread(norm_demo_set)
+
             if config.ds_method.startswith("spt"):
                 sp_nodes = gg.shortest_path(initial, attractor)
                 sp_x_parts, sp_xd_parts = [], []
@@ -236,6 +240,8 @@ def run_single_combination(
                 sim_trajectories=local_simulated_trajectories,
                 initial=initial,
                 attractor=attractor,
+                mean_mindist=mean_mindist,
+                std_mindist=std_mindist
             )
             local_combination_status = "ok"
 

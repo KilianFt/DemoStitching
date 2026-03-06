@@ -270,7 +270,7 @@ class ChainedDS:
 
     def sim(self, x_init: np.ndarray, dt: float):
         x = self._state_vec(x_init)
-        init_idx = int(np.argmin(np.linalg.norm(self.node_sources - x.reshape(1, -1), axis=1)))
+        init_idx = 0
         self.reset_runtime(initial_idx=init_idx, start_time=0.0)
 
         trajectory = [x.copy()]

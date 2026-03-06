@@ -174,6 +174,7 @@ def _empty_metric_summary() -> dict[str, float]:
         "prediction_rmse_mean": math.nan,
         "cosine_dissimilarity_mean": math.nan,
         "dtw_distance_mean": math.nan,
+        "demo_spread_mean": math.nan,
         "distance_to_attractor_mean": math.nan,
         "gg_solution_compute_time_mean": math.nan,
         "ds_compute_time_mean": math.nan,
@@ -212,6 +213,7 @@ def _summarize_df_metrics(df: pd.DataFrame) -> dict[str, float]:
         "prediction_rmse_mean": _safe_mean(eval_df, "prediction_rmse"),
         "cosine_dissimilarity_mean": _safe_mean(eval_df, "cosine_dissimilarity"),
         "dtw_distance_mean": _safe_mean(eval_df, "dtw_distance_mean"),
+        "demo_spread_mean": _safe_mean(eval_df, "demo_spread_mean"),
         "distance_to_attractor_mean": _safe_mean(eval_df, "distance_to_attractor_mean"),
         # Chain runs report gg_solution_compute_time per combo. Keep this explicit
         # and also feed legacy gg_compute_time_mean from the best available source.
