@@ -114,8 +114,8 @@ Here the commands to reproduce the results:
 uv run sweep.py \
   --datasets dataset/stitching/X dataset/stitching/2d_large dataset/stitching/pcgmm_3d_workspace_simple \
   --ds-methods lpv-ds_recompute_all lpv-ds_recompute_ds sp_recompute_all sp_recompute_ds spt_recompute_all spt_recompute_ds chain chain_all \
-  --seeds 1 2 \
-  --output-dir results/methods_v5 \
+  --seeds 1 2 3 4 \
+  --output-dir results/methods \
   --timeout-s 30000 \
   --workers 8 \
   --save-fig \
