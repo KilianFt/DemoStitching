@@ -1,18 +1,27 @@
+from __future__ import annotations
+
 import argparse
+import concurrent.futures as cf
+import contextlib
+import hashlib
+import io
+import json
 import math
-import shutil
-import subprocess
-import sys
+import multiprocessing as mp
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from configs import StitchConfig
+from src.stitching.shared_precompute import build_or_load_shared_precompute
+from src.util.load_tools import get_demonstration_set, resolve_data_scales
 
-RunnerFn = Callable[[Sequence[str], float | None], subprocess.CompletedProcess[str]]
+
+RunMainFn = Callable[[StitchConfig, str], Optional[List[dict]]]
 
 
 @dataclass(frozen=True)
@@ -21,8 +30,43 @@ class SweepConfig:
     ds_methods: tuple[str, ...]
     seeds: tuple[int, ...]
     output_dir: str
+    n_test_simulations: int = 3
     timeout_s: float = 0.0
-    copy_figures: bool = True
+    combination_timeout_s: float = 600.0
+    workers: int = 1
+    save_fig: bool = False
+    shared_precompute: bool = True
+    chain_precompute_segments: bool = True
+    mode: str = "standard"
+    chain_ds_methods: tuple[str, ...] = ()
+    chain_trigger_methods: tuple[str, ...] = ()
+    chain_blend_ratios: tuple[float, ...] = ()
+    chain_fixed_ds_method: str = "segmented"
+    chain_fixed_trigger_method: str = "distance_ratio"
+    chain_triplet_fit_modes: tuple[str, ...] = ()
+    chain_triplet_run_method: str = "chain_all"
+    param_dist_values: tuple[float, ...] = ()
+    param_cos_values: tuple[float, ...] = ()
+    rel_scale_values: tuple[float, ...] = ()
+    damm_rel_scale_values: tuple[float, ...] = ()
+    damm_total_scale_values: tuple[float, ...] = ()
+    damm_kappa_0_values: tuple[float, ...] = ()
+    damm_psi_dir_0_values: tuple[float, ...] = ()
+    damm_nu_0_value: int = 6
+    data_position_scale_values: tuple[float, ...] = ()
+    bhattacharyya_threshold_values: tuple[float, ...] = ()
+
+
+_PCGMM_DATASET_SUFFIX = "dataset/stitching/pcgmm_3d_workspace_simple"
+
+
+def _is_pcgmm_dataset_path(dataset_path: str) -> bool:
+    norm = str(dataset_path).replace("\\", "/").rstrip("/")
+    if norm == _PCGMM_DATASET_SUFFIX:
+        return True
+    if norm.endswith("/" + _PCGMM_DATASET_SUFFIX):
+        return True
+    return norm.endswith("/pcgmm_3d_workspace_simple")
 
 
 def _dataset_slug(dataset_path: str) -> str:
@@ -34,37 +78,53 @@ def _dataset_slug(dataset_path: str) -> str:
     ]
     return "__".join(parts) if parts else "dataset"
 
-
-def _runner_code(dataset_path: str, ds_method: str, seed: int) -> str:
-    # Keep main_stitch unchanged: override the config constructor from a wrapper.
-    return "\n".join(
-        [
-            "import main_stitch",
-            "from configs import StitchConfig",
-            "",
-            "class _SweepConfig(StitchConfig):",
-            "    def __init__(self):",
-            "        super().__init__()",
-            f"        self.dataset_path = {dataset_path!r}",
-            f"        self.ds_method = {ds_method!r}",
-            f"        self.seed = {int(seed)}",
-            "        self.save_fig = True",
-            "",
-            "main_stitch.StitchConfig = _SweepConfig",
-            "main_stitch.main()",
-            "",
-        ]
-    )
+def _normalize_chain_ds_method(value: str) -> str:
+    method = str(value).strip().lower()
+    if method == "segment":
+        return "segmented"
+    if method in {"segmented", "linear"}:
+        return method
+    raise ValueError(f"Unsupported chain ds_method: {value}")
 
 
-def _default_runner(cmd: Sequence[str], timeout_s: float | None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout_s,
-    )
+def _normalize_trigger_method(value: str) -> str:
+    method = str(value).strip().lower()
+    if method in {"mean_normals", "distance_ratio"}:
+        return method
+    raise ValueError(f"Unsupported chain transition_trigger_method: {value}")
+
+
+def _normalize_chain_run_method(value: str) -> str:
+    method = str(value).strip().lower()
+    if method in {"chain", "chain_all"}:
+        return method
+    raise ValueError(f"Unsupported chain run ds_method: {value}")
+
+
+def _normalize_triplet_fit_mode(value: str) -> str:
+    mode = str(value).strip().lower()
+    aliases = {
+        "all_nodes": "all_nodes",
+        "all": "all_nodes",
+        "full": "all_nodes",
+        "first_two_nodes": "first_two_nodes",
+        "first_two": "first_two_nodes",
+        "first2": "first_two_nodes",
+        "subset_third_node": "subset_third_node",
+        "subset_third": "subset_third_node",
+        "third_node_subset": "subset_third_node",
+        "behind_last_edge_plane": "behind_last_edge_plane",
+        "behind_last_edge": "behind_last_edge_plane",
+        "last_edge_plane": "behind_last_edge_plane",
+        "behind_plane": "behind_last_edge_plane",
+    }
+    if mode not in aliases:
+        raise ValueError(f"Unsupported chain triplet_fit_data_mode: {value}")
+    return aliases[mode]
+
+
+def _float_tag(value: float) -> str:
+    return f"{float(value):.3f}".rstrip("0").rstrip(".").replace(".", "p")
 
 
 def _safe_mean(df: pd.DataFrame, col: str) -> float:
@@ -76,132 +136,762 @@ def _safe_mean(df: pd.DataFrame, col: str) -> float:
     return float(np.nanmean(arr))
 
 
-def _summarize_run_metrics(results_csv: Path) -> dict[str, float]:
-    if not results_csv.exists():
-        return {
-            "n_result_rows": 0,
-            "prediction_rmse_mean": math.nan,
-            "cosine_dissimilarity_mean": math.nan,
-            "dtw_distance_mean": math.nan,
-            "distance_to_attractor_mean": math.nan,
-            "ds_compute_time_mean": math.nan,
-            "gg_compute_time_mean": math.nan,
-            "total_compute_time_mean": math.nan,
-        }
+def _safe_mean_any(df: pd.DataFrame, cols: tuple[str, ...]) -> float:
+    for col in cols:
+        if col in df.columns:
+            return _safe_mean(df, col)
+    return math.nan
 
-    df = pd.read_csv(results_csv)
+
+def _extract_eval_rows(df: pd.DataFrame) -> pd.DataFrame:
+    out = df
+    if "combination_id" not in out.columns or "ds_method" not in out.columns:
+        return out.iloc[0:0]
+    out = out[out["combination_id"].notna()]
+    ds_method = out["ds_method"].astype(str).str.strip()
+    out = out[out["ds_method"].notna() & (ds_method != "")]
+    return out
+
+
+def _extract_precompute_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Rows that contain setup/precompute timings but no evaluation combo."""
+    if "combination_id" in df.columns:
+        return df[df["combination_id"].isna()]
+    # Fallback: if no combination_id exists, treat rows without ds_method as precompute.
+    if "ds_method" in df.columns:
+        ds = df["ds_method"].astype(str).str.strip()
+        return df[df["ds_method"].isna() | (ds == "")]
+    return df.iloc[0:0]
+
+
+def _empty_metric_summary() -> dict[str, float]:
     return {
-        "n_result_rows": int(len(df)),
-        "prediction_rmse_mean": _safe_mean(df, "prediction_rmse"),
-        "cosine_dissimilarity_mean": _safe_mean(df, "cosine_dissimilarity"),
-        "dtw_distance_mean": _safe_mean(df, "dtw_distance_mean"),
-        "distance_to_attractor_mean": _safe_mean(df, "distance_to_attractor_mean"),
-        "ds_compute_time_mean": _safe_mean(df, "ds_compute_time_mean"),
-        "gg_compute_time_mean": _safe_mean(df, "gg_compute_time_mean"),
-        "total_compute_time_mean": _safe_mean(df, "total_compute_time_mean"),
+        "n_result_rows": 0,
+        "n_eval_rows": 0,
+        "n_eval_ok_rows": 0,
+        "n_eval_failed_rows": 0,
+        "n_precompute_rows": 0,
+        "prediction_rmse_mean": math.nan,
+        "cosine_dissimilarity_mean": math.nan,
+        "dtw_distance_mean": math.nan,
+        "demo_spread_mean": math.nan,
+        "distance_to_attractor_mean": math.nan,
+        "gg_solution_compute_time_mean": math.nan,
+        "ds_compute_time_mean": math.nan,
+        "gg_compute_time_mean": math.nan,
+        "total_compute_time_mean": math.nan,
+        "pre_ds_compute_time_mean": math.nan,
+        "pre_gg_compute_time_mean": math.nan,
+        "precomputation_time_mean": math.nan,
     }
 
 
-def _copy_tree_if_exists(src: Path, dst: Path):
-    if not src.exists():
+def _summarize_df_metrics(df: pd.DataFrame) -> dict[str, float]:
+    eval_df = _extract_eval_rows(df)
+    pre_df = _extract_precompute_rows(df)
+    status_col = None
+    if "combination_status" in eval_df.columns:
+        status_col = "combination_status"
+    elif "status" in eval_df.columns:
+        status_col = "status"
+
+    if status_col is None:
+        n_eval_failed_rows = 0
+        n_eval_ok_rows = int(len(eval_df))
+    else:
+        status_series = eval_df[status_col].astype(str).str.strip().str.lower()
+        failed_mask = status_series == "failed"
+        n_eval_failed_rows = int(failed_mask.sum())
+        n_eval_ok_rows = int(len(eval_df) - n_eval_failed_rows)
+
+    return {
+        "n_result_rows": int(len(df)),
+        "n_eval_rows": int(len(eval_df)),
+        "n_eval_ok_rows": n_eval_ok_rows,
+        "n_eval_failed_rows": n_eval_failed_rows,
+        "n_precompute_rows": int(len(pre_df)),
+        "prediction_rmse_mean": _safe_mean(eval_df, "prediction_rmse"),
+        "cosine_dissimilarity_mean": _safe_mean(eval_df, "cosine_dissimilarity"),
+        "dtw_distance_mean": _safe_mean(eval_df, "dtw_distance_mean"),
+        "demo_spread_mean": _safe_mean(eval_df, "demo_spread_mean"),
+        "distance_to_attractor_mean": _safe_mean(eval_df, "distance_to_attractor_mean"),
+        # Chain runs report gg_solution_compute_time per combo. Keep this explicit
+        # and also feed legacy gg_compute_time_mean from the best available source.
+        "gg_solution_compute_time_mean": _safe_mean_any(
+            eval_df,
+            ("gg_solution_compute_time", "gg_solution_compute_time_mean"),
+        ),
+        "ds_compute_time_mean": _safe_mean_any(eval_df, ("ds_compute_time", "ds_compute_time_mean")),
+        "gg_compute_time_mean": _safe_mean_any(
+            eval_df,
+            (
+                "gg_solution_compute_time",
+                "gg_solution_compute_time_mean",
+                "gg_compute_time",
+                "gg_compute_time_mean",
+            ),
+        ),
+        "total_compute_time_mean": _safe_mean_any(eval_df, ("total_compute_time", "total_compute_time_mean")),
+        # Setup/precompute timing row from main_stitch (when present).
+        "pre_ds_compute_time_mean": _safe_mean(pre_df, "ds_compute_time"),
+        "pre_gg_compute_time_mean": _safe_mean(pre_df, "gg_compute_time"),
+        "precomputation_time_mean": _safe_mean(pre_df, "precomputation_time"),
+    }
+
+
+def _summarize_run_metrics(
+    all_results: list[dict] | None,
+    results_csv: Path,
+) -> dict[str, float]:
+    if all_results:
+        try:
+            return _summarize_df_metrics(pd.DataFrame(all_results))
+        except Exception:
+            pass
+
+    if results_csv.exists():
+        try:
+            return _summarize_df_metrics(pd.read_csv(results_csv))
+        except Exception:
+            pass
+
+    return _empty_metric_summary()
+
+
+def _iter_run_specs(cfg: SweepConfig):
+    """Yield one spec dict per run.  Only mode-relevant keys are included."""
+
+    def _base(dataset_path, ds_method, seed, **extra):
+        return {"dataset_path": dataset_path, "ds_method": ds_method, "seed": int(seed), **extra}
+
+    if cfg.mode == "standard":
+        for dp in cfg.datasets:
+            for dm in cfg.ds_methods:
+                for s in cfg.seeds:
+                    yield _base(dp, dm, s)
         return
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
 
+    if cfg.mode == "graph_params":
+        for dp in cfg.datasets:
+            for dm in cfg.ds_methods:
+                for pd_val in cfg.param_dist_values:
+                    for pc_val in cfg.param_cos_values:
+                        for s in cfg.seeds:
+                            yield _base(dp, dm, s, param_dist=float(pd_val), param_cos=float(pc_val))
+        return
 
-def run_sweep(cfg: SweepConfig, runner: RunnerFn = _default_runner) -> pd.DataFrame:
-    output_root = Path(cfg.output_dir)
-    logs_dir = output_root / "logs"
-    copied_results_dir = output_root / "results"
-    copied_figures_dir = output_root / "figures"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    copied_results_dir.mkdir(parents=True, exist_ok=True)
-    copied_figures_dir.mkdir(parents=True, exist_ok=True)
+    if cfg.mode == "rel_scale":
+        for dp in cfg.datasets:
+            for dm in cfg.ds_methods:
+                for rs in cfg.rel_scale_values:
+                    for s in cfg.seeds:
+                        yield _base(dp, dm, s, rel_scale=float(rs))
+        return
 
-    timeout_s = cfg.timeout_s if cfg.timeout_s > 0 else None
-    rows: list[dict] = []
-    total_runs = len(cfg.datasets) * len(cfg.ds_methods) * len(cfg.seeds)
-    run_index = 0
+    if cfg.mode == "chain_trigger":
+        for dp in cfg.datasets:
+            for cdm in cfg.chain_ds_methods:
+                for ctm in cfg.chain_trigger_methods:
+                    for s in cfg.seeds:
+                        yield _base(dp, "chain", s, chain_ds_method=cdm, chain_trigger_method=ctm)
+        return
 
-    for dataset_path in cfg.datasets:
-        for ds_method in cfg.ds_methods:
-            for seed in cfg.seeds:
-                run_index += 1
-                dataset = Path(dataset_path)
-                dataset_slug = _dataset_slug(dataset_path)
-                combo_tag = f"{dataset_slug}__{ds_method}__seed_{seed}"
-                print(f"[{run_index}/{total_runs}] Running {combo_tag}")
+    if cfg.mode == "chain_blend":
+        for dp in cfg.datasets:
+            for cbr in cfg.chain_blend_ratios:
+                for s in cfg.seeds:
+                    yield _base(dp, "chain", s,
+                                chain_ds_method=cfg.chain_fixed_ds_method,
+                                chain_trigger_method=cfg.chain_fixed_trigger_method,
+                                chain_blend_ratio=float(cbr))
+        return
 
-                code = _runner_code(dataset_path=dataset_path, ds_method=ds_method, seed=seed)
-                cmd = [sys.executable, "-c", code]
-                start_t = time.perf_counter()
-                timed_out = False
-                proc: subprocess.CompletedProcess[str] | None = None
-                err_msg = ""
-                try:
-                    proc = runner(cmd, timeout_s)
-                except subprocess.TimeoutExpired as exc:
-                    timed_out = True
-                    err_msg = str(exc)
-                except Exception as exc:  # pragma: no cover - defensive safety
-                    err_msg = repr(exc)
-                elapsed = time.perf_counter() - start_t
+    if cfg.mode == "chain_triplet_fit":
+        for dp in cfg.datasets:
+            for ctfm in cfg.chain_triplet_fit_modes:
+                for s in cfg.seeds:
+                    yield _base(
+                        dp,
+                        cfg.chain_triplet_run_method,
+                        s,
+                        chain_ds_method=cfg.chain_fixed_ds_method,
+                        chain_trigger_method=cfg.chain_fixed_trigger_method,
+                        chain_triplet_fit_mode=ctfm,
+                    )
+        return
 
-                log_path = logs_dir / f"{combo_tag}.log"
-                with open(log_path, "w", encoding="utf-8") as f:
-                    if proc is not None:
-                        f.write(proc.stdout or "")
-                        if proc.stderr:
-                            if proc.stdout:
-                                f.write("\n")
-                            f.write(proc.stderr)
-                    elif err_msg:
-                        f.write(err_msg)
-
-                run_ok = (not timed_out) and proc is not None and proc.returncode == 0
-
-                src_method_dir = dataset / "figures" / ds_method
-                src_results_csv = src_method_dir / f"results_{seed}.csv"
-                copied_results_csv = copied_results_dir / f"{combo_tag}__results.csv"
-                if src_results_csv.exists():
-                    shutil.copy2(src_results_csv, copied_results_csv)
-                else:
-                    copied_results_csv = Path("")
-
-                copied_figure_dir = copied_figures_dir / dataset_slug / ds_method / f"seed_{seed}"
-                if cfg.copy_figures and src_method_dir.exists():
-                    _copy_tree_if_exists(src_method_dir, copied_figure_dir)
-
-                metric_summary = _summarize_run_metrics(src_results_csv)
-                rows.append(
-                    {
-                        "dataset_path": dataset_path,
-                        "dataset_slug": dataset_slug,
-                        "ds_method": ds_method,
-                        "seed": int(seed),
-                        "status": "ok" if run_ok else "failed",
-                        "timed_out": bool(timed_out),
-                        "return_code": proc.returncode if proc is not None else -1,
-                        "duration_s": float(elapsed),
-                        "log_path": str(log_path),
-                        "results_csv_source": str(src_results_csv) if src_results_csv.exists() else "",
-                        "results_csv_copy": str(copied_results_csv) if copied_results_csv != Path("") else "",
-                        "figures_dir_copy": str(copied_figure_dir) if cfg.copy_figures and src_method_dir.exists() else "",
-                        **metric_summary,
-                    }
+    if cfg.mode == "pcgmm_damm_grid":
+        for dp in cfg.datasets:
+            if not _is_pcgmm_dataset_path(str(dp)):
+                raise ValueError(
+                    "pcgmm_damm_grid mode is restricted to dataset/stitching/pcgmm_3d_workspace_simple; "
+                    f"got: {dp}"
                 )
+            for dm in cfg.ds_methods:
+                for rel in cfg.damm_rel_scale_values:
+                    for total in cfg.damm_total_scale_values:
+                        for kappa in cfg.damm_kappa_0_values:
+                            for psi in cfg.damm_psi_dir_0_values:
+                                for dps in cfg.data_position_scale_values:
+                                    for pd_val in cfg.param_dist_values:
+                                        for pc_val in cfg.param_cos_values:
+                                            for bt in cfg.bhattacharyya_threshold_values:
+                                                for s in cfg.seeds:
+                                                    yield _base(
+                                                        dp,
+                                                        dm,
+                                                        s,
+                                                        rel_scale=float(rel),
+                                                        total_scale=float(total),
+                                                        kappa_0=float(kappa),
+                                                        psi_dir_0=float(psi),
+                                                        nu_0=int(cfg.damm_nu_0_value),
+                                                        data_position_scale=float(dps),
+                                                        param_dist=float(pd_val),
+                                                        param_cos=float(pc_val),
+                                                        bhattacharyya_threshold=float(bt),
+                                                    )
+        return
+
+    raise ValueError(f"Unsupported sweep mode: {cfg.mode}")
+
+
+# Optional per-run parameter keys (may or may not be present in a spec dict).
+_OPTIONAL_SPEC_KEYS = (
+    "chain_ds_method", "chain_trigger_method", "chain_blend_ratio", "chain_triplet_fit_mode",
+    "param_dist", "param_cos", "rel_scale", "total_scale", "kappa_0", "psi_dir_0", "nu_0",
+    "data_position_scale", "bhattacharyya_threshold",
+)
+
+
+def _combo_tag(spec: dict[str, object]) -> str:
+    tag = f"{_dataset_slug(str(spec['dataset_path']))}__{spec['ds_method']}__seed_{spec['seed']}"
+    for key in _OPTIONAL_SPEC_KEYS:
+        val = spec.get(key)
+        if val is not None:
+            tag += f"__{key}_{_float_tag(float(val)) if isinstance(val, float) else val}"
+    return tag
+
+
+def _shared_precompute_signature(stitch_cfg: StitchConfig) -> dict[str, object]:
+    dataset_path = str(stitch_cfg.dataset_path).replace("\\", "/").rstrip("/")
+    data_position_scale, data_velocity_scale = resolve_data_scales(stitch_cfg)
+    return {
+        "dataset_path": dataset_path,
+        "seed": int(stitch_cfg.seed),
+        "data_position_scale": float(data_position_scale),
+        "data_velocity_scale": float(data_velocity_scale),
+        "damm_rel_scale": float(stitch_cfg.damm.rel_scale),
+        "damm_total_scale": float(stitch_cfg.damm.total_scale),
+        "damm_nu_0": int(stitch_cfg.damm.nu_0),
+        "damm_kappa_0": float(stitch_cfg.damm.kappa_0),
+        "damm_psi_dir_0": float(stitch_cfg.damm.psi_dir_0),
+        "param_dist": float(stitch_cfg.param_dist),
+        "param_cos": float(stitch_cfg.param_cos),
+        "bhattacharyya_threshold": float(stitch_cfg.bhattacharyya_threshold),
+        "reverse_gaussians": bool(stitch_cfg.reverse_gaussians),
+        "gaussian_direction_method": str(stitch_cfg.gaussian_direction_method),
+    }
+
+
+def _signature_hash(payload: dict[str, object]) -> str:
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _prepare_shared_precompute_artifacts(
+    cfg: SweepConfig,
+    specs: list[dict[str, object]],
+    output_root: Path,
+) -> None:
+    if not specs:
+        return
+    shared_dir = output_root / "shared_precompute"
+    shared_dir.mkdir(parents=True, exist_ok=True)
+
+    signature_to_specs: dict[str, list[dict[str, object]]] = {}
+    signature_payloads: dict[str, dict[str, object]] = {}
+
+    for spec in specs:
+        stitch_cfg = _build_stitch_config(cfg, spec)
+        payload = _shared_precompute_signature(stitch_cfg)
+        sig_hash = _signature_hash(payload)
+        signature_payloads[sig_hash] = payload
+        signature_to_specs.setdefault(sig_hash, []).append(spec)
+
+    total = len(signature_to_specs)
+    for idx, (sig_hash, sig_specs) in enumerate(signature_to_specs.items(), start=1):
+        signature_payload = signature_payloads[sig_hash]
+        dataset_slug = _dataset_slug(str(signature_payload["dataset_path"]))
+        artifact_path = shared_dir / f"{dataset_slug}__{sig_hash[:16]}.pkl"
+
+        precompute_cfg = _build_stitch_config(cfg, sig_specs[0])
+        precompute_cfg.shared_precompute_artifact_path = str(artifact_path)
+
+        data_position_scale, data_velocity_scale = resolve_data_scales(precompute_cfg)
+        demo_set = get_demonstration_set(
+            precompute_cfg.dataset_path,
+            position_scale=data_position_scale,
+            velocity_scale=data_velocity_scale,
+        )
+        try:
+            build_or_load_shared_precompute(precompute_cfg, demo_set)
+        except Exception as exc:
+            raise RuntimeError(
+                "Shared precompute failed for signature "
+                f"{sig_hash[:16]} (dataset={precompute_cfg.dataset_path}, seed={precompute_cfg.seed}): "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        for spec in sig_specs:
+            spec["shared_precompute_artifact_path"] = str(artifact_path)
+        print(f"[shared precompute {idx}/{total}] {artifact_path.name}")
+
+
+def _build_stitch_config(cfg: SweepConfig, spec: dict[str, object]) -> StitchConfig:
+    stitch_cfg = StitchConfig()
+    stitch_cfg.dataset_path = str(spec["dataset_path"])
+    stitch_cfg.ds_method = str(spec["ds_method"])
+    stitch_cfg.seed = int(spec["seed"])
+    stitch_cfg.n_test_simulations = int(cfg.n_test_simulations)
+    stitch_cfg.combination_timeout_s = float(cfg.combination_timeout_s)
+    stitch_cfg.save_fig = bool(cfg.save_fig)
+    if stitch_cfg.save_fig:
+        combo_tag = _combo_tag(spec)
+        stitch_cfg.save_folder_override = str(Path(cfg.output_dir) / "figures" / combo_tag) + "/"
+        if cfg.mode == "pcgmm_damm_grid":
+            # In this sweep mode, users typically want full visual diagnostics.
+            # Disable dataset-specific sparse figure defaults so all combos save.
+            stitch_cfg.save_fig_indices = None
+            stitch_cfg.save_fig_indices_by_dataset = {}
+
+    _setters: dict[str, Callable] = {
+        "chain_ds_method": lambda v: setattr(stitch_cfg.chain, "ds_method", str(v)),
+        "chain_trigger_method": lambda v: setattr(stitch_cfg.chain, "transition_trigger_method", str(v)),
+        "chain_blend_ratio": lambda v: setattr(stitch_cfg.chain, "blend_length_ratio", float(v)),
+        "chain_triplet_fit_mode": lambda v: setattr(stitch_cfg.chain, "triplet_fit_data_mode", str(v)),
+        "param_dist": lambda v: setattr(stitch_cfg, "param_dist", float(v)),
+        "param_cos": lambda v: setattr(stitch_cfg, "param_cos", float(v)),
+        "bhattacharyya_threshold": lambda v: setattr(stitch_cfg, "bhattacharyya_threshold", float(v)),
+        "data_position_scale": lambda v: setattr(stitch_cfg, "data_position_scale", float(v)),
+        "rel_scale": lambda v: setattr(stitch_cfg.damm, "rel_scale", float(v)),
+        "total_scale": lambda v: setattr(stitch_cfg.damm, "total_scale", float(v)),
+        "kappa_0": lambda v: setattr(stitch_cfg.damm, "kappa_0", float(v)),
+        "psi_dir_0": lambda v: setattr(stitch_cfg.damm, "psi_dir_0", float(v)),
+        "nu_0": lambda v: setattr(stitch_cfg.damm, "nu_0", int(v)),
+    }
+    for key, setter in _setters.items():
+        val = spec.get(key)
+        if val is not None:
+            setter(val)
+
+    precompute_segments = bool(cfg.chain_precompute_segments)
+    if cfg.mode in {"chain_trigger", "chain_blend"}:
+        precompute_segments = False
+    setattr(stitch_cfg, "chain_precompute_segments", precompute_segments)
+    shared_artifact_path = spec.get("shared_precompute_artifact_path")
+    if shared_artifact_path is not None:
+        stitch_cfg.shared_precompute_artifact_path = str(shared_artifact_path)
+    return stitch_cfg
+
+
+def _default_run_main(stitch_cfg: StitchConfig, results_path: str) -> list[dict] | None:
+    from main_stitch import main as main_stitch_main
+
+    return main_stitch_main(config=stitch_cfg, results_path=results_path)
+
+
+def _run_main_worker(
+    run_main_fn: RunMainFn,
+    stitch_cfg: StitchConfig,
+    results_path: str,
+    status_queue,
+):
+    # Child process: suppress verbose output from the stitch pipeline.
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+            run_main_fn(stitch_cfg, results_path)
+        status_queue.put({"ok": True})
+    except Exception as exc:
+        status_queue.put(
+            {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+
+
+def _run_main_with_timeout(
+    run_main_fn: RunMainFn,
+    stitch_cfg: StitchConfig,
+    results_path: str,
+    timeout_s: float,
+) -> tuple[str, bool]:
+    ctx = mp.get_context("spawn")
+    status_queue = ctx.Queue(maxsize=1)
+    proc = ctx.Process(
+        target=_run_main_worker,
+        args=(run_main_fn, stitch_cfg, results_path, status_queue),
+        daemon=True,
+    )
+    proc.start()
+    # Poll in short intervals so KeyboardInterrupt is not blocked.
+    deadline = time.perf_counter() + float(timeout_s)
+    while proc.is_alive() and time.perf_counter() < deadline:
+        proc.join(timeout=0.5)
+
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=2.0)
+        if proc.is_alive():
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            proc.join(timeout=2.0)
+        try:
+            status_queue.close()
+            status_queue.join_thread()
+        except Exception:
+            pass
+        return f"timeout after {float(timeout_s):.3f}s", True
+
+    payload = None
+    try:
+        if not status_queue.empty():
+            payload = status_queue.get_nowait()
+    except Exception:
+        payload = None
+    finally:
+        try:
+            status_queue.close()
+            status_queue.join_thread()
+        except Exception:
+            pass
+
+    if payload is None:
+        if int(proc.exitcode or 0) == 0:
+            return "", False
+        return f"child process exited with code {proc.exitcode}", False
+
+    if bool(payload.get("ok", False)):
+        return "", False
+    return str(payload.get("error", "runner_error")), False
+
+
+# ── Column names in the summary CSV that map to optional spec keys ──────────
+_SPEC_KEY_TO_COL = {
+    "chain_ds_method": ("chain_ds_method", str, ""),
+    "chain_trigger_method": ("chain_transition_trigger_method", str, ""),
+    "chain_blend_ratio": ("chain_blend_length_ratio", float, np.nan),
+    "chain_triplet_fit_mode": ("chain_triplet_fit_data_mode", str, ""),
+    "param_dist": ("param_dist", float, np.nan),
+    "param_cos": ("param_cos", float, np.nan),
+    "bhattacharyya_threshold": ("bhattacharyya_threshold", float, np.nan),
+    "data_position_scale": ("data_position_scale", float, np.nan),
+    "rel_scale": ("rel_scale", float, np.nan),
+    "total_scale": ("total_scale", float, np.nan),
+    "kappa_0": ("kappa_0", float, np.nan),
+    "psi_dir_0": ("psi_dir_0", float, np.nan),
+    "nu_0": ("nu_0", int, -1),
+}
+
+
+def _build_result_row(
+    cfg: SweepConfig,
+    spec: dict[str, object],
+    run_index: int,
+    *,
+    status: str,
+    failure_reason: str = "",
+    error_message: str = "",
+    timed_out: bool = False,
+    duration_s: float = math.nan,
+    results_csv_source: str = "",
+    metrics: dict[str, float] | None = None,
+) -> dict:
+    """Build one row of the sweep summary CSV."""
+    dataset_path = str(spec["dataset_path"])
+    row: dict = {
+        "run_index": int(run_index),
+        "dataset_path": dataset_path,
+        "dataset_slug": _dataset_slug(dataset_path),
+        "sweep_mode": cfg.mode,
+        "ds_method": str(spec["ds_method"]),
+    }
+    for spec_key, (col_name, col_type, default) in _SPEC_KEY_TO_COL.items():
+        val = spec.get(spec_key)
+        row[col_name] = col_type(val) if val is not None else default
+    row.update({
+        "seed": int(spec["seed"]),
+        "n_test_simulations": int(cfg.n_test_simulations),
+        "status": status,
+        "failure_reason": failure_reason,
+        "error_message": error_message,
+        "timed_out": timed_out,
+        "duration_s": duration_s,
+        "results_csv_source": results_csv_source,
+        **(metrics or _empty_metric_summary()),
+    })
+    return row
+
+
+def _enrich_raw_csv(csv_path: Path, spec: dict[str, object], cfg: SweepConfig) -> None:
+    """Inject sweep metadata columns into a per-run result CSV so it is self-describing."""
+    if not csv_path.exists():
+        return
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return
+    df.insert(0, "dataset_path", str(spec["dataset_path"]))
+    df.insert(1, "dataset_slug", _dataset_slug(str(spec["dataset_path"])))
+    df.insert(2, "sweep_mode", cfg.mode)
+    df.insert(3, "seed", int(spec["seed"]))
+    # Add optional parameters that were varied in this sweep.
+    for key in _OPTIONAL_SPEC_KEYS:
+        val = spec.get(key)
+        if val is not None and key not in df.columns:
+            df[key] = val
+    df.to_csv(csv_path, index=False)
+
+
+def _run_single_spec(
+    cfg: SweepConfig,
+    spec: dict[str, object],
+    run_main_fn: RunMainFn,
+    raw_results_dir: Path,
+    run_index: int,
+    total_runs: int,
+    announce_start: bool = True,
+) -> dict:
+    combo_tag = _combo_tag(spec)
+    if announce_start:
+        print(f"[{run_index}/{total_runs}] Running {combo_tag}")
+
+    run_results_csv = raw_results_dir / f"{combo_tag}.csv"
+    if run_results_csv.exists():
+        run_results_csv.unlink()
+
+    stitch_cfg = _build_stitch_config(cfg, spec)
+    start_t = time.perf_counter()
+    run_error = ""
+    all_results: list[dict] | None = None
+    timed_out = False
+    use_hard_timeout = float(cfg.timeout_s) > 0.0 and run_main_fn is _default_run_main
+
+    if use_hard_timeout:
+        run_error, timed_out = _run_main_with_timeout(
+            run_main_fn=run_main_fn,
+            stitch_cfg=stitch_cfg,
+            results_path=str(run_results_csv),
+            timeout_s=float(cfg.timeout_s),
+        )
+    else:
+        run_stdout = io.StringIO()
+        run_stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(run_stdout), contextlib.redirect_stderr(run_stderr):
+                all_results = run_main_fn(stitch_cfg, str(run_results_csv))
+        except Exception as exc:
+            run_error = f"{type(exc).__name__}: {exc}"
+    elapsed = time.perf_counter() - start_t
+
+    metric_summary = _summarize_run_metrics(all_results, run_results_csv)
+    run_ok = (run_error == "") and (not timed_out)
+    failure_reason = ""
+    if timed_out:
+        failure_reason = "timeout"
+    elif not run_ok:
+        failure_reason = "runner_error"
+    elif int(metric_summary.get("n_eval_rows", 0)) == 0:
+        run_ok = False
+        failure_reason = "no_evaluation_rows"
+    elif int(metric_summary.get("n_eval_failed_rows", 0)) > 0:
+        run_ok = False
+        failure_reason = "combination_failures"
+    elif (
+        math.isnan(metric_summary["prediction_rmse_mean"])
+        and math.isnan(metric_summary["cosine_dissimilarity_mean"])
+        and math.isnan(metric_summary["dtw_distance_mean"])
+    ):
+        run_ok = False
+        failure_reason = "no_metric_values"
+
+    # Enrich the raw CSV with sweep metadata so it is self-describing.
+    _enrich_raw_csv(run_results_csv, spec, cfg)
+
+    # Avoid figure accumulation if a run accidentally opens figures.
+    try:
+        import matplotlib.pyplot as plt
+
+        plt.close("all")
+    except Exception:
+        pass
+
+    return _build_result_row(
+        cfg, spec, run_index,
+        status="ok" if run_ok else "failed",
+        failure_reason="" if run_ok else failure_reason,
+        error_message=run_error,
+        timed_out=bool(timed_out),
+        duration_s=float(elapsed),
+        results_csv_source=str(run_results_csv) if run_results_csv.exists() else "",
+        metrics=metric_summary,
+    )
+
+
+def _internal_failure_row(cfg: SweepConfig, spec: dict[str, object], run_index: int, error_message: str) -> dict:
+    return _build_result_row(
+        cfg, spec, run_index,
+        status="failed",
+        failure_reason="runner_error",
+        error_message=str(error_message),
+    )
+
+
+def run_sweep(cfg: SweepConfig, run_main_fn: RunMainFn = _default_run_main) -> pd.DataFrame:
+    output_root = Path(cfg.output_dir)
+    raw_results_dir = output_root / "raw_results"
+    output_root.mkdir(parents=True, exist_ok=True)
+    raw_results_dir.mkdir(parents=True, exist_ok=True)
+
+    specs = list(_iter_run_specs(cfg))
+    if bool(cfg.shared_precompute) and run_main_fn is _default_run_main:
+        _prepare_shared_precompute_artifacts(cfg, specs, output_root)
+    total_runs = len(specs)
+    rows_by_index: dict[int, dict] = {}
+
+    max_workers = max(1, int(getattr(cfg, "workers", 1)))
+    interrupted = False
+    if max_workers <= 1 or total_runs <= 1:
+        for run_index, spec in enumerate(specs, start=1):
+            try:
+                row = _run_single_spec(
+                    cfg=cfg,
+                    spec=spec,
+                    run_main_fn=run_main_fn,
+                    raw_results_dir=raw_results_dir,
+                    run_index=run_index,
+                    total_runs=total_runs,
+                    announce_start=True,
+                )
+                rows_by_index[run_index] = row
+            except KeyboardInterrupt:
+                print(f"\nInterrupted at run {run_index}/{total_runs}. Saving partial results...")
+                interrupted = True
+                break
+    else:
+        print(f"Using {max_workers} sweep workers")
+        future_to_meta = {}
+        with cf.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for run_index, spec in enumerate(specs, start=1):
+                combo_tag = _combo_tag(spec)
+                print(f"[queued {run_index}/{total_runs}] {combo_tag}")
+                future = executor.submit(
+                    _run_single_spec,
+                    cfg,
+                    spec,
+                    run_main_fn,
+                    raw_results_dir,
+                    run_index,
+                    total_runs,
+                    False,
+                )
+                future_to_meta[future] = (run_index, spec, combo_tag)
+
+            completed = 0
+            try:
+                for future in cf.as_completed(future_to_meta):
+                    run_index, spec, combo_tag = future_to_meta[future]
+                    completed += 1
+                    try:
+                        row = future.result()
+                    except Exception as exc:
+                        row = _internal_failure_row(cfg, spec, run_index, f"{type(exc).__name__}: {exc}")
+                    rows_by_index[run_index] = row
+                    print(f"[done {completed}/{total_runs}] {combo_tag} -> {row['status']}")
+            except KeyboardInterrupt:
+                print(f"\nInterrupted after {completed}/{total_runs} runs. Cancelling pending...")
+                interrupted = True
+                for f in future_to_meta:
+                    f.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+
+    rows = [rows_by_index[i] for i in sorted(rows_by_index.keys())]
+    for row in rows:
+        row.pop("run_index", None)
 
     df = pd.DataFrame(rows)
     out_csv = output_root / "sweep_results.csv"
     df.to_csv(out_csv, index=False)
     print(f"\nSweep finished. Saved summary CSV: {out_csv.resolve()}")
+    print(f"Per-run CSVs (with metadata): {raw_results_dir.resolve()}/")
     return df
+
+
+def load_raw_results(output_dir: str) -> pd.DataFrame:
+    """Load and concatenate all per-run CSVs from <output_dir>/raw_results/.
+
+    Each CSV already contains sweep metadata columns (dataset_slug, seed, etc.)
+    injected by the sweep runner, so the returned DataFrame is ready for
+    groupby / plotting.
+
+    Usage (e.g. in a notebook)::
+
+        from sweep import load_raw_results
+        df = load_raw_results("results/sweep_chain_trigger")
+    """
+    raw_dir = Path(output_dir) / "raw_results"
+    csvs = sorted(raw_dir.glob("*.csv"))
+    if not csvs:
+        raise FileNotFoundError(f"No CSV files found in {raw_dir}")
+
+    frames = []
+    skipped = []
+    for csv_path in csvs:
+        try:
+            if csv_path.stat().st_size == 0:
+                skipped.append((csv_path, "empty_file"))
+                continue
+            frames.append(pd.read_csv(csv_path))
+        except pd.errors.EmptyDataError:
+            skipped.append((csv_path, "empty_data"))
+
+    if not frames:
+        if skipped:
+            skipped_names = ", ".join([p.name for p, _ in skipped[:5]])
+            if len(skipped) > 5:
+                skipped_names += ", ..."
+            raise FileNotFoundError(
+                f"No non-empty CSV files found in {raw_dir}. "
+                f"Skipped {len(skipped)} file(s): {skipped_names}"
+            )
+        raise FileNotFoundError(f"No readable CSV files found in {raw_dir}")
+
+    return pd.concat(frames, ignore_index=True)
 
 
 def _parse_args() -> SweepConfig:
     parser = argparse.ArgumentParser(
-        description="Run a grid sweep over datasets, ds methods, and seeds by invoking main_stitch."
+        description="Run parameter sweeps by invoking main_stitch.main(config=...)."
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="standard",
+        choices=[
+            "standard",
+            "graph_params",
+            "rel_scale",
+            "chain_trigger",
+            "chain_blend",
+            "chain_triplet_fit",
+            "pcgmm_damm_grid",
+        ],
+        help="Sweep mode.",
     )
     parser.add_argument(
         "--datasets",
@@ -212,8 +902,8 @@ def _parse_args() -> SweepConfig:
     parser.add_argument(
         "--ds-methods",
         nargs="+",
-        required=True,
-        help="DS methods passed to StitchConfig.ds_method.",
+        default=None,
+        help="DS methods for standard, graph_params, and rel_scale modes.",
     )
     parser.add_argument(
         "--seeds",
@@ -223,29 +913,253 @@ def _parse_args() -> SweepConfig:
         help="Seeds passed to StitchConfig.seed.",
     )
     parser.add_argument(
+        "--n-test-simulations",
+        type=int,
+        default=3,
+        help="Number of rollouts per initial/goal combination. Default: 3.",
+    )
+    parser.add_argument(
         "--output-dir",
         default="dataset/stitching/sweep_main_stitch",
-        help="Directory for summary CSV, copied figures, copied result CSVs, and logs.",
+        help="Directory for summary CSV and per-run raw results.",
     )
     parser.add_argument(
         "--timeout-s",
         type=float,
-        default=0.0,
-        help="Per-run timeout in seconds. 0 disables timeout.",
+        default=900.0,
+        help="Per-run hard timeout in seconds; timed-out runs are marked failed and sweep continues.",
     )
     parser.add_argument(
-        "--no-copy-figures",
+        "--combination-timeout-s",
+        type=float,
+        default=600.0,
+        help="Per-combination timeout inside main_stitch (<=0 disables).",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of sweep workers. Each worker runs one combo at a time.",
+    )
+    parser.add_argument(
+        "--save-fig",
         action="store_true",
-        help="Disable copying generated figures into output-dir.",
+        help="Enable figure saving inside each main_stitch run (disabled by default for speed).",
+    )
+    parser.add_argument(
+        "--disable-shared-precompute",
+        action="store_true",
+        help="Disable sweep-level shared LPV-DS/GaussianGraph precompute reuse.",
+    )
+    # parser.add_argument(
+    #     "--chain-precompute-segments",
+    #     action="store_true",
+    #     help="Enable chain segment precomputation (disabled by default for speed).",
+    # )
+    parser.add_argument(
+        "--chain-ds-methods",
+        nargs="+",
+        default=None,
+        help='Chain DS methods for chain_trigger mode (e.g. "segment linear").',
+    )
+    parser.add_argument(
+        "--chain-trigger-methods",
+        nargs="+",
+        default=None,
+        help='Chain trigger methods for chain_trigger mode (e.g. "mean_normals distance_ratio").',
+    )
+    parser.add_argument(
+        "--chain-blend-ratios",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Blend ratios for chain_blend mode.",
+    )
+    parser.add_argument(
+        "--chain-fixed-ds-method",
+        type=str,
+        default="segmented",
+        help="Fixed chain ds_method for chain_blend mode.",
+    )
+    parser.add_argument(
+        "--chain-fixed-trigger-method",
+        type=str,
+        default="distance_ratio",
+        help="Fixed chain transition_trigger_method for chain_blend mode.",
+    )
+    parser.add_argument(
+        "--chain-triplet-fit-modes",
+        nargs="+",
+        default=None,
+        help='Triplet fit-data modes for chain_triplet_fit mode (e.g. "all_nodes first_two_nodes subset_third_node behind_last_edge_plane").',
+    )
+    parser.add_argument(
+        "--chain-triplet-run-method",
+        type=str,
+        default="chain_all",
+        help='Top-level ds_method for chain_triplet_fit mode ("chain" or "chain_all").',
+    )
+    parser.add_argument(
+        "--param-dist-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for StitchConfig.param_dist in graph_params mode.",
+    )
+    parser.add_argument(
+        "--param-cos-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for StitchConfig.param_cos in graph_params mode.",
+    )
+    parser.add_argument(
+        "--rel-scale-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for StitchConfig.damm.rel_scale in rel_scale mode.",
+    )
+    parser.add_argument(
+        "--damm-rel-scale-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for DammConfig.rel_scale in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--damm-total-scale-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for DammConfig.total_scale in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--damm-kappa-0-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for DammConfig.kappa_0 in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--damm-psi-dir-0-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for DammConfig.psi_dir_0 in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--damm-nu-0",
+        type=int,
+        default=6,
+        help="Fixed DammConfig.nu_0 in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--data-position-scale-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for StitchConfig.data_position_scale in pcgmm_damm_grid mode.",
+    )
+    parser.add_argument(
+        "--bhattacharyya-threshold-values",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Values for StitchConfig.bhattacharyya_threshold in pcgmm_damm_grid mode.",
     )
     args = parser.parse_args()
+
+    ds_methods = tuple(args.ds_methods or ())
+    chain_ds_methods = tuple(_normalize_chain_ds_method(v) for v in (args.chain_ds_methods or ()))
+    chain_trigger_methods = tuple(_normalize_trigger_method(v) for v in (args.chain_trigger_methods or ()))
+    chain_blend_ratios = tuple(float(v) for v in (args.chain_blend_ratios or ()))
+    chain_triplet_fit_modes = tuple(_normalize_triplet_fit_mode(v) for v in (args.chain_triplet_fit_modes or ()))
+    chain_triplet_run_method = _normalize_chain_run_method(args.chain_triplet_run_method)
+    param_dist_values = tuple(float(v) for v in (args.param_dist_values or ()))
+    param_cos_values = tuple(float(v) for v in (args.param_cos_values or ()))
+    rel_scale_values = tuple(float(v) for v in (args.rel_scale_values or ()))
+    damm_rel_scale_values = tuple(float(v) for v in (args.damm_rel_scale_values or ()))
+    damm_total_scale_values = tuple(float(v) for v in (args.damm_total_scale_values or ()))
+    damm_kappa_0_values = tuple(float(v) for v in (args.damm_kappa_0_values or ()))
+    damm_psi_dir_0_values = tuple(float(v) for v in (args.damm_psi_dir_0_values or ()))
+    data_position_scale_values = tuple(float(v) for v in (args.data_position_scale_values or ()))
+    bhattacharyya_threshold_values = tuple(float(v) for v in (args.bhattacharyya_threshold_values or ()))
+
+    if args.mode in {"standard", "graph_params", "rel_scale", "pcgmm_damm_grid"} and len(ds_methods) == 0:
+        raise ValueError(
+            "--ds-methods is required when --mode standard, --mode graph_params, --mode rel_scale, "
+            "or --mode pcgmm_damm_grid"
+        )
+    if args.mode == "graph_params":
+        if len(param_dist_values) == 0:
+            raise ValueError("--param-dist-values is required when --mode graph_params")
+        if len(param_cos_values) == 0:
+            raise ValueError("--param-cos-values is required when --mode graph_params")
+    if args.mode == "rel_scale" and len(rel_scale_values) == 0:
+        raise ValueError("--rel-scale-values is required when --mode rel_scale")
+    if args.mode == "chain_trigger":
+        if len(chain_ds_methods) == 0:
+            raise ValueError("--chain-ds-methods is required when --mode chain_trigger")
+        if len(chain_trigger_methods) == 0:
+            raise ValueError("--chain-trigger-methods is required when --mode chain_trigger")
+    if args.mode == "chain_blend" and len(chain_blend_ratios) == 0:
+        raise ValueError("--chain-blend-ratios is required when --mode chain_blend")
+    if args.mode == "chain_triplet_fit" and len(chain_triplet_fit_modes) == 0:
+        raise ValueError("--chain-triplet-fit-modes is required when --mode chain_triplet_fit")
+    if args.mode == "pcgmm_damm_grid":
+        if not all(_is_pcgmm_dataset_path(dp) for dp in args.datasets):
+            raise ValueError(
+                "--mode pcgmm_damm_grid only supports dataset/stitching/pcgmm_3d_workspace_simple"
+            )
+
+        if len(damm_rel_scale_values) == 0:
+            damm_rel_scale_values = (0.1, 0.5, 1.0)
+        if len(damm_total_scale_values) == 0:
+            damm_total_scale_values = (0.5, 1.0, 1.5)
+        if len(damm_kappa_0_values) == 0:
+            damm_kappa_0_values = (0.1, 0.5, 1.0)
+        if len(damm_psi_dir_0_values) == 0:
+            damm_psi_dir_0_values = (0.1, 0.5, 1.0)
+        if len(data_position_scale_values) == 0:
+            data_position_scale_values = (1.0, 5.0, 10.0)
+        if len(param_dist_values) == 0:
+            param_dist_values = (1.0, 2.0, 3.0)
+        if len(param_cos_values) == 0:
+            param_cos_values = (1.0, 2.0, 3.0)
+        if len(bhattacharyya_threshold_values) == 0:
+            bhattacharyya_threshold_values = (0.01, 0.05, 0.1)
+
     return SweepConfig(
         datasets=tuple(args.datasets),
-        ds_methods=tuple(args.ds_methods),
+        ds_methods=ds_methods,
         seeds=tuple(args.seeds),
         output_dir=args.output_dir,
+        n_test_simulations=int(args.n_test_simulations),
         timeout_s=float(args.timeout_s),
-        copy_figures=not args.no_copy_figures,
+        combination_timeout_s=float(args.combination_timeout_s),
+        workers=max(1, int(args.workers)),
+        save_fig=bool(args.save_fig),
+        shared_precompute=not bool(args.disable_shared_precompute),
+        # chain_precompute_segments=bool(args.chain_precompute_segments),
+        mode=args.mode,
+        chain_ds_methods=chain_ds_methods,
+        chain_trigger_methods=chain_trigger_methods,
+        chain_blend_ratios=chain_blend_ratios,
+        chain_fixed_ds_method=_normalize_chain_ds_method(args.chain_fixed_ds_method),
+        chain_fixed_trigger_method=_normalize_trigger_method(args.chain_fixed_trigger_method),
+        chain_triplet_fit_modes=chain_triplet_fit_modes,
+        chain_triplet_run_method=chain_triplet_run_method,
+        param_dist_values=param_dist_values,
+        param_cos_values=param_cos_values,
+        rel_scale_values=rel_scale_values,
+        damm_rel_scale_values=damm_rel_scale_values,
+        damm_total_scale_values=damm_total_scale_values,
+        damm_kappa_0_values=damm_kappa_0_values,
+        damm_psi_dir_0_values=damm_psi_dir_0_values,
+        damm_nu_0_value=int(args.damm_nu_0),
+        data_position_scale_values=data_position_scale_values,
+        bhattacharyya_threshold_values=bhattacharyya_threshold_values,
     )
 
 

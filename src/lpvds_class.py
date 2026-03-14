@@ -29,7 +29,7 @@ class lpvds_class():
 
         # simulation parameters
         self.tol = 10E-3
-        self.max_iter = 10000
+        self.max_iter = 100000
 
         # define output path
         file_path           = os.path.dirname(os.path.realpath(__file__))  
@@ -48,22 +48,89 @@ class lpvds_class():
         self.damm  = damm_class(self.x, self.x_dir, nu_0=self.nu_0, kappa_0=self.kappa_0, psi_dir_0=self.psi_dir_0, rel_scale=self.rel_scale, total_scale=self.total_scale)
 
 
+    def _compact_unassigned_components(self):
+        """Drop Gaussian components with zero argmax assignments.
+
+        Keeps DAMM and LPV-DS internal arrays consistent before DS optimization.
+        """
+        gamma = np.asarray(self.gamma, dtype=float)
+        if gamma.ndim == 1:
+            gamma = gamma.reshape(-1, 1)
+        if gamma.size == 0:
+            return
+
+        assignment_arr = np.asarray(self.assignment_arr, dtype=np.int64).reshape(-1)
+        K = int(gamma.shape[0])
+        if K <= 0:
+            return
+
+        if assignment_arr.size == 0:
+            keep_idx = np.array([0], dtype=np.int64)
+        else:
+            clipped_assign = np.clip(assignment_arr, 0, K - 1)
+            counts = np.bincount(clipped_assign, minlength=K)
+            keep_idx = np.where(counts > 0)[0]
+            if keep_idx.size == 0:
+                keep_idx = np.array([int(np.argmax(counts))], dtype=np.int64)
+
+        if keep_idx.size == K:
+            # Still ensure assignment is the canonical argmax of gamma.
+            self.gamma = gamma
+            self.assignment_arr = np.argmax(gamma, axis=0).astype(np.int64)
+            self.K = int(K)
+            self.damm.K = int(K)
+            return
+
+        gamma = gamma[keep_idx]
+        gamma_sum = np.sum(gamma, axis=0, keepdims=True)
+        safe_sum = np.maximum(gamma_sum, 1e-12)
+        gamma = gamma / safe_sum
+        if np.any(gamma_sum <= 1e-12):
+            gamma[:, gamma_sum.reshape(-1) <= 1e-12] = 1.0 / float(gamma.shape[0])
+
+        damm_mu = np.asarray(self.damm.Mu, dtype=float)[keep_idx]
+        damm_sigma = np.asarray(self.damm.Sigma, dtype=float)[keep_idx]
+        damm_prior = np.asarray(self.damm.Prior, dtype=float)[keep_idx]
+        prior_sum = float(np.sum(damm_prior))
+        if not np.isfinite(prior_sum) or prior_sum <= 1e-12:
+            damm_prior = np.full((keep_idx.size,), 1.0 / float(keep_idx.size), dtype=float)
+        else:
+            damm_prior = damm_prior / prior_sum
+
+        new_gaussian_lists = []
+        for new_k, old_k in enumerate(keep_idx.tolist()):
+            g = dict(self.damm.gaussian_lists[old_k])
+            g["prior"] = float(damm_prior[new_k])
+            new_gaussian_lists.append(g)
+
+        self.gamma = gamma
+        self.assignment_arr = np.argmax(gamma, axis=0).astype(np.int64)
+        self.K = int(keep_idx.size)
+
+        self.damm.Mu = damm_mu
+        self.damm.Sigma = damm_sigma
+        self.damm.Prior = damm_prior
+        self.damm.gaussian_lists = new_gaussian_lists
+        self.damm.K = int(keep_idx.size)
+
+
     def _cluster(self):
         self.gamma = self.damm.fit()
         # self.gamma = self.damm.fit_scikit()
 
         assignment_arr = np.argmax(self.gamma, axis=0) # this might result in some component being empty
-        unique_elements, counts = np.unique(assignment_arr, return_counts=True)
-        for element, count in zip(unique_elements, counts):
-            print("Current element", element)
-            print("has number", count)
-            if count == 0:
-                input("Elastic update gamma gives zero count")
+        # unique_elements, counts = np.unique(assignment_arr, return_counts=True)
+        # for element, count in zip(unique_elements, counts):
+        #     print("Current element", element)
+        #     print("has number", count)
+        #     if count == 0:
+        #         input("Elastic update gamma gives zero count")
 
         # self.K     = self.gamma.shape[0] 
 
         # Keep assignment consistent with posterior used elsewhere in the pipeline.
         self.assignment_arr = assignment_arr
+        self._compact_unassigned_components()
         # unique_elements, counts = np.unique(self.assignment_arr, return_counts=True)
         # for element, count in zip(unique_elements, counts):
         #     print("Current element", element)
@@ -83,6 +150,7 @@ class lpvds_class():
         self.damm.Prior = np.array([g['prior'] for g in gaussian_lists])
         self.gamma = self.damm.compute_gamma(self.x)
         self.assignment_arr = np.argmax(self.gamma, axis=0)
+        self._compact_unassigned_components()
         self.K = self.damm.K
 
 
@@ -113,8 +181,9 @@ class lpvds_class():
         return new_x, new_x_dot, new_gmm_struct
 
 
-    def _step(self, x, dt):
-        x_dot     = np.zeros((x.shape[1], 1))
+    def velocity(self, x):
+        """Pure velocity field at position x (shape (1, dim)). Returns (dim, 1)."""
+        x_dot = np.zeros((x.shape[1], 1))
 
         if self.damm is None:
             gamma = np.ones((self.K, 1))
@@ -122,7 +191,12 @@ class lpvds_class():
             gamma = self.damm.compute_gamma(x)
 
         for k in range(self.K):
-            x_dot  += gamma[k, 0] * self.A[k] @ (x - self.x_att).T
+            x_dot += gamma[k, 0] * self.A[k] @ (x - self.x_att).T
+
+        return x_dot, gamma
+
+    def _step(self, x, dt):
+        x_dot, gamma = self.velocity(x)
         x_next = x + x_dot.T * dt
 
         return x_next, gamma, x_dot
