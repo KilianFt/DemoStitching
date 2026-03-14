@@ -110,8 +110,19 @@ def calculate_dtw_distance(traj_ref, traj_sim):
 
 def demo_set_spread(demo_set):
     """ Calculates the average distance for each point to another point from another trajectory"""
+    trajectories = {}
+    for i, demo in enumerate(demo_set):
+        demo_trajectories = getattr(demo, "trajectories", None)
+        if demo_trajectories is None:
+            continue
+        for j, traj in enumerate(demo_trajectories):
+            x = np.asarray(getattr(traj, "x", []), dtype=float)
+            if x.ndim != 2 or x.shape[0] < 2:
+                continue
+            trajectories[(i, j)] = traj
 
-    trajectories = {(i, j): traj for i, demo in enumerate(demo_set) for j,traj in enumerate(demo.trajectories)}
+    if len(trajectories) <= 1:
+        return 0.0, 0.0
 
     # skip last point since it is the attractor (same for all trajectories) in a demo
     all_pos = np.concatenate([traj.x[:-1] for traj in trajectories.values()], axis=0)

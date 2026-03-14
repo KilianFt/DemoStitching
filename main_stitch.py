@@ -32,6 +32,7 @@ from src.util.load_tools import (
 )
 from src.util.plot_tools import (
     plot_composite,
+    plot_clean_3d_composite,
     plot_demonstration_set,
     plot_ds,
     plot_ds_set_gaussians,
@@ -175,6 +176,7 @@ def main(config: StitchConfig | None = None, results_path: str | None = None):
             plot_ds_set_gaussians_fn=plot_ds_set_gaussians,
             plot_ds_fn=plot_ds,
             plot_composite_fn=plot_composite,
+            plot_clean_3d_composite_fn=plot_clean_3d_composite,
         )
 
         all_results.append(result_row)

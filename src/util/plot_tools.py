@@ -6,6 +6,7 @@ from matplotlib.patches import Ellipse
 from matplotlib.colors import LinearSegmentedColormap, hsv_to_rgb
 from matplotlib.collections import LineCollection
 from typing import Optional
+from types import SimpleNamespace
 from src.util.ds_tools import get_gaussian_directions
 import random
 import os
@@ -92,6 +93,258 @@ def _save_axis_figure(ax, save_path: str, dim: int):
         save_kwargs["pad_inches"] = 0.02
     ax.figure.savefig(save_path, **save_kwargs)
 
+
+def _mask_stream_field(u, v, min_rel_speed: float = 1e-3, min_abs_speed: float = 1e-12):
+    u = np.asarray(u, dtype=float)
+    v = np.asarray(v, dtype=float)
+    speed = np.sqrt(u ** 2 + v ** 2)
+    finite_mask = np.isfinite(u) & np.isfinite(v) & np.isfinite(speed)
+    if not np.any(finite_mask):
+        mask = np.ones_like(u, dtype=bool)
+        return np.ma.array(u, mask=mask), np.ma.array(v, mask=mask)
+
+    max_speed = float(np.max(speed[finite_mask]))
+    threshold = max(float(min_abs_speed), float(min_rel_speed) * max_speed)
+    mask = (~finite_mask) | (speed <= threshold)
+    return np.ma.array(u, mask=mask), np.ma.array(v, mask=mask)
+
+
+def _projection_pairs(dim: int):
+    dim = int(dim)
+    if dim >= 3:
+        return [((0, 1), "x,y"), ((0, 2), "x,z"), ((1, 2), "y,z")]
+    return [((0, 1), "x,y")]
+
+
+def _project_points(data, dims):
+    data = np.asarray(data, dtype=float)
+    dims = tuple(int(d) for d in dims)
+    if data.ndim == 1:
+        return data[list(dims)]
+    if data.ndim == 2:
+        return data[:, list(dims)]
+    return data
+
+
+def _project_covariance(covariance, dims):
+    covariance = np.asarray(covariance, dtype=float)
+    dims = tuple(int(d) for d in dims)
+    return covariance[np.ix_(dims, dims)]
+
+
+def _project_optional_state_array(data, dims):
+    arr = np.asarray(data, dtype=float)
+    if arr.size == 0:
+        return arr.copy()
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.ndim != 2:
+        return arr.copy()
+    if arr.shape[1] <= max(dims):
+        return arr.copy()
+    return arr[:, list(dims)]
+
+
+def _extent_for_dims(config, dims):
+    extent = getattr(config, "plot_extent", None)
+    if extent is None:
+        return None, None, None, None
+    extent = np.asarray(extent, dtype=float).reshape(-1)
+    dims = tuple(int(d) for d in dims)
+    needed = 2 * (max(dims) + 1)
+    if extent.shape[0] < needed:
+        return None, None, None, None
+    return (
+        float(extent[2 * dims[0]]),
+        float(extent[2 * dims[0] + 1]),
+        float(extent[2 * dims[1]]),
+        float(extent[2 * dims[1] + 1]),
+    )
+
+
+def _evaluate_ds_velocity(ds, points: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2:
+        raise ValueError("points must have shape (n_points, dim).")
+
+    if hasattr(ds, "vector_field"):
+        velocity = np.asarray(ds.vector_field(points), dtype=float)
+        if velocity.shape == points.shape:
+            return velocity
+        if velocity.shape == (points.shape[1], points.shape[0]):
+            return velocity.T
+        raise ValueError("vector_field must return shape (n_points, dim) or (dim, n_points).")
+
+    att = np.asarray(getattr(ds, "x_att", np.zeros((points.shape[1],), dtype=float)), dtype=float).reshape(-1)
+    if att.shape[0] < points.shape[1]:
+        padded = np.zeros((points.shape[1],), dtype=float)
+        padded[: att.shape[0]] = att
+        att = padded
+    else:
+        att = att[: points.shape[1]]
+
+    A = np.asarray(getattr(ds, "A", []), dtype=float)
+    if A.ndim != 3 or A.shape[0] == 0:
+        raise ValueError("DS velocity evaluation requires a valid A tensor.")
+
+    gamma = np.asarray(ds.damm.compute_gamma(points), dtype=float)
+    velocity = np.zeros_like(points)
+    centered = points - att.reshape(1, -1)
+    for k in range(A.shape[0]):
+        velocity += gamma[k].reshape(-1, 1) * ((A[k] @ centered.T).T)
+    return velocity
+
+
+def _build_projected_lpvds(lpvds, dims):
+    dims = tuple(int(d) for d in dims)
+    x_full = np.asarray(lpvds.x, dtype=float)
+    full_dim = int(x_full.shape[1])
+    anchor = np.asarray(getattr(lpvds, "x_att", np.zeros((full_dim,), dtype=float)), dtype=float).reshape(-1)
+    if anchor.shape[0] < full_dim:
+        padded = np.zeros((full_dim,), dtype=float)
+        padded[: anchor.shape[0]] = anchor
+        anchor = padded
+    else:
+        anchor = anchor[:full_dim]
+
+    def _embed(points_2d: np.ndarray) -> np.ndarray:
+        points_2d = np.asarray(points_2d, dtype=float)
+        if points_2d.ndim == 1:
+            points_2d = points_2d.reshape(1, -1)
+        full_points = np.tile(anchor.reshape(1, -1), (points_2d.shape[0], 1))
+        full_points[:, list(dims)] = points_2d[:, : len(dims)]
+        return full_points
+
+    def _projected_vector_field(points_2d: np.ndarray) -> np.ndarray:
+        full_points = _embed(points_2d)
+        full_velocity = _evaluate_ds_velocity(lpvds, full_points)
+        return full_velocity[:, list(dims)]
+
+    projected = SimpleNamespace(
+        x=_project_points(x_full, dims),
+        x_att=anchor[list(dims)],
+        A=np.zeros((1, len(dims), len(dims)), dtype=float),
+        vector_field=_projected_vector_field,
+    )
+
+    if _is_chain_ds_for_region_plot(lpvds):
+        for name in (
+            "node_sources",
+            "node_targets",
+            "state_sequence",
+            "transition_centers",
+            "transition_ratio_start_nodes",
+            "transition_ratio_nodes",
+            "path_state_sequence",
+        ):
+            if hasattr(lpvds, name):
+                setattr(projected, name, _project_optional_state_array(getattr(lpvds, name), dims))
+        projected.n_systems = int(getattr(lpvds, "n_systems", 1))
+        projected.transition_times = np.asarray(getattr(lpvds, "transition_times", []), dtype=float)
+        projected.transition_distances = np.asarray(getattr(lpvds, "transition_distances", []), dtype=float)
+
+        def _velocity_for_index(point_2d, idx: int):
+            full_point = _embed(np.asarray(point_2d, dtype=float).reshape(1, -1))[0]
+            full_velocity = np.asarray(lpvds._velocity_for_index(full_point, idx), dtype=float).reshape(-1)
+            return full_velocity[list(dims)]
+
+        projected._velocity_for_index = _velocity_for_index
+
+    return projected
+
+
+def _plot_composite_projection(
+    ax,
+    gg,
+    solution_nodes,
+    demo_set,
+    lpvds,
+    x_test_list,
+    initial,
+    attractor,
+    config,
+    dims,
+    title: Optional[str] = None,
+    hide_axis: bool = False,
+):
+    dims = tuple(int(d) for d in dims)
+
+    if not getattr(config, 'ds_method', '').startswith('chain'):
+        colors = _sample_cmap_colors('summer', len(demo_set), max_frac=0.7)
+        for i, demo in enumerate(demo_set):
+            trajectories = getattr(demo, "trajectories", None)
+            if trajectories is None:
+                continue
+            projected_demo = SimpleNamespace(
+                trajectories=[
+                    SimpleNamespace(
+                        x=_project_points(getattr(traj, "x", np.zeros((0, len(dims)))), dims),
+                        x_dot=_project_points(getattr(traj, "x_dot", np.zeros((0, len(dims)))), dims),
+                    )
+                    for traj in trajectories
+                ]
+            )
+            ax = primitive_plot_demo(
+                ax,
+                projected_demo,
+                linewidth=6,
+                alpha=0.5,
+                marker_size=6,
+                color=colors[i],
+            )
+
+    projected_lpvds = _build_projected_lpvds(lpvds, dims)
+    projected_x_test_list = [_project_points(x_test, dims) for x_test in ([] if x_test_list is None else x_test_list)]
+    x_min, x_max, y_min, y_max = _extent_for_dims(config, dims)
+    chain_cfg = getattr(config, "chain", None)
+    plot_ds_2d(
+        projected_lpvds.x,
+        projected_x_test_list,
+        projected_lpvds,
+        ax=ax,
+        x_min=x_min,
+        x_max=x_max,
+        y_min=y_min,
+        y_max=y_max,
+        arrowsize=2,
+        include_raw_data=False,
+        linewidth=7,
+        marker_size=200,
+        stream_density=1,
+        stream_color='black',
+        stream_width=0.5,
+        chain_plot_mode=getattr(chain_cfg, "plot_mode", "line_regions"),
+        chain_plot_resolution=int(max(8, getattr(chain_cfg, "plot_grid_resolution", 60))),
+        chain_plot_path_bandwidth=getattr(chain_cfg, "plot_path_bandwidth", 0.9),
+        show_chain_transition_lines=bool(getattr(chain_cfg, "plot_show_transition_lines", True)),
+        chain_region_alpha=float(getattr(chain_cfg, "plot_region_alpha", 0.26)),
+    )
+
+    for node in solution_nodes:
+        mu, sigma, direction, _ = gg.get_gaussian(node)
+        ax = primitive_plot_gaussian(
+            ax,
+            _project_points(mu, dims),
+            _project_covariance(sigma, dims),
+            color='orange',
+            direction=None if direction is None else _project_points(direction, dims),
+            sigma_bound=None,
+        )
+
+    ax = primitive_plot_point(ax, _project_points(initial, dims), color='red')
+    ax = primitive_plot_point(ax, _project_points(attractor, dims), color='green')
+
+    if x_min is not None and x_max is not None:
+        ax.set_xlim(x_min, x_max)
+    if y_min is not None and y_max is not None:
+        ax.set_ylim(y_min, y_max)
+    ax.set_aspect('equal')
+    if title is not None:
+        ax.set_title(title)
+    if hide_axis:
+        ax.axis('off')
+    return ax
+
 def _plot_graph_3d(ax, gg, highlight_nodes=None):
     nodes = []
     for node_id, node_data in gg.graph.nodes(data=True):
@@ -129,6 +382,300 @@ def _plot_graph_3d(ax, gg, highlight_nodes=None):
     ax.set_xlabel(r'$\xi_1$')
     ax.set_ylabel(r'$\xi_2$')
     ax.set_zlabel(r'$\xi_3$')
+    return ax
+
+
+def _collect_3d_composite_points(demo_set, lpvds, x_test_list, initial, attractor):
+    points = []
+
+    for demo in demo_set:
+        for traj in getattr(demo, "trajectories", []):
+            x = np.asarray(getattr(traj, "x", []), dtype=float)
+            if x.ndim == 2 and x.shape[1] >= 3 and x.shape[0] > 0:
+                points.append(x[:, :3])
+
+    x_train = np.asarray(getattr(lpvds, "x", []), dtype=float)
+    if x_train.ndim == 2 and x_train.shape[1] >= 3 and x_train.shape[0] > 0:
+        points.append(x_train[:, :3])
+
+    for x_test in ([] if x_test_list is None else x_test_list):
+        x_test = np.asarray(x_test, dtype=float)
+        if x_test.ndim == 2 and x_test.shape[1] >= 3 and x_test.shape[0] > 0:
+            points.append(x_test[:, :3])
+
+    for point in (initial, attractor):
+        point = np.asarray(point, dtype=float).reshape(-1)
+        if point.shape[0] >= 3:
+            points.append(point[:3].reshape(1, 3))
+
+    if len(points) == 0:
+        return np.zeros((0, 3), dtype=float)
+    return np.vstack(points)
+
+
+def _rotation_matrix_z(theta: float) -> np.ndarray:
+    c = float(np.cos(theta))
+    s = float(np.sin(theta))
+    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+
+
+def _rotation_matrix_x(theta: float) -> np.ndarray:
+    c = float(np.cos(theta))
+    s = float(np.sin(theta))
+    return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]], dtype=float)
+
+
+def _select_clean_3d_view(points: np.ndarray) -> tuple[float, float]:
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 3:
+        return 24.0, 38.0
+
+    centered = points[:, :3] - np.mean(points[:, :3], axis=0, keepdims=True)
+    finite_mask = np.all(np.isfinite(centered), axis=1)
+    centered = centered[finite_mask]
+    if centered.shape[0] == 0:
+        return 24.0, 38.0
+
+    candidates = [
+        (18.0, 25.0),
+        (18.0, 45.0),
+        (22.0, 60.0),
+        (26.0, 38.0),
+        (28.0, 120.0),
+        (24.0, 210.0),
+        (20.0, 300.0),
+    ]
+
+    best_view = candidates[0]
+    best_score = -np.inf
+    for elev_deg, azim_deg in candidates:
+        rot = _rotation_matrix_x(np.deg2rad(elev_deg)) @ _rotation_matrix_z(np.deg2rad(azim_deg))
+        projected = centered @ rot.T
+        xy = projected[:, :2]
+        spread = float(np.linalg.det(np.cov(xy.T))) if xy.shape[0] >= 2 else 0.0
+        depth = float(np.std(projected[:, 2]))
+        score = spread - 0.08 * depth
+        if score > best_score:
+            best_score = score
+            best_view = (elev_deg, azim_deg)
+    return best_view
+
+
+def _set_clean_3d_axes(ax, points: np.ndarray, config=None, show_axis: bool = True):
+    points = np.asarray(points, dtype=float)
+    if points.ndim == 2 and points.shape[0] > 0 and points.shape[1] >= 3:
+        pts = points[:, :3]
+        mins = np.min(pts, axis=0)
+        maxs = np.max(pts, axis=0)
+        center = 0.5 * (mins + maxs)
+        radius = 0.5 * np.max(np.maximum(maxs - mins, 1e-6))
+        radius *= 1.18
+        ax.set_xlim(center[0] - radius, center[0] + radius)
+        ax.set_ylim(center[1] - radius, center[1] + radius)
+        ax.set_zlim(center[2] - radius, center[2] + radius)
+        ax.set_box_aspect((1.0, 1.0, 1.0))
+    else:
+        _apply_plot_extent(ax, config, 3)
+
+    ax.set_proj_type("ortho")
+    if show_axis:
+        ax.set_axis_on()
+        ax.grid(True, alpha=0.28, linewidth=0.7)
+        ax.set_xlabel(r'$\xi_1$')
+        ax.set_ylabel(r'$\xi_2$')
+        ax.set_zlabel(r'$\xi_3$')
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            axis.pane.fill = True
+            axis.pane.set_facecolor((0.97, 0.97, 0.97, 0.18))
+            axis.pane.set_edgecolor((0.75, 0.75, 0.75, 0.35))
+            axis.line.set_color((0.2, 0.2, 0.2, 0.75))
+        ax.tick_params(colors=(0.15, 0.15, 0.15, 0.95), labelsize=12)
+    else:
+        ax.grid(False)
+        ax.set_axis_off()
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            axis.pane.fill = False
+            axis.pane.set_edgecolor((1.0, 1.0, 1.0, 0.0))
+            axis.line.set_color((1.0, 1.0, 1.0, 0.0))
+
+
+def _plot_gaussian_glow_3d(
+    ax,
+    mu,
+    sigma,
+    color="#f08c00",
+    shell_scales=(2.6, 1.9, 1.25),
+    shell_alphas=(0.030, 0.055, 0.090),
+    resolution=30,
+):
+    mu = np.asarray(mu, dtype=float).reshape(-1)
+    sigma = np.asarray(sigma, dtype=float)
+    if mu.shape[0] < 3 or sigma.ndim != 2 or sigma.shape[0] < 3 or sigma.shape[1] < 3:
+        return np.zeros((0, 3), dtype=float)
+
+    cov = 0.5 * (sigma[:3, :3] + sigma[:3, :3].T)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    eigvals = np.clip(eigvals, 1e-8, None)
+    base_radii = np.sqrt(eigvals)
+
+    u = np.linspace(0.0, 2.0 * np.pi, int(max(12, resolution)))
+    v = np.linspace(0.0, np.pi, int(max(10, resolution // 2)))
+    sphere_x = np.outer(np.cos(u), np.sin(v))
+    sphere_y = np.outer(np.sin(u), np.sin(v))
+    sphere_z = np.outer(np.ones_like(u), np.cos(v))
+    sphere = np.stack([sphere_x, sphere_y, sphere_z], axis=-1)
+
+    extent_points = []
+    for scale, alpha in zip(shell_scales, shell_alphas):
+        radii = float(scale) * base_radii
+        shell = sphere.reshape(-1, 3) * radii.reshape(1, 3)
+        shell = shell @ eigvecs.T
+        shell = shell + mu[:3].reshape(1, 3)
+        x = shell[:, 0].reshape(sphere.shape[:2])
+        y = shell[:, 1].reshape(sphere.shape[:2])
+        z = shell[:, 2].reshape(sphere.shape[:2])
+        ax.plot_surface(
+            x,
+            y,
+            z,
+            rstride=1,
+            cstride=1,
+            color=color,
+            linewidth=0.0,
+            antialiased=True,
+            shade=False,
+            alpha=float(alpha),
+            zorder=0,
+        )
+
+    outer_scale = float(shell_scales[0])
+    for axis_idx in range(3):
+        delta = outer_scale * base_radii[axis_idx] * eigvecs[:, axis_idx]
+        extent_points.append(mu[:3] + delta)
+        extent_points.append(mu[:3] - delta)
+    return np.asarray(extent_points, dtype=float)
+
+
+def plot_clean_3d_composite(
+    gg,
+    solution_nodes,
+    demo_set,
+    lpvds,
+    x_test_list,
+    initial,
+    attractor,
+    config,
+    ax=None,
+    save_as=None,
+    hide_axis=False,
+):
+    dim = int(np.asarray(getattr(lpvds, "x", []), dtype=float).shape[1])
+    if dim < 3:
+        return plot_composite(
+            gg,
+            solution_nodes,
+            demo_set,
+            lpvds,
+            x_test_list,
+            initial,
+            attractor,
+            config,
+            ax=ax,
+            save_as=save_as,
+            hide_axis=hide_axis,
+        )
+
+    external_ax = ax is not None
+    ax = _create_axis(3, ax=ax, figsize=(10, 10))
+    gaussian_extent_points = []
+
+    colors = _sample_cmap_colors('summer', len(demo_set), max_frac=0.7)
+    for i, demo in enumerate(demo_set):
+        for traj in getattr(demo, "trajectories", []):
+            x = np.asarray(getattr(traj, "x", []), dtype=float)
+            if x.ndim != 2 or x.shape[0] == 0 or x.shape[1] < 3:
+                continue
+            ax.plot(
+                x[:, 0],
+                x[:, 1],
+                x[:, 2],
+                color=colors[i],
+                linewidth=2.2,
+                alpha=0.26,
+            )
+
+    for node in solution_nodes:
+        mu, sigma, direction, _ = gg.get_gaussian(node)
+        del direction
+        shell_points = _plot_gaussian_glow_3d(ax, mu, sigma, color="#f08c00")
+        if shell_points.size > 0:
+            gaussian_extent_points.append(shell_points)
+
+    path_color = "#111111"
+    for idx, x_test in enumerate([] if x_test_list is None else x_test_list):
+        x_test = np.asarray(x_test, dtype=float)
+        if x_test.ndim != 2 or x_test.shape[0] == 0 or x_test.shape[1] < 3:
+            continue
+        ax.plot(
+            x_test[:, 0],
+            x_test[:, 1],
+            x_test[:, 2],
+            color=path_color,
+            linewidth=3.8 if idx == len(x_test_list) - 1 else 3.0,
+            alpha=0.96,
+            solid_capstyle="round",
+        )
+
+    solution_means = []
+    for node in solution_nodes:
+        mu, sigma, direction, _ = gg.get_gaussian(node)
+        del sigma, direction
+        mu = np.asarray(mu, dtype=float).reshape(-1)
+        if mu.shape[0] < 3:
+            continue
+        solution_means.append(mu[:3])
+    if len(solution_means) > 0:
+        pts = np.vstack(solution_means)
+        ax.plot(
+            pts[:, 0],
+            pts[:, 1],
+            pts[:, 2],
+            color="#f08c00",
+            linewidth=2.0,
+            alpha=0.75,
+        )
+        ax.scatter(
+            pts[:, 0],
+            pts[:, 1],
+            pts[:, 2],
+            color="#f08c00",
+            s=26,
+            alpha=0.95,
+            depthshade=False,
+        )
+
+    initial = np.asarray(initial, dtype=float).reshape(-1)
+    attractor = np.asarray(attractor, dtype=float).reshape(-1)
+    if initial.shape[0] >= 3:
+        ax.scatter(initial[0], initial[1], initial[2], color="#c92a2a", s=72, depthshade=False)
+    if attractor.shape[0] >= 3:
+        ax.scatter(attractor[0], attractor[1], attractor[2], color="#2b8a3e", s=90, depthshade=False)
+
+    view_points = _collect_3d_composite_points(demo_set, lpvds, x_test_list, initial, attractor)
+    if len(gaussian_extent_points) > 0:
+        view_points = np.vstack([view_points] + gaussian_extent_points)
+    elev, azim = _select_clean_3d_view(view_points)
+    ax.view_init(elev=elev, azim=azim)
+    _set_clean_3d_axes(ax, view_points, config=config, show_axis=(not hide_axis))
+    plt.tight_layout()
+
+    if save_as is not None:
+        save_folder = _get_save_folder(config)
+        os.makedirs(save_folder, exist_ok=True)
+        _save_axis_figure(ax, save_folder + save_as + '.pdf', 3)
+        if not external_ax:
+            plt.close(ax.figure)
+
     return ax
 
 def plot_demonstration_set(demo_set, config, ax=None, save_as=None, hide_axis=False):
@@ -367,6 +914,50 @@ def plot_composite(gg, solution_nodes, demo_set, lpvds, x_test_list, initial, at
 
     dim = _infer_graph_dim(gg)
     external_ax = ax is not None
+
+    if dim >= 3 and not external_ax:
+        fig, axes = plt.subplots(1, 3, figsize=(24, 8))
+        projection_pairs = _projection_pairs(dim)
+        for proj_ax, (dims, title) in zip(axes, projection_pairs):
+            _plot_composite_projection(
+                proj_ax,
+                gg,
+                solution_nodes,
+                demo_set,
+                lpvds,
+                x_test_list,
+                initial,
+                attractor,
+                config,
+                dims=dims,
+                title=title,
+                hide_axis=hide_axis,
+            )
+        plt.tight_layout()
+        if save_as is not None:
+            save_folder = _get_save_folder(config)
+            os.makedirs(save_folder, exist_ok=True)
+            _save_axis_figure(axes[0], save_folder + save_as + '.pdf', dim=2)
+            plt.close(fig)
+        return axes[0]
+
+    if dim >= 3 and external_ax:
+        ax = _plot_composite_projection(
+            ax,
+            gg,
+            solution_nodes,
+            demo_set,
+            lpvds,
+            x_test_list,
+            initial,
+            attractor,
+            config,
+            dims=(0, 1),
+            title=None,
+            hide_axis=hide_axis,
+        )
+        return ax
+
     ax = _create_axis(dim, ax=ax, figsize=(12, 12))
 
     # plot raw demonstrations
@@ -1146,8 +1737,6 @@ def draw_chain_partition_field_2d(
 
     velocities_masked = velocities.copy()
     velocities_masked[~corridor_mask_flat] = 0.0
-    u = velocities[:, 0].reshape(plot_sample, plot_sample)
-    v = velocities[:, 1].reshape(plot_sample, plot_sample)
     rgba_img = rgba.reshape(plot_sample, plot_sample, 4)
     alpha = float(np.clip(region_alpha, 0.0, 1.0))
     corridor_mask_img = corridor_mask_flat.reshape(plot_sample, plot_sample)
@@ -1155,6 +1744,7 @@ def draw_chain_partition_field_2d(
 
     u = velocities_masked[:, 0].reshape(plot_sample, plot_sample)
     v = velocities_masked[:, 1].reshape(plot_sample, plot_sample)
+    u_stream, v_stream = _mask_stream_field(u, v)
 
     region_image = ax.imshow(
         rgba_img,
@@ -1167,8 +1757,8 @@ def draw_chain_partition_field_2d(
     stream = ax.streamplot(
         x_mesh,
         y_mesh,
-        u,
-        v,
+        u_stream,
+        v_stream,
         density=float(stream_density),
         color=stream_color,
         linewidth=stream_width,
@@ -1202,8 +1792,8 @@ def draw_chain_partition_field_2d(
         "region_image": region_image,
         "stream": stream,
         "transition_lines": transition_lines,
-        "u": u,
-        "v": v,
+        "u": u_stream,
+        "v": v_stream,
         "corridor_mask": corridor_mask_img,
     }
 
@@ -1273,7 +1863,18 @@ def plot_ds_2d(
         dx = lpvds.vector_field(X.T).T
         u = dx[0, :].reshape((plot_sample, plot_sample))
         v = dx[1, :].reshape((plot_sample, plot_sample))
-        ax.streamplot(x_mesh, y_mesh, u, v, linewidth=stream_width, density=stream_density, color=stream_color, arrowsize=arrowsize, arrowstyle="->")
+        u_stream, v_stream = _mask_stream_field(u, v)
+        ax.streamplot(
+            x_mesh,
+            y_mesh,
+            u_stream,
+            v_stream,
+            linewidth=stream_width,
+            density=stream_density,
+            color=stream_color,
+            arrowsize=arrowsize,
+            arrowstyle="->",
+        )
     else:
         plot_sample = 50
         x_mesh, y_mesh = np.meshgrid(np.linspace(x_min, x_max, plot_sample), np.linspace(y_min, y_max, plot_sample))
@@ -1287,7 +1888,18 @@ def plot_ds_2d(
                 dx += gamma[k].reshape(1, -1) * (A[k] @ (X - att.reshape(1, -1).T))
         u = dx[0, :].reshape((plot_sample, plot_sample))
         v = dx[1, :].reshape((plot_sample, plot_sample))
-        ax.streamplot(x_mesh, y_mesh, u, v, linewidth=stream_width, density=stream_density, color=stream_color, arrowsize=arrowsize, arrowstyle="->")
+        u_stream, v_stream = _mask_stream_field(u, v)
+        ax.streamplot(
+            x_mesh,
+            y_mesh,
+            u_stream,
+            v_stream,
+            linewidth=stream_width,
+            density=stream_density,
+            color=stream_color,
+            arrowsize=arrowsize,
+            arrowstyle="->",
+        )
     for idx, x_test in enumerate(x_test_list):
         ax.plot(x_test[:, 0], x_test[:, 1], color='r', linewidth=linewidth)
     ax.scatter(att[0], att[1], color='g', s=marker_size, alpha=0.7, zorder=10)

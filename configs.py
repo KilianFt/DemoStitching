@@ -76,7 +76,7 @@ class ChainConfig:
 
 @dataclass
 class StitchConfig:
-    dataset_path: str = "./dataset/stitching/2d_large"
+    dataset_path: str = "./dataset/stitching/pcgmm_3d_workspace_simple"
     iter_strategy: str = "permutations" # "permutations" or "combinations"
     force_preprocess: bool = True
     chain_precompute_segments: bool = True
@@ -108,7 +108,7 @@ class StitchConfig:
         default_factory=lambda: {
             "dataset/stitching/X": (24, 29),
             "dataset/stitching/2d_large": (115, 116, 143, 151, 177),
-            "dataset/stitching/pcgmm_3d_workspace_simple": (),
+            "dataset/stitching/pcgmm_3d_workspace_simple": None,
         }
     )
     seed: int = 42 # 42, 100, 3215, 21

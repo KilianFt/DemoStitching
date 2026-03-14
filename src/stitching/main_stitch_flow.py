@@ -157,6 +157,7 @@ def run_single_combination(
     plot_ds_set_gaussians_fn,
     plot_ds_fn,
     plot_composite_fn,
+    plot_clean_3d_composite_fn=None,
 ):
     """Run one initial/attractor evaluation, including optional plotting."""
     combination_status = "failed"
@@ -289,6 +290,20 @@ def run_single_combination(
                     save_as=f"{combination_id}_Composite",
                     hide_axis=True,
                 )
+                local_dim = int(np.asarray(getattr(local_stitched_ds, "x", []), dtype=float).shape[1])
+                if local_dim >= 3 and plot_clean_3d_composite_fn is not None:
+                    plot_clean_3d_composite_fn(
+                        gg,
+                        local_gg_solution_nodes,
+                        demo_set,
+                        local_stitched_ds,
+                        local_simulated_trajectories,
+                        initial,
+                        attractor,
+                        config,
+                        save_as=f"{combination_id}_Composite_3D_Clean",
+                        hide_axis=False,
+                    )
         return (
             local_combination_status,
             local_combination_failure_reason,

@@ -10,6 +10,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from src.util.plot_tools import (
+    _mask_stream_field,
     draw_chain_partition_field_2d,
     evaluate_chain_regions,
     plot_ds,
@@ -477,6 +478,19 @@ class ChainPlotRegionTests(unittest.TestCase):
         # Far from the assigned segment should be masked.
         self.assertFalse(bool(mask[iy_far, ix_near_zero]))
         plt.close(fig)
+
+    def test_mask_stream_field_suppresses_zero_velocity_dots(self):
+        u = np.array([[1.0, 0.0], [1e-16, 0.5]], dtype=float)
+        v = np.array([[0.0, 0.0], [1e-16, 0.0]], dtype=float)
+        u_masked, v_masked = _mask_stream_field(u, v)
+
+        self.assertTrue(np.ma.isMaskedArray(u_masked))
+        self.assertTrue(np.ma.isMaskedArray(v_masked))
+        self.assertTrue(bool(u_masked.mask[0, 1]))
+        self.assertTrue(bool(v_masked.mask[0, 1]))
+        self.assertTrue(bool(u_masked.mask[1, 0]))
+        self.assertFalse(bool(u_masked.mask[0, 0]))
+        self.assertFalse(bool(v_masked.mask[1, 1]))
 
     def test_plot_ds_chain_uses_partition_background(self):
         ds = _DummyChainDS()

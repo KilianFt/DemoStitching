@@ -125,6 +125,8 @@ def resolve_save_figure_indices(config: StitchConfig) -> set[int] | None:
             or dataset_path.endswith("/" + key_norm)
             or dataset_name == key_norm
         ):
+            if indices is None:
+                return None
             return {int(i) for i in indices}
     return None
 
