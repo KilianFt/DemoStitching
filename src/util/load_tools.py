@@ -20,6 +20,8 @@ def compute_plot_extent_from_demo_set(
     padding_ratio: float = 0.08,
     padding_abs: float = 0.5,
 ):
+    # Keep 2D behavior unchanged, but tighten 3D framing to reduce large empty borders.
+    plot_padding_scale_3d = 0.5
     dim = 3 if int(state_dim) >= 3 else 2
     points = []
     for demo in demo_set:
@@ -46,6 +48,8 @@ def compute_plot_extent_from_demo_set(
     spans = np.maximum(maxs - mins, 1e-6)
     max_span = float(np.max(spans))
     margin = max(float(padding_abs), float(padding_ratio) * max_span)
+    if dim == 3:
+        margin = max(1e-6, margin * plot_padding_scale_3d)
     half_extent = 0.5 * max_span + margin
     center = 0.5 * (mins + maxs)
     lows = center - half_extent
@@ -83,11 +87,16 @@ def _resolve_data_scales(position_scale=1.0, velocity_scale=None):
     return position_scale, velocity_scale
 
 
-def resolve_data_scales(config=None):
-    if config is None:
-        return 1.0, 1.0
-    position_scale = getattr(config, "data_position_scale", getattr(config, "damm_position_scale", 1.0))
-    velocity_scale = getattr(config, "data_velocity_scale", getattr(config, "damm_velocity_scale", None))
+_AUTO_SCALE_DATASETS = {"pcgmm_3d_workspace_simple", "pcgmm_3d_workspace"}
+
+def resolve_data_scales(config):
+    position_scale = config.data_position_scale
+    velocity_scale = config.data_velocity_scale
+    dataset_path = config.dataset_path
+    dataset_name = os.path.basename(os.path.normpath(dataset_path)) if dataset_path else ""
+    if dataset_name in _AUTO_SCALE_DATASETS and (position_scale is None or position_scale == 1.0):
+        print("Setting position scale to 5.0")
+        position_scale = 5.0
     return _resolve_data_scales(position_scale=position_scale, velocity_scale=velocity_scale)
 
 

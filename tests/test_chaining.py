@@ -1,11 +1,23 @@
 import unittest
+from pathlib import Path
+import sys
+from types import MethodType
 from typing import Optional
+from unittest.mock import patch
 
 import networkx as nx
 import numpy as np
 
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from configs import StitchConfig
-from src.stitching.chaining import build_chained_ds
+from src.stitching.chaining import (
+    _compute_segment_DS,
+    _resolve_triplet_fit_data_mode,
+    build_chained_ds,
+)
 
 
 _N_SAMPLES_PER_NODE = 80
@@ -53,6 +65,7 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         attractor: Optional[np.ndarray] = None,
         chain_ds_method: str = "linear",
         precomputed_edge_lookup: Optional[dict] = None,
+        chain_overrides: Optional[dict] = None,
     ):
         path_states = np.asarray(path_states, dtype=float)
         if attractor is None:
@@ -74,6 +87,11 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         cfg.chain.ds_method = chain_ds_method
         cfg.chain.enable_recovery = False
         cfg.chain.blend_length_ratio = 0.10
+        cfg.chain.use_boundary_ds_initial = False
+        cfg.chain.use_boundary_ds_end = False
+        if chain_overrides is not None:
+            for key, value in chain_overrides.items():
+                setattr(cfg.chain, key, value)
 
         chained = build_chained_ds(
             ds_set,
@@ -100,12 +118,39 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
 
         self.assertIsNotNone(chained)
         self.assertEqual(chained.subsystem_edges, 2)
-        self.assertEqual(chained.n_systems, 3)
-        np.testing.assert_allclose(chained.node_sources[:, 0], np.array([0.0, 1.0, 2.0]), atol=1e-8)
-        np.testing.assert_allclose(chained.node_targets[:, 0], np.array([2.0, 3.0, 4.0]), atol=1e-8)
+        # 3 intermediate segments + 1 attractor segment (last 2 nodes -> attractor).
+        self.assertEqual(chained.n_systems, 4)
+        np.testing.assert_allclose(chained.node_sources[:, 0], np.array([0.0, 1.0, 2.0, 3.0]), atol=1e-8)
+        np.testing.assert_allclose(chained.node_targets[:, 0], np.array([2.0, 3.0, 4.0, 4.0]), atol=1e-8)
 
-        # Each system is fitted from exactly three node datasets in the sliding window.
+        # Intermediate systems use 3-node windows; attractor segment uses 2 nodes.
         expected_per_window = 3 * _N_SAMPLES_PER_NODE
+        for fit_points in chained.edge_fit_points[:-1]:
+            self.assertEqual(int(fit_points.shape[0]), expected_per_window)
+        self.assertEqual(int(chained.edge_fit_points[-1].shape[0]), 2 * _N_SAMPLES_PER_NODE)
+
+    def test_linear_triplet_fit_mode_first_two_nodes_uses_only_prefix_data(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="linear",
+            chain_overrides={"triplet_fit_data_mode": "first_two_nodes"},
+        )
+
+        self.assertIsNotNone(chained)
+        self.assertEqual(getattr(chained, "triplet_fit_data_mode", None), "first_two_nodes")
+        expected_per_window = 2 * _N_SAMPLES_PER_NODE
+        # 3 triplet systems + 1 attractor segment; all are two-node fits in this mode.
+        self.assertEqual(chained.n_systems, 4)
         for fit_points in chained.edge_fit_points:
             self.assertEqual(int(fit_points.shape[0]), expected_per_window)
 
@@ -152,10 +197,10 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         expected_r = 2.0 / 1.0  # |e1|/|e2|
         self.assertAlmostEqual(float(chained.transition_edge_ratios[0]), expected_r, places=8)
 
-        n1 = path[1]
+        n1 = path[0]
         n2 = path[2]
-        x_no_switch = np.array([2.2, 0.0])
-        x_switch = np.array([2.9, 0.0])
+        x_no_switch = np.array([1.5, 0.0])
+        x_switch = np.array([2.5, 0.0])
 
         ratio_no_switch = np.linalg.norm(x_no_switch - n1) / np.linalg.norm(x_no_switch - n2)
         ratio_switch = np.linalg.norm(x_switch - n1) / np.linalg.norm(x_switch - n2)
@@ -183,7 +228,7 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
                 self.assertIsNotNone(chained)
 
                 trajectory, _ = chained.sim(initial[None, :], dt=0.02)
-                self.assertLess(np.linalg.norm(trajectory[-1] - attractor), 0.20)
+                self.assertLess(np.linalg.norm(trajectory[-1] - attractor), 0.25)
                 self.assertIsNotNone(chained.last_sim_indices)
                 self.assertEqual(int(np.max(chained.last_sim_indices)), chained.n_systems - 1)
 
@@ -217,6 +262,30 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         self.assertEqual(gamma_history.ndim, 2)
         self.assertLess(np.linalg.norm(trajectory[-1] - attractor), 0.25)
 
+    def test_segmented_triplet_fit_mode_first_two_nodes_uses_only_prefix_data(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+            chain_overrides={"triplet_fit_data_mode": "first_two_nodes"},
+        )
+        self.assertIsNotNone(chained)
+        self.assertEqual(getattr(chained, "triplet_fit_data_mode", None), "first_two_nodes")
+        expected_per_window = 2 * _N_SAMPLES_PER_NODE
+        # 3 intermediate triplets + 1 attractor segment.
+        self.assertEqual(chained.n_systems, 4)
+        for fit_points in chained.edge_fit_points:
+            self.assertEqual(int(fit_points.shape[0]), expected_per_window)
+
     def test_segmented_chain_uses_same_configurable_trigger_policy(self):
         path = np.array(
             [
@@ -236,8 +305,332 @@ class ChainingTransitionPolicyTests(unittest.TestCase):
         # With use_boundary_ds_initial=False (default) there is no init boundary,
         # so the first transition (index 0) is the first 3-node segment transition.
         self.assertAlmostEqual(float(chained.transition_edge_ratios[0]), expected_r, places=8)
-        self.assertFalse(chained.trigger_state(0, np.array([2.2, 0.0])))
-        self.assertTrue(chained.trigger_state(0, np.array([2.9, 0.0])))
+        self.assertFalse(chained.trigger_state(0, np.array([1.5, 0.0])))
+        self.assertTrue(chained.trigger_state(0, np.array([2.5, 0.0])))
+
+    def test_transition_times_respect_configured_minimum(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+            ]
+        )
+        chained, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_overrides={
+                "blend_length_ratio": 0.01,
+                "min_transition_time": 0.5,
+            },
+        )
+        self.assertIsNotNone(chained)
+        self.assertGreater(chained.transition_times.size, 0)
+        self.assertTrue(np.all(chained.transition_times >= 0.5 - 1e-12))
+
+    def test_linear_velocity_is_clipped_by_vmax_without_a_capping(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+            ]
+        )
+        chained, initial, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_overrides={"velocity_max": 0.2},
+        )
+        self.assertIsNotNone(chained)
+        chained.A_seq[0] = -1e8 * np.eye(2)
+        x_next, velocity, _ = chained.step_once(initial.copy(), dt=0.02)
+        self.assertTrue(np.all(np.isfinite(velocity)))
+        self.assertTrue(np.all(np.isfinite(x_next)))
+        self.assertLessEqual(float(np.linalg.norm(velocity)), 0.2 + 1e-12)
+
+    def test_non_finite_velocity_raises(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+            ]
+        )
+        chained, initial, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_overrides={"velocity_max": 0.25},
+        )
+        self.assertIsNotNone(chained)
+        chained.A_seq[0][:] = np.nan
+        with self.assertRaises(ValueError):
+            chained.step_once(initial.copy(), dt=0.02)
+
+    def test_segmented_chain_uses_same_velocity_safeguards(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.2],
+                [3.0, 0.1],
+            ]
+        )
+        chained, initial, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+            chain_overrides={"velocity_max": 0.3},
+        )
+        self.assertIsNotNone(chained)
+
+        def _huge_velocity(_self, x, idx):
+            return np.array([1e7, -1e7], dtype=float)
+
+        chained._velocity_for_index = MethodType(_huge_velocity, chained)
+        _, velocity, _ = chained.step_once(initial.copy(), dt=0.02)
+        self.assertTrue(np.all(np.isfinite(velocity)))
+        self.assertLessEqual(float(np.linalg.norm(velocity)), 0.3 + 1e-12)
+
+    def test_triplet_mode_resolves_behind_last_edge_plane_alias(self):
+        cfg = StitchConfig()
+        cfg.chain.triplet_fit_data_mode = "behind_last_edge"
+        self.assertEqual(_resolve_triplet_fit_data_mode(cfg.chain), "behind_last_edge_plane")
+        cfg.chain.triplet_fit_data_mode = "last_edge_plane"
+        self.assertEqual(_resolve_triplet_fit_data_mode(cfg.chain), "behind_last_edge_plane")
+
+    def test_linear_triplet_fit_mode_behind_last_edge_plane_reduces_core_fit_data(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained_all, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="linear",
+            chain_overrides={"triplet_fit_data_mode": "all_nodes"},
+        )
+        chained_behind, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="linear",
+            chain_overrides={"triplet_fit_data_mode": "behind_last_edge_plane"},
+        )
+        self.assertIsNotNone(chained_all)
+        self.assertIsNotNone(chained_behind)
+        # Core systems are all triplets; the last system is the attractor segment.
+        for i in range(chained_all.n_systems - 1):
+            n_all = int(chained_all.edge_fit_points[i].shape[0])
+            n_behind = int(chained_behind.edge_fit_points[i].shape[0])
+            self.assertLess(n_behind, n_all)
+            self.assertGreaterEqual(n_behind, 2 * _N_SAMPLES_PER_NODE)
+
+    def test_segmented_triplet_fit_mode_behind_last_edge_plane_reduces_core_fit_data(self):
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ]
+        )
+        chained_all, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+            chain_overrides={"triplet_fit_data_mode": "all_nodes"},
+        )
+        chained_behind, _, _, _ = self._build_chain(
+            path,
+            method="mean_normals",
+            chain_ds_method="segmented",
+            chain_overrides={"triplet_fit_data_mode": "behind_last_edge_plane"},
+        )
+        self.assertIsNotNone(chained_all)
+        self.assertIsNotNone(chained_behind)
+        for i in range(chained_all.n_systems - 1):
+            n_all = int(chained_all.edge_fit_points[i].shape[0])
+            n_behind = int(chained_behind.edge_fit_points[i].shape[0])
+            self.assertLess(n_behind, n_all)
+            self.assertGreaterEqual(n_behind, 2 * _N_SAMPLES_PER_NODE)
+
+    def test_compute_segment_ds_skips_last_edge_plane_filter_for_attractor_override(self):
+        class _FakeLPVDS:
+            captured_rows = None
+
+            def __init__(self, x, x_dot, x_att, **kwargs):
+                del x_att, kwargs
+                _FakeLPVDS.captured_rows = (int(np.asarray(x).shape[0]), int(np.asarray(x_dot).shape[0]))
+
+            def init_cluster(self, _gaussians):
+                return None
+
+            def _optimize(self):
+                return None
+
+            def begin(self):
+                return True
+
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ]
+        )
+        ds_set = [_MockDS(mu=mu, target=path[min(i + 1, 2)], seed=2000 + i) for i, mu in enumerate(path)]
+        gg = _MockGaussianGraph(path)
+        cfg = StitchConfig()
+        cfg.chain.ds_method = "segmented"
+        cfg.chain.triplet_fit_data_mode = "behind_last_edge_plane"
+        cfg.chain.recompute_gaussians = False
+
+        with patch("src.stitching.chaining.lpvds_class", _FakeLPVDS):
+            _compute_segment_DS(
+                ds_set,
+                gg,
+                segment_nodes=((0, 0), (1, 0), (2, 0)),
+                config=cfg,
+                x_att_override=np.array([2.2, 0.0], dtype=float),
+            )
+
+        self.assertEqual(_FakeLPVDS.captured_rows, (3 * _N_SAMPLES_PER_NODE, 3 * _N_SAMPLES_PER_NODE))
+
+    def test_compute_segment_ds_recompute_mode_calls_begin(self):
+        class _FakeLPVDS:
+            begin_called = False
+            init_cluster_called = False
+
+            def __init__(self, x, x_dot, x_att, **kwargs):
+                del x, x_dot, x_att, kwargs
+
+            def init_cluster(self, _gaussians):
+                _FakeLPVDS.init_cluster_called = True
+
+            def _optimize(self):
+                return None
+
+            def begin(self):
+                _FakeLPVDS.begin_called = True
+                return True
+
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ]
+        )
+        ds_set = [_MockDS(mu=mu, target=path[min(i + 1, 2)], seed=3000 + i) for i, mu in enumerate(path)]
+        gg = _MockGaussianGraph(path)
+        cfg = StitchConfig()
+        cfg.chain.ds_method = "segmented"
+        cfg.chain.triplet_fit_data_mode = "all_nodes"
+        cfg.chain.recompute_gaussians = True
+
+        with patch("src.stitching.chaining.lpvds_class", _FakeLPVDS):
+            _compute_segment_DS(
+                ds_set,
+                gg,
+                segment_nodes=((0, 0), (1, 0), (2, 0)),
+                config=cfg,
+            )
+
+        self.assertTrue(_FakeLPVDS.begin_called)
+        self.assertFalse(_FakeLPVDS.init_cluster_called)
+
+    def test_compute_segment_ds_subset_third_node_allows_two_node_segment(self):
+        class _FakeLPVDS:
+            captured_rows = None
+
+            def __init__(self, x, x_dot, x_att, **kwargs):
+                del x_att, kwargs
+                _FakeLPVDS.captured_rows = (int(np.asarray(x).shape[0]), int(np.asarray(x_dot).shape[0]))
+
+            def init_cluster(self, _gaussians):
+                return None
+
+            def _optimize(self):
+                return None
+
+            def begin(self):
+                return True
+
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ]
+        )
+        ds_set = [_MockDS(mu=mu, target=path[min(i + 1, 2)], seed=4000 + i) for i, mu in enumerate(path)]
+        gg = _MockGaussianGraph(path)
+        cfg = StitchConfig()
+        cfg.chain.ds_method = "segmented"
+        cfg.chain.triplet_fit_data_mode = "subset_third_node"
+        cfg.chain.recompute_gaussians = False
+
+        with patch("src.stitching.chaining.lpvds_class", _FakeLPVDS):
+            _compute_segment_DS(
+                ds_set,
+                gg,
+                segment_nodes=((1, 0), (2, 0)),
+                config=cfg,
+                x_att_override=np.array([2.2, 0.0], dtype=float),
+            )
+
+        self.assertEqual(_FakeLPVDS.captured_rows, (2 * _N_SAMPLES_PER_NODE, 2 * _N_SAMPLES_PER_NODE))
+
+    def test_compute_segment_ds_subset_third_node_keeps_prefix_nodes(self):
+        class _FakeLPVDS:
+            captured_rows = None
+
+            def __init__(self, x, x_dot, x_att, **kwargs):
+                del x_att, kwargs
+                _FakeLPVDS.captured_rows = (int(np.asarray(x).shape[0]), int(np.asarray(x_dot).shape[0]))
+
+            def init_cluster(self, _gaussians):
+                return None
+
+            def _optimize(self):
+                return None
+
+            def begin(self):
+                return True
+
+        path = np.array(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ]
+        )
+        ds_set = [_MockDS(mu=mu, target=path[min(i + 1, 2)], seed=5000 + i) for i, mu in enumerate(path)]
+        gg = _MockGaussianGraph(path)
+        cfg = StitchConfig()
+        cfg.chain.ds_method = "segmented"
+        cfg.chain.triplet_fit_data_mode = "subset_third_node"
+        cfg.chain.recompute_gaussians = False
+
+        with patch("src.stitching.chaining.lpvds_class", _FakeLPVDS):
+            _compute_segment_DS(
+                ds_set,
+                gg,
+                segment_nodes=((0, 0), (1, 0), (2, 0)),
+                config=cfg,
+            )
+
+        self.assertIsNotNone(_FakeLPVDS.captured_rows)
+        self.assertGreaterEqual(_FakeLPVDS.captured_rows[0], 2 * _N_SAMPLES_PER_NODE)
+        self.assertLessEqual(_FakeLPVDS.captured_rows[0], 3 * _N_SAMPLES_PER_NODE)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-from itertools import permutations
+from itertools import permutations, product
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,14 +11,18 @@ def initialize_iter_strategy(config, demo_set):
         print("Using specified initial and attractor positions")
         combinations = [(config.initial, config.attractor)]
     else:
-        print("Using all permutations of initial and attractor positions")
-
-        # Use all permutations of mean init and attractor positions
         mean_inits = [np.mean([traj.x[0] for traj in demo.trajectories], axis=0) for demo in demo_set]
         mean_attractors = [np.mean([traj.x[-1] for traj in demo.trajectories], axis=0) for demo in demo_set]
-
-        all_points = np.vstack(mean_inits + mean_attractors)
-        combinations = list(permutations(all_points, 2))
+        if config.iter_strategy == "permutations":
+            print("Using all permutations of initial and attractor positions")
+            # Use all permutations of mean init and attractor positions
+            all_points = np.vstack(mean_inits + mean_attractors)
+            combinations = list(permutations(all_points, 2))
+        elif config.iter_strategy == "combinations":
+            print("Using all combinations of initial and attractor positions")
+            combinations = list(product(mean_inits, mean_attractors))
+        else:
+            raise ValueError(f"Unknown iteration strategy: {config.iter_strategy}")
 
     return combinations
 
