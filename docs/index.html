@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zero-Shot Generalization from Motion Demonstrations to New Tasks</title>
+<meta name="description" content="A dynamical-systems framework that reuses isolated motion demonstrations to solve new, never-demonstrated tasks — via the Gaussian Graph, Stitching, and Chaining.">
+<meta property="og:title" content="Zero-Shot Generalization from Motion Demonstrations to New Tasks">
+<meta property="og:description" content="Reuse isolated motion demonstrations to solve new tasks with provably stable dynamical systems.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0E1420;
+    --ink-2:#141c2b;
+    --canvas:#F2F5F9;
+    --paper:#ffffff;
+    --text:#111826;
+    --text-soft:#4a5568;
+    --line:rgba(14,20,32,.10);
+    --line-strong:rgba(14,20,32,.18);
+    --coral:#FF5D5D;
+    --teal:#18C2AE;
+    --amber:#FFB020;
+    --violet:#9A6BFF;
+    --blue:#4C7DF0;
+    --glow-grid:rgba(154,190,255,.09);
+    --maxw:1120px;
+    --herow:1300px;
+    --ease:cubic-bezier(.22,.61,.36,1);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--canvas);
+    color:var(--text);
+    font-family:"Instrument Sans",system-ui,sans-serif;
+    font-size:17px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  a{color:inherit;text-decoration:none}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+
+  /* ---------- eyebrow / axis-tick label ---------- */
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace;
+    font-size:12px;
+    font-weight:500;
+    letter-spacing:.22em;
+    text-transform:uppercase;
+    color:var(--text-soft);
+    display:inline-flex;
+    align-items:center;
+    gap:.6em;
+  }
+  .eyebrow::before{
+    content:"";
+    width:26px;height:1px;
+    background:currentColor;
+    opacity:.6;
+  }
+
+  /* ================= HERO ================= */
+  .hero{
+    position:relative;
+    background:
+      radial-gradient(120% 90% at 78% 8%, #1b2740 0%, rgba(27,39,64,0) 55%),
+      radial-gradient(90% 70% at 10% 100%, #17233a 0%, rgba(23,35,58,0) 60%),
+      var(--ink);
+    color:#eaf0fa;
+    min-height:100svh;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    isolation:isolate;
+  }
+  /* coordinate grid behind the flow field */
+  .hero::before{
+    content:"";
+    position:absolute;inset:0;
+    background-image:
+      linear-gradient(var(--glow-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--glow-grid) 1px, transparent 1px);
+    background-size:46px 46px;
+    -webkit-mask-image:radial-gradient(120% 100% at 60% 40%, #000 30%, transparent 85%);
+            mask-image:radial-gradient(120% 100% at 60% 40%, #000 30%, transparent 85%);
+    z-index:0;
+  }
+  #field{
+    position:absolute;inset:0;
+    width:100%;height:100%;
+    z-index:1;
+  }
+  .hero-scrim{
+    position:absolute;inset:0;
+    z-index:2;
+    background:linear-gradient(180deg, rgba(14,20,32,.55) 0%, rgba(14,20,32,0) 22%, rgba(14,20,32,0) 55%, rgba(14,20,32,.72) 100%);
+    pointer-events:none;
+  }
+
+  .hero-top{
+    position:relative;z-index:3;
+    max-width:var(--herow);width:100%;margin:0 auto;
+    padding:22px clamp(20px,5vw,48px) 0;
+    display:flex;justify-content:space-between;align-items:center;
+    gap:20px;
+  }
+  .hero-top .tag{
+    font-family:"IBM Plex Mono",monospace;
+    font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:#9fb0cc;
+  }
+  .hero-top .award{
+    display:inline-flex;align-items:center;gap:.5em;
+    font-family:"IBM Plex Mono",monospace;
+    font-size:11.5px;font-weight:500;letter-spacing:.11em;text-transform:uppercase;
+    color:#ffd48a;
+    background:linear-gradient(180deg,rgba(255,176,32,.14),rgba(255,176,32,.05));
+    border:1px solid rgba(255,196,110,.42);
+    padding:6px 13px;border-radius:100px;
+    box-shadow:0 0 22px -8px rgba(255,176,32,.5);
+  }
+  .hero-top .award svg{width:14px;height:14px;flex:none}
+
+  .hero-core{
+    position:relative;z-index:3;
+    max-width:var(--herow);width:100%;margin:auto;
+    padding:26px clamp(20px,5vw,48px);
+    display:flex;flex-direction:column;
+    align-items:flex-start;
+  }
+  .hero h1{
+    font-family:"Space Grotesk",sans-serif;
+    font-weight:600;
+    font-size:clamp(2.1rem,5.6vw,4.35rem);
+    line-height:1.03;
+    letter-spacing:-.02em;
+    max-width:16ch;
+    margin:.3em 0 .05em;
+  }
+  .hero h1 .accent{
+    color:transparent;
+    background:linear-gradient(92deg,var(--coral),var(--amber) 42%,var(--teal) 72%,var(--violet));
+    -webkit-background-clip:text;background-clip:text;
+    position:relative;
+    white-space:nowrap;
+  }
+  .lede{
+    font-size:clamp(1.0rem,1.8vw,1.22rem);
+    color:#c3cee0;
+    max-width:52ch;
+    margin-top:.9rem;
+    line-height:1.5;
+  }
+
+  /* authors */
+  .authors{
+    margin-top:1.35rem;
+    display:flex;flex-wrap:wrap;align-items:baseline;
+    gap:.2em 1.4em;
+    font-size:1.06rem;
+  }
+  .authors .a{color:#eef3fb;font-weight:500}
+  .authors .a sup{color:#8fa3c4;font-weight:600;font-size:.7em;font-family:"IBM Plex Mono",monospace;margin-left:.15em}
+  .affil{
+    margin-top:.6rem;
+    display:flex;flex-wrap:wrap;gap:.3em 1.6em;
+    font-family:"IBM Plex Mono",monospace;
+    font-size:12.5px;letter-spacing:.02em;
+    color:#93a5c4;
+  }
+  .affil .eq{color:#c3cee0}
+
+  /* action buttons */
+  .actions{
+    margin-top:1.6rem;
+    display:flex;flex-wrap:wrap;gap:12px;
+  }
+  .btn{
+    display:inline-flex;align-items:center;gap:.6em;
+    font-family:"Space Grotesk",sans-serif;
+    font-weight:500;font-size:.98rem;
+    padding:.72em 1.25em;
+    border-radius:11px;
+    border:1px solid rgba(180,197,227,.22);
+    color:#eaf0fa;
+    background:rgba(255,255,255,.03);
+    transition:transform .25s var(--ease),background .25s var(--ease),border-color .25s var(--ease);
+  }
+  .btn svg{width:17px;height:17px;flex:none}
+  .btn:hover{transform:translateY(-2px);background:rgba(255,255,255,.09);border-color:rgba(180,197,227,.42)}
+  .btn.primary{
+    background:linear-gradient(180deg,#fff,#e8eefb);
+    color:#0E1420;border-color:transparent;font-weight:600;
+  }
+  .btn.primary:hover{background:linear-gradient(180deg,#fff,#dbe6fb)}
+
+  .legend{
+    position:relative;z-index:3;
+    max-width:var(--herow);width:100%;margin:0 auto;
+    padding:0 clamp(20px,5vw,48px) 22px;
+    display:flex;flex-wrap:wrap;gap:12px 22px;align-items:center;
+    font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.08em;
+    color:#8095b6;text-transform:uppercase;
+  }
+  .legend .k{display:inline-flex;align-items:center;gap:.55em}
+  .legend .dot{width:9px;height:9px;border-radius:50%;box-shadow:0 0 10px currentColor}
+  .scrolln{margin-left:auto;display:inline-flex;align-items:center;gap:.5em;opacity:.7}
+  .scrolln .bar{width:1px;height:22px;background:linear-gradient(#8095b6,transparent);animation:drop 1.8s var(--ease) infinite}
+  @keyframes drop{0%{transform:translateY(-6px);opacity:0}40%{opacity:1}100%{transform:translateY(8px);opacity:0}}
+
+  /* ================= SECTIONS ================= */
+  section{position:relative}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 clamp(20px,5vw,48px)}
+  .band{padding:clamp(64px,9vw,120px) 0}
+  .band-tight{padding:clamp(44px,6vw,80px) 0}
+
+  /* thesis / tldr */
+  .thesis{background:var(--paper);border-bottom:1px solid var(--line)}
+  .thesis .wrap{max-width:960px}
+  .thesis p{
+    font-family:"Space Grotesk",sans-serif;
+    font-weight:400;
+    font-size:clamp(1.4rem,3.2vw,2.35rem);
+    line-height:1.28;
+    letter-spacing:-.015em;
+    color:var(--text);
+  }
+  .thesis .hl{
+    background:linear-gradient(transparent 62%, rgba(154,107,255,.22) 62%);
+    padding:0 .05em;font-weight:500;
+  }
+  .thesis .eyebrow{margin-bottom:1.7rem}
+
+  .section-head{margin-bottom:clamp(34px,5vw,58px);max-width:760px}
+  .section-head h2{
+    font-family:"Space Grotesk",sans-serif;
+    font-weight:600;
+    font-size:clamp(1.75rem,4vw,2.9rem);
+    line-height:1.06;letter-spacing:-.02em;
+    margin:.55rem 0 0;
+  }
+  .section-head p{color:var(--text-soft);font-size:1.08rem;margin-top:1rem;max-width:60ch}
+
+  /* pipeline figures */
+  .pipe{
+    list-style:none;
+    display:grid;grid-template-columns:repeat(4,1fr);
+    gap:clamp(14px,1.6vw,22px);
+    position:relative;
+  }
+  .pstage{
+    background:var(--paper);
+    border:1px solid var(--line);
+    border-radius:15px;
+    overflow:hidden;
+    position:relative;
+    display:flex;flex-direction:column;
+    transition:transform .35s var(--ease),box-shadow .35s var(--ease),border-color .35s var(--ease);
+  }
+  .pstage:hover{transform:translateY(-4px);box-shadow:0 20px 42px -26px rgba(14,20,32,.35);border-color:var(--line-strong)}
+  .pstage::before{content:"";position:absolute;left:0;top:0;height:3px;width:100%;background:var(--c);z-index:2}
+  .pfig{
+    background:#fff;
+    aspect-ratio:1/1;
+    border-bottom:1px solid var(--line);
+  }
+  .pfig img{width:100%;height:100%;display:block;object-fit:cover}
+  .pcap{padding:16px 18px 20px}
+  .pnum{
+    font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:12px;
+    letter-spacing:.12em;color:var(--c);
+  }
+  .pcap h3{
+    font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:1.12rem;
+    margin:.4rem 0 .45rem;letter-spacing:-.01em;
+  }
+  .pcap p{color:var(--text-soft);font-size:.92rem;line-height:1.5}
+  /* flow chevrons between stages (wide only) */
+  .pstage:not(:last-child)::after{
+    content:"";position:absolute;top:50%;right:calc(-1 * clamp(14px,1.6vw,22px) - 1px);
+    width:calc(clamp(14px,1.6vw,22px) + 2px);height:2px;
+    transform:translateY(-50%);
+    background:linear-gradient(90deg,var(--c),var(--line-strong));
+    z-index:3;
+  }
+  .pstage:not(:last-child) .pnum::after{content:""}
+
+  /* video grids */
+  .vgrid{display:grid;gap:clamp(16px,2.4vw,26px)}
+  .vgrid.three{grid-template-columns:repeat(3,1fr)}
+  .vgrid.two{grid-template-columns:repeat(2,1fr)}
+  .vcard{
+    background:var(--paper);
+    border:1px solid var(--line);
+    border-radius:16px;
+    overflow:hidden;
+    position:relative;
+    transition:transform .35s var(--ease),box-shadow .35s var(--ease),border-color .35s var(--ease);
+  }
+  .vcard:hover{transform:translateY(-4px);box-shadow:0 22px 46px -26px rgba(14,20,32,.35);border-color:var(--line-strong)}
+  .vcard video{display:block;width:100%;height:auto;background:#0b111c;aspect-ratio:1/1;object-fit:cover}
+  .vcard.wide video{aspect-ratio:16/10}
+  .vmeta{padding:16px 18px;display:flex;align-items:center;gap:12px}
+  .vmeta .swatch{width:12px;height:12px;border-radius:3px;flex:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 18%,transparent)}
+  .vmeta .lbl{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-soft)}
+  .vmeta .nm{font-family:"Space Grotesk",sans-serif;font-weight:500;font-size:1.02rem}
+  .vmeta .grow{margin-left:auto}
+  .badge-new{
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--violet);border:1px solid color-mix(in srgb,var(--violet) 40%,transparent);
+    padding:4px 9px;border-radius:100px;background:color-mix(in srgb,var(--violet) 8%,transparent);
+  }
+
+  /* results band (darker) */
+  .results{background:var(--ink);color:#eaf0fa}
+  .results .section-head h2{color:#fff}
+  .results .section-head p{color:#a9b8d3}
+  .results .eyebrow{color:#8fa3c4}
+  .results .vcard{background:#131c2c;border-color:rgba(160,180,215,.14)}
+  .results .vcard:hover{border-color:rgba(160,180,215,.3);box-shadow:0 30px 60px -30px rgba(0,0,0,.6)}
+  .results .vmeta .nm{color:#eef3fb}
+  .results .vmeta .lbl{color:#93a5c4}
+
+  /* two frameworks compare */
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:clamp(16px,2.2vw,24px);max-width:960px;margin:0 auto}
+  .fcard{
+    background:var(--paper);border:1px solid var(--line);border-radius:16px;
+    padding:clamp(20px,2.4vw,30px);position:relative;overflow:hidden;
+    display:flex;flex-direction:column;
+  }
+  .fcard .ffig{
+    background:#fff;border:1px solid var(--line);border-radius:11px;
+    overflow:hidden;margin:0 auto 1.3rem;aspect-ratio:1/1;width:100%;max-width:262px;
+  }
+  .fcard .ffig img{width:100%;height:100%;display:block;object-fit:cover}
+  .fcard .tick{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--c);font-weight:600}
+  .fcard h3{font-family:"Space Grotesk",sans-serif;font-weight:600;font-size:1.36rem;margin:.55rem 0 .5rem;letter-spacing:-.01em}
+  .fcard p{color:var(--text-soft);font-size:.96rem;line-height:1.5}
+  .fcard ul{list-style:none;margin-top:1rem;display:grid;gap:.5rem}
+  .fcard li{position:relative;padding-left:1.5em;color:var(--text);font-size:.94rem}
+  .fcard li::before{content:"";position:absolute;left:0;top:.58em;width:8px;height:8px;border-radius:2px;background:var(--c)}
+
+  /* abstract */
+  .abstract{background:var(--paper);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .abstract .wrap{max-width:820px}
+  .abstract p{font-size:1.12rem;line-height:1.72;color:#26313f}
+  .abstract p+p{margin-top:1.1rem}
+
+  /* cite */
+  .cite pre{
+    background:var(--ink);color:#d7e0f0;
+    font-family:"IBM Plex Mono",monospace;font-size:13px;line-height:1.75;
+    padding:26px 28px;border-radius:14px;overflow-x:auto;
+    border:1px solid rgba(160,180,215,.12);
+  }
+  .cite .tok{color:#8fa3c4}
+  .cite .val{color:var(--teal)}
+  .copybar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:16px}
+  .copybtn{
+    font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.06em;
+    border:1px solid var(--line-strong);background:var(--paper);
+    padding:.55em 1em;border-radius:9px;cursor:pointer;color:var(--text);
+    transition:background .2s var(--ease),border-color .2s var(--ease);
+  }
+  .copybtn:hover{background:var(--canvas);border-color:var(--text-soft)}
+
+  /* footer */
+  footer{background:var(--ink);color:#8095b6;padding:56px 0}
+  footer .wrap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px;align-items:flex-start}
+  footer .brand{font-family:"Space Grotesk",sans-serif;font-weight:600;color:#eaf0fa;font-size:1.05rem}
+  footer a{color:#a9b8d3;border-bottom:1px solid transparent;transition:border-color .2s}
+  footer a:hover{border-color:#a9b8d3}
+  footer .flinks{display:flex;flex-wrap:wrap;gap:8px 22px;font-family:"IBM Plex Mono",monospace;font-size:12.5px;letter-spacing:.04em}
+  footer .fine{font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.03em;color:#5e708f;line-height:1.7}
+
+  /* reveal on scroll */
+  .reveal{opacity:0;transform:translateY(22px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
+  .reveal.in{opacity:1;transform:none}
+
+  /* ---------- responsive ---------- */
+  @media (max-width:900px){
+    .pipe{grid-template-columns:1fr 1fr}
+    .pstage:not(:last-child)::after{display:none}
+    .vgrid.three{grid-template-columns:1fr 1fr}
+    .compare{grid-template-columns:1fr}
+  }
+  @media (max-width:640px){
+    body{font-size:16px}
+    .pipe{grid-template-columns:1fr}
+    .vgrid.three,.vgrid.two{grid-template-columns:1fr}
+    .hero-top .award{font-size:10px;letter-spacing:.06em;padding:5px 10px}
+    .legend .scrolln{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    .scrolln .bar{animation:none}
+    .reveal{opacity:1;transform:none;transition:none}
+  }
+
+  /* dark-mode adaptation for body sections */
+  @media (prefers-color-scheme:dark){
+    :root{
+      --canvas:#0b111c;--paper:#121a28;--text:#e7edf6;--text-soft:#9db0cd;
+      --line:rgba(160,180,215,.14);--line-strong:rgba(160,180,215,.24);
+    }
+    .thesis .hl{background:linear-gradient(transparent 62%, rgba(154,107,255,.32) 62%)}
+    .abstract p{color:#cdd7e6}
+    .copybtn{color:var(--text)}
+    .step .idx,.vmeta .lbl{color:#8ea2c2}
+  }
+</style>
+</head>
+<body>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <canvas id="field" aria-hidden="true"></canvas>
+  <div class="hero-scrim"></div>
+
+  <div class="hero-top">
+    <span class="tag">arXiv:2603.15445 · cs.RO</span>
+    <span class="award">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="9" r="6"/><path d="M8.5 14 6.5 22l5.5-3 5.5 3-2-8"/></svg>
+      CASE 2026 · Best Paper Award Finalist
+    </span>
+  </div>
+
+  <div class="hero-core">
+    <span class="eyebrow">Learning from Demonstration</span>
+    <h1>Zero-Shot Generalization from Motion Demonstrations to <span class="accent">New Tasks</span></h1>
+    <p class="lede">A handful of isolated demonstrations, reinterpreted as a graph, becomes a reactive and provably stable policy for tasks that were never shown.</p>
+
+    <div class="authors">
+      <span class="a">Kilian Freitag<sup>1&#42;</sup></span>
+      <span class="a">Alvin Combrink<sup>1&#42;</sup></span>
+      <span class="a">Nadia Figueroa<sup>2</sup></span>
+    </div>
+    <div class="affil">
+      <span><span class="eq">&#42;</span> Equal contribution</span>
+      <span><sup>1</sup> Chalmers University of Technology</span>
+      <span><sup>2</sup> GRASP Lab, University of Pennsylvania</span>
+    </div>
+
+    <div class="actions">
+      <a class="btn primary" href="https://arxiv.org/abs/2603.15445" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/></svg>
+        Read the paper
+      </a>
+      <a class="btn" href="https://arxiv.org/pdf/2603.15445" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 21h16"/></svg>
+        PDF
+      </a>
+      <a class="btn" href="https://github.com/KilianFt/DemoStitching" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1.5A10.5 10.5 0 0 0 1.5 12c0 4.64 3.01 8.58 7.19 9.97.53.1.72-.23.72-.5v-1.76c-2.93.64-3.55-1.41-3.55-1.41-.48-1.22-1.17-1.54-1.17-1.54-.96-.66.07-.64.07-.64 1.06.08 1.62 1.09 1.62 1.09.94 1.62 2.47 1.15 3.07.88.1-.68.37-1.15.67-1.41-2.34-.27-4.8-1.17-4.8-5.2 0-1.15.41-2.09 1.09-2.83-.11-.27-.47-1.34.1-2.8 0 0 .89-.28 2.9 1.08a10 10 0 0 1 5.28 0c2.01-1.36 2.9-1.08 2.9-1.08.57 1.46.21 2.53.1 2.8.68.74 1.09 1.68 1.09 2.83 0 4.04-2.47 4.93-4.82 5.19.38.33.72.97.72 1.96v2.9c0 .28.19.61.73.5A10.5 10.5 0 0 0 22.5 12 10.5 10.5 0 0 0 12 1.5z"/></svg>
+        Code
+      </a>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="k" style="color:var(--coral)"><span class="dot" style="background:var(--coral)"></span>demonstration</span>
+    <span class="k" style="color:var(--teal)"><span class="dot" style="background:var(--teal)"></span>demonstration</span>
+    <span class="k" style="color:var(--amber)"><span class="dot" style="background:var(--amber)"></span>demonstration</span>
+    <span class="k" style="color:var(--violet)"><span class="dot" style="background:var(--violet)"></span>Gaussian graph node</span>
+    <span class="scrolln"><span>scroll</span><span class="bar"></span></span>
+  </div>
+</header>
+
+<!-- ===================== THESIS ===================== -->
+<section class="thesis band">
+  <div class="wrap">
+    <span class="eyebrow">TL;DR</span>
+    <p>Demonstrations for different tasks share the same workspace. We treat the Gaussian components of learned motion primitives as <span class="hl">vertices of a graph</span>, then search that graph to <span class="hl">stitch and chain</span> old motions into new ones — no retraining, no new data, and stability is preserved.</p>
+  </div>
+</section>
+
+<!-- ===================== PIPELINE ===================== -->
+<section class="band">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">How it works</span>
+      <h2>Four stages from demonstrations to a new policy</h2>
+      <p>Each stage consumes what the previous one produced, bridging continuous control with discrete graph search.</p>
+    </div>
+
+    <ol class="pipe reveal">
+      <li class="pstage" style="--c:var(--coral)">
+        <div class="pfig"><img src="figures/01_demos.png" alt="Raw expert trajectories for separate tasks in one workspace" loading="lazy"></div>
+        <div class="pcap">
+          <span class="pnum">STAGE 01</span>
+          <h3>Demonstrations</h3>
+          <p>A few expert trajectories per task, collected in one shared workspace.</p>
+        </div>
+      </li>
+      <li class="pstage" style="--c:var(--teal)">
+        <div class="pfig"><img src="figures/02_gaussians.png" alt="Gaussian mixtures fitted over the demonstrations with directional arrows" loading="lazy"></div>
+        <div class="pcap">
+          <span class="pnum">STAGE 02</span>
+          <h3>Gaussian mixture</h3>
+          <p>Fit locally linear motion primitives — the Gaussians summarizing each demonstration.</p>
+        </div>
+      </li>
+      <li class="pstage" style="--c:var(--violet)">
+        <div class="pfig"><img src="figures/03_graph.png" alt="The Gaussian Graph with nodes, edges, and a searched path from start to goal" loading="lazy"></div>
+        <div class="pcap">
+          <span class="pnum">STAGE 03</span>
+          <h3>Gaussian Graph</h3>
+          <p>Each Gaussian becomes a vertex; search the graph for a path from start to goal.</p>
+        </div>
+      </li>
+      <li class="pstage" style="--c:var(--blue)">
+        <div class="pfig"><img src="figures/04_stitched.png" alt="Stitched dynamical system streamlines converging to the goal along the path" loading="lazy"></div>
+        <div class="pcap">
+          <span class="pnum">STAGE 04</span>
+          <h3>Stitched DS</h3>
+          <p>Realize the path as a stable dynamical system that flows to the goal from anywhere.</p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ===================== DEMONSTRATIONS ===================== -->
+<section class="band" style="background:var(--paper);border-top:1px solid var(--line)">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Input · what the robot was shown</span>
+      <h2>Three isolated demonstrations</h2>
+      <p>Each demonstration solves a single, self-contained task in the shared workspace. On their own, they don't transfer to new start–goal pairs.</p>
+    </div>
+    <div class="vgrid three reveal">
+      <figure class="vcard">
+        <video src="videos/demo1.mp4" autoplay muted loop playsinline preload="metadata"></video>
+        <figcaption class="vmeta" style="--c:var(--coral)">
+          <span class="swatch" style="background:var(--coral)"></span>
+          <span><span class="lbl">Demonstration</span><br><span class="nm">Task 01</span></span>
+        </figcaption>
+      </figure>
+      <figure class="vcard">
+        <video src="videos/demo2.mp4" autoplay muted loop playsinline preload="metadata"></video>
+        <figcaption class="vmeta" style="--c:var(--teal)">
+          <span class="swatch" style="background:var(--teal)"></span>
+          <span><span class="lbl">Demonstration</span><br><span class="nm">Task 02</span></span>
+        </figcaption>
+      </figure>
+      <figure class="vcard">
+        <video src="videos/demo3.mp4" autoplay muted loop playsinline preload="metadata"></video>
+        <figcaption class="vmeta" style="--c:var(--amber)">
+          <span class="swatch" style="background:var(--amber)"></span>
+          <span><span class="lbl">Demonstration</span><br><span class="nm">Task 03</span></span>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== RESULTS / NEW TASKS ===================== -->
+<section class="band results">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Output · zero-shot</span>
+      <h2>Two new tasks, solved by combining the demonstrations</h2>
+      <p>Neither task below was ever demonstrated. Both are produced by searching the Gaussian Graph and chaining the primitives — reactive, convergent, and stable throughout.</p>
+    </div>
+    <div class="vgrid two reveal">
+      <figure class="vcard wide">
+        <video src="videos/chain1.mp4" autoplay muted loop playsinline preload="metadata"></video>
+        <figcaption class="vmeta" style="--c:var(--violet)">
+          <span class="swatch" style="background:var(--violet)"></span>
+          <span><span class="lbl">Chained result</span><br><span class="nm">New task 01</span></span>
+          <span class="grow"></span>
+          <span class="badge-new">never demonstrated</span>
+        </figcaption>
+      </figure>
+      <figure class="vcard wide">
+        <video src="videos/chain2.mp4" autoplay muted loop playsinline preload="metadata"></video>
+        <figcaption class="vmeta" style="--c:var(--violet)">
+          <span class="swatch" style="background:var(--violet)"></span>
+          <span><span class="lbl">Chained result</span><br><span class="nm">New task 02</span></span>
+          <span class="grow"></span>
+          <span class="badge-new">never demonstrated</span>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TWO FRAMEWORKS ===================== -->
+<section class="band band-tight">
+  <div class="wrap">
+    <div class="section-head reveal" style="margin-bottom:clamp(26px,3.5vw,40px)">
+      <span class="eyebrow">Two frameworks, one graph</span>
+      <h2>Stitching and Chaining</h2>
+      <p>The Gaussian Graph supports two ways to assemble a new policy — a single time-invariant field, or an ordered sequence of motions. Both are globally asymptotically stable, provably converging to the goal.</p>
+    </div>
+    <div class="compare reveal">
+      <div class="fcard" style="--c:var(--blue)">
+        <div class="ffig"><img src="figures/stitch_ds.png" alt="Stitched dynamical system: one streamline field converging to the goal" loading="lazy"></div>
+        <span class="tick">// Stitching</span>
+        <h3>One time-invariant DS</h3>
+        <p>Merge the primitives along a graph path into a single Linear Parameter Varying dynamical system that flows to the goal from anywhere in its basin.</p>
+        <ul>
+          <li>Reactive to perturbations at every point in the workspace</li>
+          <li>No notion of ordering — one smooth field</li>
+          <li>Best when the new task is a direct start-to-goal motion</li>
+        </ul>
+      </div>
+      <div class="fcard" style="--c:var(--violet)">
+        <div class="ffig"><img src="figures/chain_ds.png" alt="Chained dynamical system: a sequence of DS segments handing off toward the goal" loading="lazy"></div>
+        <span class="tick">// Chaining</span>
+        <h3>A sequence of DSs</h3>
+        <p>Fit one linear DS per node on the path and switch or blend between them online, composing complex motions that a single field can't represent.</p>
+        <ul>
+          <li>Handles long-horizon complex motions</li>
+          <li>Online switching / blending between segments</li>
+          <li>Stable hand-off at every transition</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ABSTRACT ===================== -->
+<section class="band abstract">
+  <div class="wrap">
+    <div class="section-head reveal" style="margin-bottom:28px">
+      <span class="eyebrow">Abstract</span>
+    </div>
+    <div class="reveal">
+      <p>Learning motion policies from expert demonstrations is an essential paradigm in modern robotics. While end-to-end models aim for broad generalization, they require large datasets and computationally heavy inference. Conversely, learning dynamical systems (DS) provides fast, reactive, and provably stable control from very few demonstrations. However, existing DS learning methods typically model isolated tasks and struggle to reuse demonstrations for novel behaviors.</p>
+      <p>In this work, we formalize the problem of combining isolated demonstrations within a shared workspace to enable generalization to unseen tasks. The <em>Gaussian Graph</em> is introduced, which reinterprets spatial components of learned motion primitives as discrete vertices with connections to one another. This formulation allows us to bridge continuous control with discrete graph search. We propose two frameworks leveraging this graph: <em>Stitching</em>, for constructing time-invariant DSs, and <em>Chaining</em>, giving a sequence-based DS for complex motions while retaining convergence guarantees. Simulations and real-robot experiments show that these methods successfully generalize to new tasks where baseline methods fail.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== CITATION ===================== -->
+<section class="band cite" style="background:var(--canvas)">
+  <div class="wrap" style="max-width:820px">
+    <div class="copybar">
+      <div class="section-head" style="margin:0">
+        <span class="eyebrow">Cite this work</span>
+      </div>
+      <button class="copybtn" id="copyCite">Copy BibTeX</button>
+    </div>
+    <pre id="bibtex"><span class="tok">@article</span>{freitag2026zeroshot,
+  <span class="tok">title</span>   = <span class="val">{Zero-Shot Generalization from Motion Demonstrations to New Tasks}</span>,
+  <span class="tok">author</span>  = <span class="val">{Freitag, Kilian and Combrink, Alvin and Figueroa, Nadia}</span>,
+  <span class="tok">journal</span> = <span class="val">{arXiv preprint arXiv:2603.15445}</span>,
+  <span class="tok">year</span>    = <span class="val">{2026}</span>
+}</pre>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer>
+  <div class="wrap">
+    <div>
+      <div class="brand">Zero-Shot Generalization from Motion Demonstrations</div>
+      <div class="fine" style="margin-top:10px">Chalmers University of Technology · GRASP Lab, University of Pennsylvania<br>Supported by the ITEA project ArtWork.</div>
+    </div>
+    <nav class="flinks">
+      <a href="https://arxiv.org/abs/2603.15445" target="_blank" rel="noopener">arXiv</a>
+      <a href="https://arxiv.org/pdf/2603.15445" target="_blank" rel="noopener">PDF</a>
+      <a href="https://github.com/KilianFt/DemoStitching" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+/* ---------- BibTeX copy ---------- */
+document.getElementById('copyCite').addEventListener('click', function(){
+  const t = document.getElementById('bibtex').innerText;
+  navigator.clipboard.writeText(t).then(()=>{
+    const b=this;const o=b.textContent;b.textContent='Copied ✓';setTimeout(()=>b.textContent=o,1600);
+  });
+});
+
+/* ---------- scroll reveal ---------- */
+(function(){
+  const els=document.querySelectorAll('.reveal');
+  if(!('IntersectionObserver' in window)){els.forEach(e=>e.classList.add('in'));return;}
+  const io=new IntersectionObserver((ents)=>{
+    ents.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});
+  },{threshold:.14});
+  els.forEach(e=>io.observe(e));
+})();
+
+/* ---------- Gaussian graph: streams follow edges and converge on the goal node ---------- */
+(function(){
+  const cv=document.getElementById('field');
+  if(!cv) return;
+  const ctx=cv.getContext('2d',{alpha:true});
+  const reduce=window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+  let W=0,H=0,DPR=1;
+
+  // graph kept clear of the (left-aligned) hero text: nodes live in the right
+  // region on wide screens, or a top band on narrow ones. Particles spiral
+  // through a flow field that is channeled along the DIRECTED edges, so they
+  // loosely follow the graph and converge on the goal node.
+  let nodes=[], edges=[], sources=[], goal=0, particles=[], bbox=null;
+
+  const wideLayout={
+    nodes:[
+      {x:0.585,y:0.17,r:7,c:'#FF5D5D'},  // 0 source
+      {x:0.855,y:0.15,r:7,c:'#18C2AE'},  // 1 source
+      {x:0.915,y:0.45,r:7,c:'#FFB020'},  // 2 source
+      {x:0.695,y:0.34,r:6,c:'#4C7DF0'},  // 3 mid
+      {x:0.825,y:0.35,r:6,c:'#4C7DF0'},  // 4 mid
+      {x:0.77,y:0.60,r:6,c:'#4C7DF0'},   // 5 mid
+      {x:0.655,y:0.73,r:11,c:'#9A6BFF'}  // 6 goal
+    ],
+    edges:[[0,3],[1,4],[2,5],[4,3],[4,5],[3,6],[5,6]],
+    sources:[0,1,2], goal:6
+  };
+  const topLayout={
+    nodes:[
+      {x:0.14,y:0.11,r:6,c:'#FF5D5D'},
+      {x:0.50,y:0.07,r:6,c:'#18C2AE'},
+      {x:0.87,y:0.12,r:6,c:'#FFB020'},
+      {x:0.33,y:0.21,r:5,c:'#4C7DF0'},
+      {x:0.68,y:0.21,r:5,c:'#4C7DF0'},
+      {x:0.50,y:0.31,r:9,c:'#9A6BFF'}
+    ],
+    edges:[[0,3],[1,4],[2,4],[3,5],[4,5],[4,3]],
+    sources:[0,1,2], goal:5
+  };
+
+  function layout(){
+    const L = W<820 ? topLayout : wideLayout;
+    nodes=L.nodes; goal=L.goal; sources=L.sources.slice();
+    edges=L.edges.map(([a,b])=>({a,b}));
+    // propagate a "stream color" from each source along the directed edges, so
+    // every edge carries the colour of the demonstration that feeds it.
+    const sc=nodes.map((n,i)=>sources.includes(i)?n.c:null);
+    for(let pass=0;pass<nodes.length;pass++)
+      for(const e of edges) if(sc[e.a] && !sc[e.b]) sc[e.b]=sc[e.a];
+    edges.forEach(e=>{e.col = sc[e.a] || sc[e.b] || '#8fa3c4';});
+    // bounding box of the graph (normalized) -> particle spawn region
+    let x0=1,y0=1,x1=0,y1=0;
+    for(const n of nodes){x0=Math.min(x0,n.x);y0=Math.min(y0,n.y);x1=Math.max(x1,n.x);y1=Math.max(y1,n.y);}
+    const mx=(x1-x0)*0.16, my=(y1-y0)*0.16;
+    bbox={x0:x0-mx,y0:y0-my,x1:x1+mx,y1:y1+my};
+  }
+
+  function resize(){
+    DPR=Math.min(window.devicePixelRatio||1,2);
+    W=cv.clientWidth;H=cv.clientHeight;
+    cv.width=Math.round(W*DPR);cv.height=Math.round(H*DPR);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+
+  const hexA=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;};
+
+  // nearest directed edge: closest point, unit tangent toward its target, colour
+  function nearestEdge(px,py){
+    let best=1e18,cx=0,cy=0,tx=0,ty=0,col='#8fa3c4';
+    for(const e of edges){
+      const ax=nodes[e.a].x*W, ay=nodes[e.a].y*H;
+      const bx=nodes[e.b].x*W, by=nodes[e.b].y*H;
+      const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy||1;
+      let t=((px-ax)*dx+(py-ay)*dy)/L2; t=t<0?0:t>1?1:t;
+      const qx=ax+t*dx, qy=ay+t*dy, d2=(px-qx)**2+(py-qy)**2;
+      if(d2<best){best=d2;cx=qx;cy=qy;const m=Math.hypot(dx,dy)||1;tx=dx/m;ty=dy/m;col=e.col;}
+    }
+    return {d2:best,cx,cy,tx,ty,col};
+  }
+
+  // flow field: an inward spiral toward the goal, channeled along nearby edges
+  function field(px,py){
+    const gx=nodes[goal].x*W, gy=nodes[goal].y*H;
+    let gdx=gx-px, gdy=gy-py; const gm=Math.hypot(gdx,gdy)||1; gdx/=gm; gdy/=gm;
+    // base spiral: pull toward goal + tangential swirl (same character as before)
+    let vx=0.85*gdx - 0.55*gdy;
+    let vy=0.85*gdy + 0.55*gdx;
+    const ne=nearestEdge(px,py);
+    const chW=Math.min(W,H)*0.055;
+    const inf=Math.exp(-ne.d2/(2*chW*chW));      // 1 on an edge, ->0 away from edges
+    let ex=ne.cx-px, ey=ne.cy-py; const em=Math.hypot(ex,ey)||1; ex/=em; ey/=em;
+    vx += inf*(1.7*ne.tx + 0.9*ex);              // follow edge toward target + hug the line
+    vy += inf*(1.7*ne.ty + 0.9*ey);
+    const m=Math.hypot(vx,vy)||1;
+    return {vx:vx/m, vy:vy/m, col:ne.col};
+  }
+
+  function spawn(p,seed){
+    // spawn across the whole screen (with a little overscan) so streams spiral
+    // in from the borders, then get channeled along the edges to the goal.
+    p.x=(-0.04+Math.random()*1.08)*W;
+    p.y=(-0.04+Math.random()*1.08)*H;
+    p.life=0; p.max=120+Math.random()*200;
+    p.sp=0.8+Math.random()*1.3;
+    p.col=field(p.x,p.y).col;
+    if(seed) p.life=Math.random()*p.max;
+  }
+
+  function initParticles(){
+    const target=Math.round(Math.min(720,(W*H)/2200));
+    particles=[];
+    for(let i=0;i<target;i++){const p={};spawn(p,true);particles.push(p);}
+  }
+
+  function drawGraph(t){
+    ctx.globalCompositeOperation='source-over';
+    ctx.lineWidth=1;ctx.strokeStyle='rgba(159,176,204,0.20)';
+    for(const e of edges){
+      ctx.beginPath();
+      ctx.moveTo(nodes[e.a].x*W,nodes[e.a].y*H);
+      ctx.lineTo(nodes[e.b].x*W,nodes[e.b].y*H);
+      ctx.stroke();
+    }
+    const gx=nodes[goal].x*W, gy=nodes[goal].y*H, gr=nodes[goal].r;
+    for(let k=0;k<2;k++){
+      const ph=((t*0.35+k*0.5)%1);
+      ctx.beginPath();ctx.arc(gx,gy,gr*(1.6+ph*4.4),0,Math.PI*2);
+      ctx.strokeStyle=hexA('#9A6BFF',0.30*(1-ph));ctx.lineWidth=1.4;ctx.stroke();
+    }
+    nodes.forEach((n,i)=>{
+      const x=n.x*W,y=n.y*H, isGoal=i===goal;
+      const pulse=1+0.10*Math.sin(t*1.4+i);
+      ctx.beginPath();ctx.arc(x,y,n.r*2.1*pulse,0,Math.PI*2);
+      ctx.strokeStyle=hexA(n.c,0.34);ctx.lineWidth=1.4;ctx.stroke();
+      ctx.beginPath();ctx.arc(x,y,n.r,0,Math.PI*2);
+      ctx.fillStyle=n.c;ctx.shadowColor=n.c;ctx.shadowBlur=isGoal?26:16;ctx.fill();
+      ctx.shadowBlur=0;
+      ctx.beginPath();ctx.arc(x,y,n.r*0.42,0,Math.PI*2);ctx.fillStyle='#0E1420';ctx.fill();
+    });
+  }
+
+  function step(now){
+    const t=now*0.001;
+    ctx.globalCompositeOperation='destination-out';
+    ctx.fillStyle='rgba(0,0,0,0.055)';
+    ctx.fillRect(0,0,W,H);
+
+    ctx.globalCompositeOperation='lighter';
+    ctx.lineWidth=1.35;ctx.lineCap='round';
+    const gx=nodes[goal].x*W, gy=nodes[goal].y*H, gr=nodes[goal].r;
+    for(const p of particles){
+      const f=field(p.x,p.y);
+      const nx=p.x+f.vx*p.sp, ny=p.y+f.vy*p.sp;
+      ctx.strokeStyle=hexA(p.col,0.55);
+      ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(nx,ny);ctx.stroke();
+      p.x=nx;p.y=ny;p.life++;
+      // respawn once converged at the goal, aged out, or off-canvas
+      const dg=Math.hypot(nx-gx,ny-gy);
+      if(dg<gr*1.4 || p.life>p.max || nx<-6||nx>W+6||ny<-6||ny>H+6) spawn(p,false);
+    }
+    drawGraph(t);
+    raf=requestAnimationFrame(step);
+  }
+
+  function staticRender(){
+    ctx.clearRect(0,0,W,H);
+    // a few frozen streamlines integrated through the field
+    ctx.globalCompositeOperation='lighter';ctx.lineWidth=1.2;
+    for(let i=0;i<220;i++){
+      let x=Math.random()*W, y=Math.random()*H;
+      ctx.strokeStyle=hexA(field(x,y).col,0.4);
+      ctx.beginPath();ctx.moveTo(x,y);
+      for(let s=0;s<42;s++){const f=field(x,y);x+=f.vx*2.4;y+=f.vy*2.4;ctx.lineTo(x,y);if(x<0||x>W||y<0||y>H)break;}
+      ctx.stroke();
+    }
+    drawGraph(0);
+  }
+
+  let raf=null;
+  function boot(){
+    resize();layout();
+    if(reduce){staticRender();return;}
+    initParticles();
+    if(raf)cancelAnimationFrame(raf);
+    raf=requestAnimationFrame(step);
+  }
+  let rt;
+  window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(boot,180)});
+  document.addEventListener('visibilitychange',()=>{
+    if(reduce)return;
+    if(document.hidden){if(raf)cancelAnimationFrame(raf);raf=null;}
+    else if(!raf){raf=requestAnimationFrame(step);}
+  });
+  boot();
+})();
+</script>
+</body>
+</html>
