@@ -17,3 +17,9 @@ dataset/stitching/testing*
 *.csv
 *.pkl
 *.log
+/.idea
+.codegraph/
+
+# GitHub Pages assets (override *.png / figures/ ignore rules above)
+!docs/figures/
+!docs/figures/*.png
