@@ -1,37 +1,23 @@
-# Demonstration stitching
-This is the official implementation of our stitching framework that enables stitching together demonstrations for different tasks in a shared workspace. We do this by first learning Gaussian mixture models from the demonstrations and then building a graph-based dynamical system that can navigate between different initial and goal positions.
+# Zero-Shot Generalization from Motion Demonstrations to New Tasks
+<p align="center">
+   <b><i>IEEE CASE 2026 · Best Paper Award Finalist</i></b> 
+</p>
 
+[![arXiv](https://img.shields.io/badge/arXiv-2406.09246-df2a2a.svg?style=for-the-badge)](https://arxiv.org/abs/2603.15445)
+[![Project Page](https://img.shields.io/badge/Project_Page-DemoStitching-blue.svg?style=for-the-badge)](https://kilianft.github.io/DemoStitching/)
+
+Demonstrations for different tasks share the same workspace. We treat the Gaussian components of learned motion primitives as vertices of a graph, then search that graph to stitch and chain old motions into new ones — no retraining, no new data, and stability is preserved.
+
+This is the official implementation of our framework.
+
+
+## Related work and code
 This code builds on top of the following repositories:
-1. [LPVDS](https://github.com/sunan-sun/lpvds)
-2. [DAMM](https://github.com/SunannnSun/damm)
-3. [DSOPT](https://github.com/sunan-sun/dsopt)
-<!-- 4. [Robottask dataset](https://github.com/sayantanauddy/clfd-snode) -->
-
-with following references
-
-> [1] Billard, A., Mirrazavi, S., & Figueroa, N. (2022). Learning for adaptive and reactive robot control: a dynamical systems approach. Mit Press.
-
-> [2] Sun, S., Gao, H., Li, T., & Figueroa, N. (2024). "Directionality-aware mixture model parallel sampling for efficient linear parameter varying dynamical system learning". IEEE Robotics and Automation Letters, 9(7), 6248-6255.
-
-> [3] Li, T., Sun, S., Aditya, S. S., & Figueroa, N. (2025). Elastic Motion Policy: An Adaptive Dynamical System for Robust and Efficient One-Shot Imitation Learning. arXiv preprint arXiv:2503.08029.
-
-<!-- > [4] Auddy, S.*, Hollenstein, J.*, Saveriano, M., Rodríguez-Sánchez, A., & Piater, J. (2025). Scalable and Efficient Continual Learning from Demonstration via a Hypernetwork-generated Stable Dynamics Model. arXiv preprint arXiv:2311.03600. -->
+1. [LPVDS](https://github.com/sunan-sun/lpvds): Billard, A., Mirrazavi, S., & Figueroa, N. (2022). Learning for adaptive and reactive robot control: a dynamical systems approach. Mit Press.
+2. [DAMM](https://github.com/SunannnSun/damm): Sun, S., Gao, H., Li, T., & Figueroa, N. (2024). "Directionality-aware mixture model parallel sampling for efficient linear parameter varying dynamical system learning". IEEE Robotics and Automation Letters, 9(7), 6248-6255.
+3. [DSOPT](https://github.com/sunan-sun/dsopt): Li, T., Sun, S., Aditya, S. S., & Figueroa, N. (2025). Elastic Motion Policy: An Adaptive Dynamical System for Robust and Efficient One-Shot Imitation Learning. arXiv preprint arXiv:2503.08029.
 
 Thanks for open sourcing your work!
-
-## Results
-
-
-### Chain blend ablations
-Chain blend ratio ablation on X dataset:
-|    |   chain_blend_ratio | prediction_rmse   | cosine_dissimilarity   | dtw_distance_mean    | trajectory_length_mean   |
-|---:|--------------------:|:------------------|:-----------------------|:---------------------|:-------------------------|
-|  0 |                0    | 0.28 ± 0.33       | 0.20 ± 0.13            | 60398.87 ± 372691.65 | 21904.61 ± 17603.52      |
-|  1 |                0.25 | 0.31 ± 0.19       | 0.26 ± 0.15            | 7554.27 ± 6696.75    | 18558.24 ± 8537.02       |
-|  2 |                0.5  | 0.22 ± 0.15       | 0.22 ± 0.14            | 6304.31 ± 5646.79    | 22077.16 ± 19668.61      |
-|  3 |                0.75 | 0.41 ± 0.54       | 0.22 ± 0.12            | 8695.16 ± 10298.26   | 24602.11 ± 24662.31      |
-|  4 |                1    | 0.27 ± 0.37       | 0.23 ± 0.14            | 6934.35 ± 6503.77    | 23049.79 ± 19980.41      |
-
 
 ## Quick Start
 ```bash
@@ -50,6 +36,7 @@ To run an interactive demo run
 ```bash
 uv run live.py --dataset-path dataset/stitching/X --ds-method chain
 ```
+
 
 
 ## How It Works
@@ -173,3 +160,16 @@ uv run sweep.py \
 ```
 
 In case precompute should be disabled, add `--disable-shared-precompute` to the command.
+
+## Additional Results
+
+### Chain blend ablations
+Chain blend ratio ablation on X dataset:
+|    |   chain_blend_ratio | prediction_rmse   | cosine_dissimilarity   | dtw_distance_mean    | trajectory_length_mean   |
+|---:|--------------------:|:------------------|:-----------------------|:---------------------|:-------------------------|
+|  0 |                0    | 0.28 ± 0.33       | 0.20 ± 0.13            | 60398.87 ± 372691.65 | 21904.61 ± 17603.52      |
+|  1 |                0.25 | 0.31 ± 0.19       | 0.26 ± 0.15            | 7554.27 ± 6696.75    | 18558.24 ± 8537.02       |
+|  2 |                0.5  | 0.22 ± 0.15       | 0.22 ± 0.14            | 6304.31 ± 5646.79    | 22077.16 ± 19668.61      |
+|  3 |                0.75 | 0.41 ± 0.54       | 0.22 ± 0.12            | 8695.16 ± 10298.26   | 24602.11 ± 24662.31      |
+|  4 |                1    | 0.27 ± 0.37       | 0.23 ± 0.14            | 6934.35 ± 6503.77    | 23049.79 ± 19980.41      |
+
